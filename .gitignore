@@ -7,7 +7,6 @@ vMac*
 build
 CMakeCache.txt
 CMakeFiles
-Makefile
 cmake_install.cmake
 include
 lib
