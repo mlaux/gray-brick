@@ -120,7 +120,9 @@ static void update_phase_inc_noise(struct audio *audio)
 
 static void trigger_non_wave(struct audio_channel *ch)
 {
-    ch->enabled = 1;
+    // only enable if DAC is on (env_initial > 0 OR env_dir is increase)
+    if (ch->env_initial != 0 || ch->env_dir != 0)
+        ch->enabled = 1;
     ch->phase = 0;
     ch->volume = ch->env_initial;
     ch->env_timer = ch->env_pace;
@@ -257,6 +259,9 @@ void audio_write(struct audio *audio, u16 addr, u8 value)
         audio->ch1.env_initial = (value >> 4) & 0x0f;
         audio->ch1.env_dir = (value >> 3) & 0x01;
         audio->ch1.env_pace = value & 0x07;
+        // DAC disable: if upper 5 bits are 0, channel is disabled
+        if ((value & 0xf8) == 0)
+            audio->ch1.enabled = 0;
         break;
     case 0xff13:    // NR13 - freq low
         audio->ch1.freq_reg = (audio->ch1.freq_reg & 0x700) | value;
@@ -286,6 +291,9 @@ void audio_write(struct audio *audio, u16 addr, u8 value)
         audio->ch2.env_initial = (value >> 4) & 0x0f;
         audio->ch2.env_dir = (value >> 3) & 0x01;
         audio->ch2.env_pace = value & 0x07;
+        // DAC disable: if upper 5 bits are 0, channel is disabled
+        if ((value & 0xf8) == 0)
+            audio->ch2.enabled = 0;
         break;
     case 0xff18:    // NR23 - freq low
         audio->ch2.freq_reg = (audio->ch2.freq_reg & 0x700) | value;
@@ -338,6 +346,9 @@ void audio_write(struct audio *audio, u16 addr, u8 value)
         audio->ch4.env_initial = (value >> 4) & 0x0f;
         audio->ch4.env_dir = (value >> 3) & 0x01;
         audio->ch4.env_pace = value & 0x07;
+        // DAC disable: if upper 5 bits are 0, channel is disabled
+        if ((value & 0xf8) == 0)
+            audio->ch4.enabled = 0;
         break;
     case 0xff22:    // NR43 - noise params
         audio->noise_shift = (value >> 4) & 0x0f;
