@@ -20,7 +20,7 @@ TEST_SRCS = tests/test_compiler.c tests/test_exec_loads.c tests/test_exec_alu.c 
 all: $(TEST_BIN)
 
 $(TEST_BIN): $(TEST_SRCS) $(COMPILER_OBJS) $(MUSASHI_OBJS)
-	$(CC) $(CFLAGS) -I$(MUSASHI_DIR) -o $@ $(TEST_SRCS) $(COMPILER_OBJS) $(MUSASHI_OBJS)
+	$(CC) $(CFLAGS) -I$(MUSASHI_DIR) -o $@ $(TEST_SRCS) $(COMPILER_OBJS) $(MUSASHI_OBJS) -lm
 
 compiler.o: compiler.c compiler.h
 	$(CC) $(CFLAGS) -c -o $@ $<
