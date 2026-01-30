@@ -3,6 +3,8 @@
 
 #include "types.h"
 
+struct cgb_state;
+
 #define FIELD_JOY 1
 #define FIELD_ACTION 2
 
@@ -35,9 +37,10 @@ struct dmg {
     struct rom *rom;
     struct lcd *lcd;
     struct audio *audio;
+    struct cgb_state *cgb;  // NULL in DMG mode
 
-    u8 main_ram[0x2000];
-    u8 video_ram[0x2000];
+    u8 main_ram[0x8000];   // 32KB WRAM for CGB (8 x 4KB banks), only 8KB used in DMG
+    u8 video_ram[0x4000];  // 16KB VRAM for CGB (2 x 8KB banks), only 8KB used in DMG
     u32 frames_rendered;
     int joypad_selected;
     int action_selected;

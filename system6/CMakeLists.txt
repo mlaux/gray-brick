@@ -10,6 +10,8 @@ add_application("Gray Brick"
     CREATOR MGBE
     ../src/dmg.c
     ../src/lcd.c
+    ../src/lcd_cgb.c
+    ../src/cgb.c
     ../src/audio.c
     ../src/rom.c
     ../src/mbc.c
@@ -32,6 +34,7 @@ add_application("Gray Brick"
     jit.c
     input.c
     lcd_mac.c
+    lcd_mac_cgb.c
     cache.c
     audio_mac.c
     emulator.c

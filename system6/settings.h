@@ -7,6 +7,7 @@ extern int video_mode;
 extern int screen_scale;
 extern unsigned char sound_enabled;
 extern unsigned char limit_fps;
+extern unsigned char gbc_enabled;
 
 #define VIDEO_DITHER_COPYBITS 0
 #define VIDEO_DITHER_DIRECT 1

@@ -86,6 +86,7 @@ void register_branch_tests(void);
 void register_cb_tests(void);
 void register_stack_tests(void);
 void register_timing_tests(void);
+void register_cgb_tests(void);
 
 #define GLOBALS_BASE 0x4000 // random variables
 #define U16_INTERRUPTS_ENABLED 0x4000

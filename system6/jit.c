@@ -8,6 +8,7 @@
 #include "jit.h"
 #include "compiler.h"
 #include "dmg.h"
+#include "cgb.h"
 #include "cache.h"
 #include "lcd.h"
 #include "rom.h"
@@ -100,6 +101,9 @@ void jit_init(struct dmg *dmg)
   }
 
   memset(&jit_regs, 0, sizeof jit_regs);
+
+  // Set initial A register for CGB mode ($11) vs DMG mode ($01)
+  jit_regs.d4 = (dmg->cgb && dmg->cgb->mode) ? 0x11 : 0x01;
 
   compile_ctx.dmg = dmg;
   compile_ctx.read = dmg_read;

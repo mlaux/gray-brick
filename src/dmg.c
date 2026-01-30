@@ -5,6 +5,7 @@
 #include "lcd.h"
 #include "dmg.h"
 #include "mbc.h"
+#include "cgb.h"
 #include "types.h"
 #include "audio.h"
 #include "../system6/jit.h"
@@ -59,6 +60,7 @@ void dmg_init_pages(struct dmg *dmg)
     }
 
     // video RAM: 0x8000-0x9fff (pages 0x80-0x9f)
+    // Uses bank 0 initially, cgb_update_vram_bank() can switch for CGB
     for (k = 0x80; k <= 0x9f; k++) {
         int offset = (k - 0x80) << 8;
         dmg->read_page[k] = &dmg->video_ram[offset];
@@ -68,16 +70,32 @@ void dmg_init_pages(struct dmg *dmg)
     // external RAM: 0xa000-0xbfff (pages 0xa0-0xbf)
     // leave NULL - MBC handles this
 
-    // work RAM: 0xc000-0xdfff (pages 0xc0-0xdf)
-    for (k = 0xc0; k <= 0xdf; k++) {
+    // work RAM bank 0: 0xc000-0xcfff (pages 0xc0-0xcf) - always fixed
+    for (k = 0xc0; k <= 0xcf; k++) {
         int offset = (k - 0xc0) << 8;
         dmg->read_page[k] = &dmg->main_ram[offset];
         dmg->write_page[k] = &dmg->main_ram[offset];
     }
 
+    // work RAM bank 1: 0xd000-0xdfff (pages 0xd0-0xdf) - switchable in CGB
+    // Initially points to bank 1 (offset 0x1000)
+    for (k = 0xd0; k <= 0xdf; k++) {
+        int offset = 0x1000 + ((k - 0xd0) << 8);
+        dmg->read_page[k] = &dmg->main_ram[offset];
+        dmg->write_page[k] = &dmg->main_ram[offset];
+    }
+
     // echo RAM: 0xe000-0xfdff (pages 0xe0-0xfd)
-    for (k = 0xe0; k <= 0xfd; k++) {
+    // Mirrors 0xc000-0xddff (bank 0 + current switchable bank)
+    for (k = 0xe0; k <= 0xef; k++) {
+        // Echo of 0xc000-0xcfff (bank 0)
         int offset = (k - 0xe0) << 8;
+        dmg->read_page[k] = &dmg->main_ram[offset];
+        dmg->write_page[k] = &dmg->main_ram[offset];
+    }
+    for (k = 0xf0; k <= 0xfd; k++) {
+        // Echo of 0xd000-0xddff (switchable bank)
+        int offset = 0x1000 + ((k - 0xf0) << 8);
         dmg->read_page[k] = &dmg->main_ram[offset];
         dmg->write_page[k] = &dmg->main_ram[offset];
     }
@@ -224,6 +242,14 @@ u8 dmg_read_slow(struct dmg *dmg, u16 address)
         return dmg->interrupt_request_mask;
     }
 
+    // CGB registers
+    if (dmg->cgb && dmg->cgb->mode) {
+        u8 cgb_val;
+        if (cgb_read_reg(dmg->cgb, dmg->lcd, address, &cgb_val)) {
+            return cgb_val;
+        }
+    }
+
     // external RAM not enabled, or RTC register selected
     if (address >= 0xa000 && address < 0xc000) {
         u8 val;
@@ -324,6 +350,13 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
         dmg->interrupt_request_mask = data;
         return;
     }
+
+    // CGB registers
+    if (dmg->cgb && dmg->cgb->mode) {
+        if (cgb_write_reg(dmg->cgb, dmg, address, data)) {
+            return;
+        }
+    }
 }
 
 void dmg_write(void *_dmg, u16 address, u8 data)
@@ -354,6 +387,12 @@ static void lcd_sync(struct dmg *dmg)
     int lcdc = lcd_read(dmg->lcd, REG_LCDC);
     int lyc_cycles = lcd_read(dmg->lcd, REG_LYC) * CYCLES_PER_LINE;
 
+    // Process HBlank DMA if active (CGB mode only)
+    if (dmg->cgb && dmg->cgb->mode) {
+        int current_line = dmg->frame_cycles / CYCLES_PER_LINE;
+        cgb_process_hdma(dmg->cgb, dmg, current_line);
+    }
+
     if (dmg->frame_cycles >= lyc_cycles && !dmg->sent_ly_interrupt) {
         lcd_set_bit(dmg->lcd, REG_STAT, STAT_FLAG_MATCH);
         if (lcd_isset(dmg->lcd, REG_STAT, STAT_INTR_SOURCE_MATCH)) {
@@ -374,10 +413,18 @@ static void lcd_sync(struct dmg *dmg)
         // frame skip setting is 0-4
         if (dmg->frames_rendered % (frame_skip + 1) == 0) {
             if (lcdc & LCDC_ENABLE_BG) {
-                lcd_render_background(dmg, lcdc, lcdc & LCDC_ENABLE_WINDOW);
+                if (dmg->cgb && dmg->cgb->mode) {
+                    lcd_cgb_render_background(dmg, lcdc, lcdc & LCDC_ENABLE_WINDOW);
+                } else {
+                    lcd_render_background(dmg, lcdc, lcdc & LCDC_ENABLE_WINDOW);
+                }
             }
             if (lcdc & LCDC_ENABLE_OBJ) {
-                lcd_render_objs(dmg);
+                if (dmg->cgb && dmg->cgb->mode) {
+                    lcd_cgb_render_objs(dmg);
+                } else {
+                    lcd_render_objs(dmg);
+                }
             }
             lcd_draw(dmg->lcd);
         }
@@ -419,10 +466,15 @@ static void timer_sync(struct dmg *dmg, int cycles)
 // HALT, because HALT will skip directly to line 144
 void dmg_sync_hw(struct dmg *dmg, int cycles)
 {
-    dmg->total_cycles += cycles;
-    dmg->frame_cycles += cycles;
+    int ppu_cycles;
 
-    audio_mac_sync(cycles);
+    dmg->total_cycles += cycles;
+
+    // In double speed mode, PPU/APU run at normal speed (half the CPU cycles)
+    ppu_cycles = (dmg->cgb && dmg->cgb->double_speed) ? (cycles >> 1) : cycles;
+    dmg->frame_cycles += ppu_cycles;
+
+    audio_mac_sync(ppu_cycles);
 
     if (lcd_read(dmg->lcd, REG_LCDC) & LCDC_ENABLE) {
         lcd_sync(dmg);
@@ -439,6 +491,10 @@ void dmg_sync_hw(struct dmg *dmg, int cycles)
         dmg->rendered_this_frame = 0;
         dmg->lazy_ly = 0;
         dmg->ly_read_cycle = 0;
+        // Reset HDMA line counter for CGB
+        if (dmg->cgb) {
+            dmg->cgb->hdma_last_line = 0;
+        }
     }
 }
 

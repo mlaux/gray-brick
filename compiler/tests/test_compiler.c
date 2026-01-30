@@ -391,6 +391,7 @@ int main(int argc, char *argv[])
     register_cb_tests();
     register_stack_tests();
     register_timing_tests();
+    register_cgb_tests();
 
     printf("\nall tests passed\n");
 

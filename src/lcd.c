@@ -18,9 +18,15 @@ static u8 tile_decode_base[256][4];
 // Renders 21 tiles starting at tile-aligned position for fast path always
 static u8 pixels[42 * 144];
 
+// CGB attribute buffer: 1 byte per pixel, stores palette/priority
+static u8 attr_buffer[168 * 144];
+
+// LUT for horizontal flip: reverses bit order in a byte
+u8 hflip_lut[256];
+
 void lcd_init_lut(void)
 {
-    int n1, n2;
+    int n1, n2, k;
     for (n1 = 0; n1 < 16; n1++) {
         for (n2 = 0; n2 < 16; n2++) {
             int idx = (n1 << 4) | n2;
@@ -33,6 +39,21 @@ void lcd_init_lut(void)
     }
     // Initialize with identity palette (no mapping)
     lcd_update_palette_lut(0xe4); // default: 3,2,1,0
+
+    // Initialize horizontal flip LUT (reverses bit order)
+    for (k = 0; k < 256; k++) {
+        u8 v = k;
+        u8 r = 0;
+        r |= (v & 0x80) >> 7;
+        r |= (v & 0x40) >> 5;
+        r |= (v & 0x20) >> 3;
+        r |= (v & 0x10) >> 1;
+        r |= (v & 0x08) << 1;
+        r |= (v & 0x04) << 3;
+        r |= (v & 0x02) << 5;
+        r |= (v & 0x01) << 7;
+        hflip_lut[k] = r;
+    }
 }
 
 void lcd_update_palette_lut(u8 palette)
@@ -65,6 +86,7 @@ void lcd_new(struct lcd *lcd)
 {
     // todo < 8 bpp
     lcd->pixels = pixels;
+    lcd->attrs = attr_buffer;
 }
 
 u8 lcd_is_valid_addr(u16 addr)
