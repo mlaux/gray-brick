@@ -26,7 +26,7 @@ typedef struct {
     /* 34 */ u32 read_cycles; // in-flight cycles at time of dmg_read call
     /* 38 */ u32 _pad2;
     /* 3c */ u32 *frame_cycles_ptr; // pointer to dmg->frame_cycles for HALT
-    /* 40 */ u32 temp1;
+    /* 40 */ void *stop_func;  // STOP handler (for CGB speed switch)
     /* 44 */ u32 temp2;
     /* 48 */ u16 gb_sp; // GB stack pointer value (always valid)
     /* 4a */ u16 _pad3;

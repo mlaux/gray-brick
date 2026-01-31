@@ -159,12 +159,20 @@ static void setup_runtime_stubs(void)
         0x4e, 0x75               // rts
     };
 
+    // stub_stop: always returns 1 (halt) for tests
+    // In tests, STOP always means end of execution
+    static const uint8_t stub_stop[] = {
+        0x70, 0x01,              // moveq #1, d0
+        0x4e, 0x75               // rts
+    };
+
     // Copy stubs to memory
     memcpy(mem + STUB_BASE, stub_read, sizeof(stub_read));
     memcpy(mem + STUB_BASE + 0x20, stub_write, sizeof(stub_write));
     memcpy(mem + STUB_BASE + 0x40, stub_ei_di, sizeof(stub_ei_di));
     memcpy(mem + STUB_BASE + 0x60, stub_read16, sizeof(stub_read16));
     memcpy(mem + STUB_BASE + 0x80, stub_write16, sizeof(stub_write16));
+    memcpy(mem + STUB_BASE + 0xa0, stub_stop, sizeof(stub_stop));
 
     // Set up jit_runtime context structure at JIT_CTX_ADDR
     // See compiler.h for JIT_CTX_* offset definitions
@@ -182,6 +190,8 @@ static void setup_runtime_stubs(void)
     // frame_cycles pointer for HALT/LY wait tests
     m68k_write_memory_32(JIT_CTX_ADDR + JIT_CTX_FRAME_CYCLES_PTR, FRAME_CYCLES_ADDR);
     m68k_write_memory_32(FRAME_CYCLES_ADDR, 0);
+    // stop_func for STOP instruction (always halts in tests)
+    m68k_write_memory_32(JIT_CTX_ADDR + JIT_CTX_STOP_FUNC, STUB_BASE + 0xa0);
 }
 
 // Initialize Musashi, copy code to memory, set up stack, run

@@ -2,6 +2,7 @@
 #include "compiler.h"
 #include "branches.h"
 #include "emitters.h"
+#include "interop.h"
 
 // helper for reading GB memory during compilation
 #define READ_BYTE(off) (ctx->read(ctx->dmg, src_address + (off)))
@@ -260,15 +261,36 @@ void compile_call_imm16(
 ) {
     uint16_t target = READ_BYTE(*src_ptr) | (READ_BYTE(*src_ptr + 1) << 8);
     uint16_t ret_addr = src_address + *src_ptr + 2;  // address after call
+    size_t slow_push, done;
     *src_ptr += 2;
 
-    // push return address (A3 = native WRAM pointer)
+    // Check stack_in_ram to decide fast vs slow path
+    emit_tst_l_disp_an(block, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
+    slow_push = block->length;
+    emit_beq_w(block, 0);  // placeholder, will patch
+
+    // Fast path: push return address (A3 = native WRAM/HRAM pointer)
     emit_subq_w_an(block, REG_68K_A_SP, 2);
     emit_subi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
     emit_move_w_dn(block, REG_68K_D_SCRATCH_1, ret_addr);
     emit_move_b_dn_ind_an(block, REG_68K_D_SCRATCH_1, REG_68K_A_SP);
     emit_rol_w_8(block, REG_68K_D_SCRATCH_1);
     emit_move_b_dn_disp_an(block, REG_68K_D_SCRATCH_1, 1, REG_68K_A_SP);
+    done = block->length;
+    emit_bra_w(block, 0);  // placeholder, will patch
+
+    // Slow path: decrement gb_sp by 2, write via dmg_write16
+    block->code[slow_push + 2] = (block->length - slow_push - 2) >> 8;
+    block->code[slow_push + 3] = (block->length - slow_push - 2) & 0xff;
+    emit_subi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
+    emit_subq_w_an(block, REG_68K_A_SP, 2);  // keep A3 in sync for later LD SP detection
+    emit_move_w_disp_an_dn(block, JIT_CTX_GB_SP, REG_68K_A_CTX, REG_68K_D_SCRATCH_1);
+    emit_move_w_dn(block, REG_68K_D_SCRATCH_0, ret_addr);
+    compile_call_dmg_write16_d0(block);
+
+    // Patch done branch
+    block->code[done + 2] = (block->length - done - 2) >> 8;
+    block->code[done + 3] = (block->length - done - 2) & 0xff;
 
     // jump to target
     emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
@@ -289,43 +311,90 @@ void compile_call_cond(
 ) {
     uint16_t target = READ_BYTE(*src_ptr) | (READ_BYTE(*src_ptr + 1) << 8);
     uint16_t ret_addr = src_address + *src_ptr + 2;  // address after call
+    size_t skip_call, slow_push, done;
     *src_ptr += 2;
 
     // Test the flag bit in D7
     emit_btst_imm_dn(block, flag_bit, REG_68K_D_FLAGS);
 
-    // If condition NOT met, skip the call sequence
-    // call sequence: subq(2) + subi(6) + move.w(4) + move.b(2) + rol(2) + move.b(4) +
-    //                moveq(2) + move.w(4) + patchable_exit(16) = 42, +2 = 44
+    // If condition NOT met, skip the call sequence (patched later)
+    skip_call = block->length;
     if (branch_if_set) {
-        emit_beq_w(block, 44);
+        emit_beq_w(block, 0);  // placeholder
     } else {
-        emit_bne_w(block, 44);
+        emit_bne_w(block, 0);  // placeholder
     }
 
-    // Push return address
+    // Check stack_in_ram
+    emit_tst_l_disp_an(block, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
+    slow_push = block->length;
+    emit_beq_w(block, 0);  // placeholder
+
+    // Fast path: push return address
     emit_subq_w_an(block, REG_68K_A_SP, 2);
     emit_subi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
     emit_move_w_dn(block, REG_68K_D_SCRATCH_1, ret_addr);
     emit_move_b_dn_ind_an(block, REG_68K_D_SCRATCH_1, REG_68K_A_SP);
     emit_rol_w_8(block, REG_68K_D_SCRATCH_1);
     emit_move_b_dn_disp_an(block, REG_68K_D_SCRATCH_1, 1, REG_68K_A_SP);
+    done = block->length;
+    emit_bra_w(block, 0);  // placeholder
+
+    // Slow path: write via dmg_write16
+    block->code[slow_push + 2] = (block->length - slow_push - 2) >> 8;
+    block->code[slow_push + 3] = (block->length - slow_push - 2) & 0xff;
+    emit_subi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
+    emit_subq_w_an(block, REG_68K_A_SP, 2);
+    emit_move_w_disp_an_dn(block, JIT_CTX_GB_SP, REG_68K_A_CTX, REG_68K_D_SCRATCH_1);
+    emit_move_w_dn(block, REG_68K_D_SCRATCH_0, ret_addr);
+    compile_call_dmg_write16_d0(block);
+
+    // Patch done branch
+    block->code[done + 2] = (block->length - done - 2) >> 8;
+    block->code[done + 3] = (block->length - done - 2) & 0xff;
 
     // Jump to target
     emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
     emit_move_w_dn(block, REG_68K_D_NEXT_PC, target);
     emit_patchable_exit(block);
+
+    // Patch skip_call to here (condition not met, continue execution)
+    block->code[skip_call + 2] = (block->length - skip_call - 2) >> 8;
+    block->code[skip_call + 3] = (block->length - skip_call - 2) & 0xff;
 }
 
 void compile_ret(struct code_block *block)
 {
-    // pop return address from stack (A3 = native WRAM pointer)
+    size_t slow_pop, done;
+
+    // Check stack_in_ram
+    emit_tst_l_disp_an(block, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
+    slow_pop = block->length;
+    emit_beq_w(block, 0);  // placeholder
+
+    // Fast path: pop return address from stack (A3 = native pointer)
     emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
     emit_move_b_disp_an_dn(block, 1, REG_68K_A_SP, REG_68K_D_NEXT_PC);
     emit_rol_w_8(block, REG_68K_D_NEXT_PC);
     emit_move_b_ind_an_dn(block, REG_68K_A_SP, REG_68K_D_NEXT_PC);
     emit_addq_w_an(block, REG_68K_A_SP, 2);
     emit_addi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
+    done = block->length;
+    emit_bra_w(block, 0);  // placeholder
+
+    // Slow path: read via dmg_read16
+    block->code[slow_pop + 2] = (block->length - slow_pop - 2) >> 8;
+    block->code[slow_pop + 3] = (block->length - slow_pop - 2) & 0xff;
+    emit_move_w_disp_an_dn(block, JIT_CTX_GB_SP, REG_68K_A_CTX, REG_68K_D_SCRATCH_1);
+    compile_call_dmg_read16(block);
+    emit_addi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
+    emit_addq_w_an(block, REG_68K_A_SP, 2);
+    emit_move_w_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_NEXT_PC);
+
+    // Patch done branch
+    block->code[done + 2] = (block->length - done - 2) >> 8;
+    block->code[done + 3] = (block->length - done - 2) & 0xff;
+
     emit_dispatch_jump(block);
 }
 
@@ -334,37 +403,85 @@ void compile_ret(struct code_block *block)
 // branch_if_set: if true, return when flag is set; if false, return when clear
 void compile_ret_cond(struct code_block *block, uint8_t flag_bit, int branch_if_set)
 {
+    size_t skip_ret, slow_pop, done;
+
     // Test the flag bit in D7
     emit_btst_imm_dn(block, flag_bit, REG_68K_D_FLAGS);
 
-    // If condition NOT met, skip the return sequence
-    // ret sequence: moveq(2) + move.b(4) + rol(2) + move.b(2) + addq(2) + addi(6) +
-    //               dispatch_jump(6) = 24, +2 = 26
+    // If condition NOT met, skip the entire return sequence (patched later)
+    skip_ret = block->length;
     if (branch_if_set) {
-        emit_beq_w(block, 26);
+        emit_beq_w(block, 0);  // placeholder
     } else {
-        emit_bne_w(block, 26);
+        emit_bne_w(block, 0);  // placeholder
     }
 
-    // Pop return address and dispatch
+    // Check stack_in_ram
+    emit_tst_l_disp_an(block, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
+    slow_pop = block->length;
+    emit_beq_w(block, 0);  // placeholder
+
+    // Fast path: pop return address from stack
     emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
     emit_move_b_disp_an_dn(block, 1, REG_68K_A_SP, REG_68K_D_NEXT_PC);
     emit_rol_w_8(block, REG_68K_D_NEXT_PC);
     emit_move_b_ind_an_dn(block, REG_68K_A_SP, REG_68K_D_NEXT_PC);
     emit_addq_w_an(block, REG_68K_A_SP, 2);
     emit_addi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
+    done = block->length;
+    emit_bra_w(block, 0);  // placeholder
+
+    // Slow path: read via dmg_read16
+    block->code[slow_pop + 2] = (block->length - slow_pop - 2) >> 8;
+    block->code[slow_pop + 3] = (block->length - slow_pop - 2) & 0xff;
+    emit_move_w_disp_an_dn(block, JIT_CTX_GB_SP, REG_68K_A_CTX, REG_68K_D_SCRATCH_1);
+    compile_call_dmg_read16(block);
+    emit_addi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
+    emit_addq_w_an(block, REG_68K_A_SP, 2);
+    emit_move_w_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_NEXT_PC);
+
+    // Patch done branch
+    block->code[done + 2] = (block->length - done - 2) >> 8;
+    block->code[done + 3] = (block->length - done - 2) & 0xff;
+
     emit_dispatch_jump(block);
+
+    // Patch skip_ret to here (condition not met, continue execution)
+    block->code[skip_ret + 2] = (block->length - skip_ret - 2) >> 8;
+    block->code[skip_ret + 3] = (block->length - skip_ret - 2) & 0xff;
 }
 
 void compile_rst_n(struct code_block *block, uint8_t target, uint16_t ret_addr)
 {
-    // push return address
+    size_t slow_push, done;
+
+    // Check stack_in_ram to decide fast vs slow path
+    emit_tst_l_disp_an(block, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
+    slow_push = block->length;
+    emit_beq_w(block, 0);  // placeholder
+
+    // Fast path: push return address
     emit_subq_w_an(block, REG_68K_A_SP, 2);
     emit_subi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
     emit_move_w_dn(block, REG_68K_D_SCRATCH_1, ret_addr);
     emit_move_b_dn_ind_an(block, REG_68K_D_SCRATCH_1, REG_68K_A_SP);
     emit_rol_w_8(block, REG_68K_D_SCRATCH_1);
     emit_move_b_dn_disp_an(block, REG_68K_D_SCRATCH_1, 1, REG_68K_A_SP);
+    done = block->length;
+    emit_bra_w(block, 0);  // placeholder
+
+    // Slow path: decrement gb_sp by 2, write via dmg_write16
+    block->code[slow_push + 2] = (block->length - slow_push - 2) >> 8;
+    block->code[slow_push + 3] = (block->length - slow_push - 2) & 0xff;
+    emit_subi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
+    emit_subq_w_an(block, REG_68K_A_SP, 2);
+    emit_move_w_disp_an_dn(block, JIT_CTX_GB_SP, REG_68K_A_CTX, REG_68K_D_SCRATCH_1);
+    emit_move_w_dn(block, REG_68K_D_SCRATCH_0, ret_addr);
+    compile_call_dmg_write16_d0(block);
+
+    // Patch done branch
+    block->code[done + 2] = (block->length - done - 2) >> 8;
+    block->code[done + 3] = (block->length - done - 2) & 0xff;
 
     // jump to target (0x00, 0x08, 0x10, 0x18, 0x20, 0x28, 0x30, 0x38)
     emit_moveq_dn(block, REG_68K_D_NEXT_PC, target);

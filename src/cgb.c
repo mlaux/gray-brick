@@ -170,6 +170,16 @@ int cgb_write_reg(struct cgb_state *cgb, struct dmg *dmg, u16 address, u8 data)
 
     case REG_HDMA5:
         // Writing to HDMA5 starts or cancels a transfer
+
+        // If HDMA is active and bit 7 is clear, cancel the HDMA (don't start GPDMA)
+        // This is used by Pokemon Crystal to terminate HDMA early
+        if (cgb->hdma_active && cgb->hdma_mode == 1 && !(data & 0x80)) {
+            cgb->hdma_active = 0;
+            // Keep the current hdma_length (don't update from data)
+            // After cancellation, bit 7 reads as 1 (inactive) with remaining length
+            return 1;
+        }
+
         cgb->hdma_length = data & 0x7f;
         cgb->hdma_mode = (data >> 7) & 1;
 
