@@ -35,7 +35,6 @@ typedef struct {
 
 extern jit_context jit_ctx;
 extern int jit_halted;
-extern int dmg_reads, dmg_writes;
 
 void jit_init(struct dmg *dmg);
 

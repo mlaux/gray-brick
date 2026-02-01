@@ -29,8 +29,6 @@ static u32 time_in_sync = 0;
 static u32 call_count = 0;
 static u32 last_report_tick = 0;
 
-int dmg_reads, dmg_writes;
-
 // register state that persists between block executions
 struct {
   u32 d2; // accumulated cycles, output

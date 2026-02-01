@@ -171,31 +171,12 @@ static u8 get_button_state(struct dmg *dmg)
 u8 dmg_read_slow(struct dmg *dmg, u16 address)
 {
     if (address == REG_LY) {
-        // the compiler detects "ldh a, [$44]; cp N; jr cc" which is the most
-        // common case, and skips to that line, so this actually doesn't run
-        // that much
-    
+        // O(1) LY calculation - each scanline is 456 cycles, 154 lines per frame
         u32 current = dmg->frame_cycles + jit_ctx.read_cycles;
         if (current >= 70224) {
             current -= 70224;
         }
-
-        // handle frame wrap-around
-        if (current < dmg->ly_read_cycle) {
-            dmg->ly_read_cycle = 0;
-            dmg->lazy_ly = 0;
-        }
-
-        // advance through scanlines until we reach current cycle
-        while (dmg->ly_read_cycle + 456 <= current) {
-            dmg->lazy_ly++;
-            if (dmg->lazy_ly == 154) {
-                dmg->lazy_ly = 0;
-            }
-            dmg->ly_read_cycle += 456;
-        }
-
-        return dmg->lazy_ly;
+        return (current / 456) % 154;
     }
 
     if (address == REG_STAT) {
@@ -266,7 +247,6 @@ u8 dmg_read(void *_dmg, u16 address)
 {
     u8 val;
     struct dmg *dmg = (struct dmg *) _dmg;
-    dmg_reads++;
     u8 *page = dmg->read_page[address >> 8];
     if (page) {
         val = page[address & 0xff];
@@ -363,7 +343,6 @@ void dmg_write(void *_dmg, u16 address, u8 data)
 {
     struct dmg *dmg = (struct dmg *) _dmg;
     u8 *page = dmg->write_page[address >> 8];
-    dmg_writes++;
     if (page) {
         page[address & 0xff] = data;
         return;
@@ -489,8 +468,6 @@ void dmg_sync_hw(struct dmg *dmg, int cycles)
         dmg->sent_vblank_start = 0;
         dmg->sent_ly_interrupt = 0;
         dmg->rendered_this_frame = 0;
-        dmg->lazy_ly = 0;
-        dmg->ly_read_cycle = 0;
         // Reset HDMA line counter for CGB
         if (dmg->cgb) {
             dmg->cgb->hdma_last_line = 0;
