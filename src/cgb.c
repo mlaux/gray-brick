@@ -190,10 +190,19 @@ int cgb_write_reg(struct cgb_state *cgb, struct dmg *dmg, u16 address, u8 data)
             {
                 u32 cycle_in_line = dmg->frame_cycles % 456;
                 u8 current_ly = dmg->frame_cycles / 456;
+                if (current_ly > 153) current_ly = 153;
+
                 if (current_ly < 144 && cycle_in_line >= 252) {
                     // We're in HBlank - immediately transfer first chunk
                     cgb_hdma_hblank(cgb, dmg, current_ly);
                     cgb->hdma_last_ly = current_ly;
+                } else if (current_ly < 144) {
+                    // Not in HBlank yet - first transfer will be this line's HBlank
+                    // Set hdma_last_ly to current_ly - 1 so hdma_sync starts from current_ly
+                    cgb->hdma_last_ly = (current_ly > 0) ? current_ly - 1 : 0xff;
+                } else {
+                    // In VBlank - first transfer will be at line 0 next frame
+                    cgb->hdma_last_ly = 0xff;
                 }
             }
         } else {

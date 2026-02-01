@@ -171,12 +171,30 @@ static u8 get_button_state(struct dmg *dmg)
 u8 dmg_read_slow(struct dmg *dmg, u16 address)
 {
     if (address == REG_LY) {
-        // O(1) LY calculation - each scanline is 456 cycles, 154 lines per frame
+        // the compiler detects "ldh a, [$44]; cp N; jr cc" which is the most
+        // common case, and skips to that line, so this actually doesn't run
+        // that much
         u32 current = dmg->frame_cycles + jit_ctx.read_cycles;
         if (current >= 70224) {
             current -= 70224;
         }
-        return (current / 456) % 154;
+
+        // handle frame wrap-around
+        if (current < dmg->ly_read_cycle) {
+            dmg->ly_read_cycle = 0;
+            dmg->lazy_ly = 0;
+        }
+
+        // advance through scanlines until we reach current cycle
+        while (dmg->ly_read_cycle + 456 <= current) {
+            dmg->lazy_ly++;
+            if (dmg->lazy_ly == 154) {
+                dmg->lazy_ly = 0;
+            }
+            dmg->ly_read_cycle += 456;
+        }
+
+        return dmg->lazy_ly;
     }
 
     if (address == REG_STAT) {

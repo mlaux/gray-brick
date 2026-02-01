@@ -135,10 +135,7 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
         // also, a block of all NOPs (Link's Awakening DX has this) overflows
         // the m68k_offsets array, and i don't want to make it bigger, so
         // just chain to another block. worst case: 253 nops then a fused compare/branch
-        // Also check src_ptr to prevent m68k_offsets overflow (array is 256 elements)
-        if (block->length > sizeof(block->code) - 200
-                || block->count > 254
-                || src_ptr >= 256) {
+        if (block->length > sizeof(block->code) - 200 || src_ptr >= 256) {
             emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
             emit_move_w_dn(block, REG_68K_D_NEXT_PC, src_address + src_ptr);
             emit_patchable_exit(block);
@@ -221,6 +218,11 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
         case 0x3b: // dec sp
             emit_subq_l_an(block, REG_68K_A_SP, 1);
             emit_subi_w_disp_an(block, 1, JIT_CTX_GB_SP, REG_68K_A_CTX);
+            break;
+
+        case 0x33: // inc sp
+            emit_addq_l_an(block, REG_68K_A_SP, 1);
+            emit_addi_w_disp_an(block, 1, JIT_CTX_GB_SP, REG_68K_A_CTX);
             break;
 
         case 0x03: // inc bc

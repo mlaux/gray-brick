@@ -3,6 +3,8 @@
 #include <string.h>
 
 #include "debug.h"
+#include "dmg.h"
+#include "lcd.h"
 
 static int debug_enabled = 1;
 
@@ -79,4 +81,55 @@ void debug_log_block(struct code_block *block)
     FSWrite(fref, &len, buf);
 
     FSClose(fref);
+}
+
+void debug_dump_vram(struct dmg *dmg)
+{
+    short fref;
+    long len;
+    OSErr err;
+
+    if (!dmg || !dmg->video_ram) return;
+
+    // Dump VRAM bank 0 (first 8KB)
+    err = FSOpen("\pvram_bank0.bin", 0, &fref);
+    if (err == fnfErr) {
+        Create("\pvram_bank0.bin", 0, 'BINA', 'VRAM');
+        err = FSOpen("\pvram_bank0.bin", 0, &fref);
+    }
+    if (err == noErr) {
+        SetFPos(fref, fsFromStart, 0);
+        len = 0x2000;  // 8KB
+        FSWrite(fref, &len, dmg->video_ram);
+        SetEOF(fref, len);
+        FSClose(fref);
+    }
+
+    // Dump VRAM bank 1 (second 8KB) - only for CGB
+    err = FSOpen("\pvram_bank1.bin", 0, &fref);
+    if (err == fnfErr) {
+        Create("\pvram_bank1.bin", 0, 'BINA', 'VRAM');
+        err = FSOpen("\pvram_bank1.bin", 0, &fref);
+    }
+    if (err == noErr) {
+        SetFPos(fref, fsFromStart, 0);
+        len = 0x2000;  // 8KB
+        FSWrite(fref, &len, dmg->video_ram + 0x2000);
+        SetEOF(fref, len);
+        FSClose(fref);
+    }
+
+    // Dump OAM (160 bytes)
+    err = FSOpen("\poam_dump.bin", 0, &fref);
+    if (err == fnfErr) {
+        Create("\poam_dump.bin", 0, 'BINA', 'OAM ');
+        err = FSOpen("\poam_dump.bin", 0, &fref);
+    }
+    if (err == noErr) {
+        SetFPos(fref, fsFromStart, 0);
+        len = 0xA0;  // 160 bytes
+        FSWrite(fref, &len, dmg->lcd->oam);
+        SetEOF(fref, len);
+        FSClose(fref);
+    }
 }

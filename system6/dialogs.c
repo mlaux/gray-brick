@@ -322,7 +322,7 @@ void LoadPreferences(void)
   int incompatibleDirect, incompatibleIndexed;
 
   h = GetResource(RES_PREFS_TYPE, RES_PREFS_ID);
-  if (h != nil && GetHandleSize(h) >= sizeof(int) * 7) {
+  if (h != nil && GetHandleSize(h) >= sizeof(int) * 9) {
     prefs = (int *) *h;
     cycles_per_exit = prefs[0];
     frame_skip = prefs[1];
@@ -334,18 +334,8 @@ void LoadPreferences(void)
     if (current_palette < 0 || current_palette >= gb_palette_count) {
       current_palette = 0;
     }
-    // Load gbc_enabled if available (newer format)
-    if (GetHandleSize(h) >= sizeof(int) * 8) {
-      gbc_enabled = prefs[7];
-    } else {
-      gbc_enabled = 1;  // default: enabled
-    }
-    // Load ignore_double_speed if available (newer format)
-    if (GetHandleSize(h) >= sizeof(int) * 9) {
-      ignore_double_speed = prefs[8];
-    } else {
-      ignore_double_speed = 0;  // default: accurate emulation
-    }
+    gbc_enabled = prefs[7];
+    ignore_double_speed = prefs[8];
   } else {
     cycles_per_exit = cyclesValues[0];
     frame_skip = 4;

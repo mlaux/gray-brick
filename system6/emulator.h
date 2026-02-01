@@ -44,6 +44,9 @@ extern PixMap offscreen_pixmap;
 #define MENU_FILE 129
 #define MENU_EDIT 130
 #define MENU_PALETTES 131
+#define MENU_DEBUG 132
+
+#define DEBUG_DUMP_VRAM 1
 
 #define APPLE_ABOUT 1
 

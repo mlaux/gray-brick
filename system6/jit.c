@@ -243,16 +243,6 @@ int jit_run(struct dmg *dmg)
   code = cache_lookup(jit_regs.d3, jit_ctx.current_rom_bank);
 
   if (!code) {
-    // Reject invalid PC addresses - VRAM ($8000-$9FFF) and external RAM ($A000-$BFFF)
-    // are not executable. This catches garbage addresses from corrupted jump tables.
-    u16 pc = jit_regs.d3 & 0xFFFF;
-    if (pc >= 0x8000 && pc < 0xC000) {
-      sprintf(buf, "Bad PC=%04x", pc);
-      set_status_bar(buf);
-      jit_halted = 1;
-      return 0;
-    }
-
     sprintf(buf, "$%02x:%04x %luk/%luk",
       jit_ctx.current_rom_bank,
       jit_regs.d3,
