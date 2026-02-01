@@ -795,6 +795,7 @@ int main(int argc, char *argv[])
 
   init_dither_lut();
   lcd_init_lut();
+  lcd_cgb_init_lut();
 
   finderResult = CheckFinderFiles();
   if (finderResult == 1 || ShowOpenBox()) {

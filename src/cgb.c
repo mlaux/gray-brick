@@ -122,6 +122,8 @@ int cgb_write_reg(struct cgb_state *cgb, struct dmg *dmg, u16 address, u8 data)
     case REG_BCPD: {
         u8 idx = dmg->lcd->bcps & 0x3f;
         dmg->lcd->bg_palette_ram[idx] = data;
+        // Mark color as dirty (2 bytes per color, so color = idx >> 1)
+        dmg->lcd->bg_palette_dirty |= (1UL << (idx >> 1));
         // Auto-increment if bit 7 is set
         if (dmg->lcd->bcps & 0x80) {
             dmg->lcd->bcps = (dmg->lcd->bcps & 0x80) | ((idx + 1) & 0x3f);
@@ -136,6 +138,8 @@ int cgb_write_reg(struct cgb_state *cgb, struct dmg *dmg, u16 address, u8 data)
     case REG_OCPD: {
         u8 idx = dmg->lcd->ocps & 0x3f;
         dmg->lcd->obj_palette_ram[idx] = data;
+        // Mark color as dirty (2 bytes per color, so color = idx >> 1)
+        dmg->lcd->obj_palette_dirty |= (1UL << (idx >> 1));
         // Auto-increment if bit 7 is set
         if (dmg->lcd->ocps & 0x80) {
             dmg->lcd->ocps = (dmg->lcd->ocps & 0x80) | ((idx + 1) & 0x3f);

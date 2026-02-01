@@ -8,16 +8,38 @@
 #include "dmg.h"
 #include "cgb.h"
 
+// LUT for CGB tile decoding - maps nibble pairs to packed 4-pixel bytes
+// Index = (data1_nibble << 4) | data2_nibble
+// This is the same format as DMG but without palette mapping
+static u8 tile_decode_cgb[256];
+
+// Shift amounts for packed pixel access (avoids 6 - idx * 2 multiply)
+static const u8 pixel_shift[4] = { 6, 4, 2, 0 };
+
+void lcd_cgb_init_lut(void)
+{
+    int k;
+    for (k = 0; k < 256; k++) {
+        // k = (data1_nibble << 4) | data2_nibble
+        // Decode to 4 pixels in packed format
+        u8 p0 = ((k >> 7) & 1) | (((k >> 3) & 1) << 1);
+        u8 p1 = ((k >> 6) & 1) | (((k >> 2) & 1) << 1);
+        u8 p2 = ((k >> 5) & 1) | (((k >> 1) & 1) << 1);
+        u8 p3 = ((k >> 4) & 1) | ((k & 1) << 1);
+        tile_decode_cgb[k] = (p0 << 6) | (p1 << 4) | (p2 << 2) | p3;
+    }
+}
+
 // helper to extract single pixel from packed byte (pixel 0 is bits 7-6)
 static inline u8 packed_get_pixel(u8 packed, int pixel_idx)
 {
-    return (packed >> (6 - pixel_idx * 2)) & 3;
+    return (packed >> pixel_shift[pixel_idx]) & 3;
 }
 
 // helper to set single pixel in packed byte
 static inline u8 packed_set_pixel(u8 packed, int pixel_idx, u8 value)
 {
-    int shift = 6 - pixel_idx * 2;
+    int shift = pixel_shift[pixel_idx];
     return (packed & ~(3 << shift)) | ((value & 3) << shift);
 }
 
@@ -25,24 +47,9 @@ static inline u8 packed_set_pixel(u8 packed, int pixel_idx, u8 value)
 // Also writes 8 bytes of per-pixel attribute data
 static inline void render_tile_row_cgb(u8 *p, u8 *a, u8 data1, u8 data2, u8 attr_val)
 {
-    // Decode 8 pixels to 2 packed bytes (4 pixels each)
-    // Use base decode - no palette mapping for CGB (palette is per-pixel)
-    int b;
-    u8 packed0 = 0, packed1 = 0;
-
-    for (b = 0; b < 4; b++) {
-        int bit = 7 - b;
-        int col = ((data1 >> bit) & 1) | (((data2 >> bit) & 1) << 1);
-        packed0 |= col << (6 - b * 2);
-    }
-    for (b = 0; b < 4; b++) {
-        int bit = 3 - b;
-        int col = ((data1 >> bit) & 1) | (((data2 >> bit) & 1) << 1);
-        packed1 |= col << (6 - b * 2);
-    }
-
-    p[0] = packed0;
-    p[1] = packed1;
+    // Use LUT to decode tile data - 2 lookups instead of 8-iteration loop
+    p[0] = tile_decode_cgb[(data1 & 0xf0) | (data2 >> 4)];
+    p[1] = tile_decode_cgb[((data1 & 0x0f) << 4) | (data2 & 0x0f)];
 
     // Store per-pixel attribute for all 8 pixels
     a[0] = attr_val;

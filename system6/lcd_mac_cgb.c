@@ -16,6 +16,11 @@
 static unsigned char cgb_bg_color_cache[32];
 static unsigned char cgb_obj_color_cache[32];
 
+// Combined color LUT: indexed by [lut_index][color_index]
+// lut_index = ((attr >> 1) & 0x08) | (attr & 0x07)
+// Maps: BG palettes 0-7 → indices 0-7, sprite palettes 0-7 → indices 8-15
+static unsigned char cgb_color_lut[16][4];
+
 // Convert RGB555 to RGBColor for Palette Manager
 static void rgb555_to_rgbcolor(unsigned short rgb555, RGBColor *out)
 {
@@ -32,27 +37,47 @@ static void rgb555_to_rgbcolor(unsigned short rgb555, RGBColor *out)
 
 // Update CGB palette cache from current palette RAM
 // Maps RGB555 colors to nearest screen color table entries
+// Only updates entries that have been marked dirty since last call
 static void update_cgb_palette_cache(struct lcd *lcd_ptr)
 {
     int k;
     RGBColor rgb;
     unsigned short color16;
+    u32 bg_dirty = lcd_ptr->bg_palette_dirty;
+    u32 obj_dirty = lcd_ptr->obj_palette_dirty;
 
-    // Update BG palette colors (8 palettes * 4 colors = 32 colors)
-    for (k = 0; k < 32; k++) {
-        color16 = lcd_ptr->bg_palette_ram[k * 2] |
-                  (lcd_ptr->bg_palette_ram[k * 2 + 1] << 8);
-        rgb555_to_rgbcolor(color16, &rgb);
-        cgb_bg_color_cache[k] = Color2Index(&rgb);
+    // Early exit if nothing changed
+    if (bg_dirty == 0 && obj_dirty == 0) {
+        return;
     }
 
-    // OBJ palette colors
+    // Update only dirty BG palette colors
     for (k = 0; k < 32; k++) {
-        color16 = lcd_ptr->obj_palette_ram[k * 2] |
-                  (lcd_ptr->obj_palette_ram[k * 2 + 1] << 8);
-        rgb555_to_rgbcolor(color16, &rgb);
-        cgb_obj_color_cache[k] = Color2Index(&rgb);
+        if (bg_dirty & (1UL << k)) {
+            color16 = lcd_ptr->bg_palette_ram[k * 2] |
+                      (lcd_ptr->bg_palette_ram[k * 2 + 1] << 8);
+            rgb555_to_rgbcolor(color16, &rgb);
+            cgb_bg_color_cache[k] = Color2Index(&rgb);
+            // Update the combined LUT for this color
+            cgb_color_lut[k >> 2][k & 3] = cgb_bg_color_cache[k];
+        }
     }
+
+    // Update only dirty OBJ palette colors
+    for (k = 0; k < 32; k++) {
+        if (obj_dirty & (1UL << k)) {
+            color16 = lcd_ptr->obj_palette_ram[k * 2] |
+                      (lcd_ptr->obj_palette_ram[k * 2 + 1] << 8);
+            rgb555_to_rgbcolor(color16, &rgb);
+            cgb_obj_color_cache[k] = Color2Index(&rgb);
+            // Update the combined LUT for this color (sprites at indices 8-15)
+            cgb_color_lut[8 + (k >> 2)][k & 3] = cgb_obj_color_cache[k];
+        }
+    }
+
+    // Clear dirty flags
+    lcd_ptr->bg_palette_dirty = 0;
+    lcd_ptr->obj_palette_dirty = 0;
 }
 
 // CGB 1x indexed rendering - reads pixel and attr buffers
@@ -81,6 +106,8 @@ static void lcd_draw_1x_cgb(struct lcd *lcd_ptr)
             unsigned char packed = src[gx];
             int px = gx * 4;
             unsigned char c0, c1, c2, c3;
+            unsigned char attr0, attr1, attr2, attr3;
+            int lut0, lut1, lut2, lut3;
 
             // Get color indices for each pixel
             int p0 = (packed >> 6) & 3;
@@ -88,27 +115,22 @@ static void lcd_draw_1x_cgb(struct lcd *lcd_ptr)
             int p2 = (packed >> 2) & 3;
             int p3 = packed & 3;
 
-            // Look up each pixel with its own attribute
-            {
-                unsigned char attr0 = row_attr[px];
-                unsigned char *pal0 = (attr0 & ATTR_IS_SPRITE) ? cgb_obj_color_cache : cgb_bg_color_cache;
-                c0 = pal0[(attr0 & ATTR_PALETTE_MASK) * 4 + p0];
-            }
-            {
-                unsigned char attr1 = row_attr[px + 1];
-                unsigned char *pal1 = (attr1 & ATTR_IS_SPRITE) ? cgb_obj_color_cache : cgb_bg_color_cache;
-                c1 = pal1[(attr1 & ATTR_PALETTE_MASK) * 4 + p1];
-            }
-            {
-                unsigned char attr2 = row_attr[px + 2];
-                unsigned char *pal2 = (attr2 & ATTR_IS_SPRITE) ? cgb_obj_color_cache : cgb_bg_color_cache;
-                c2 = pal2[(attr2 & ATTR_PALETTE_MASK) * 4 + p2];
-            }
-            {
-                unsigned char attr3 = row_attr[px + 3];
-                unsigned char *pal3 = (attr3 & ATTR_IS_SPRITE) ? cgb_obj_color_cache : cgb_bg_color_cache;
-                c3 = pal3[(attr3 & ATTR_PALETTE_MASK) * 4 + p3];
-            }
+            // Convert attr to LUT index: ((attr >> 1) & 0x08) | (attr & 0x07)
+            // This maps BG palettes 0-7 to indices 0-7, sprites to 8-15
+            attr0 = row_attr[px];
+            attr1 = row_attr[px + 1];
+            attr2 = row_attr[px + 2];
+            attr3 = row_attr[px + 3];
+
+            lut0 = ((attr0 >> 1) & 0x08) | (attr0 & 0x07);
+            lut1 = ((attr1 >> 1) & 0x08) | (attr1 & 0x07);
+            lut2 = ((attr2 >> 1) & 0x08) | (attr2 & 0x07);
+            lut3 = ((attr3 >> 1) & 0x08) | (attr3 & 0x07);
+
+            c0 = cgb_color_lut[lut0][p0];
+            c1 = cgb_color_lut[lut1][p1];
+            c2 = cgb_color_lut[lut2][p2];
+            c3 = cgb_color_lut[lut3][p3];
 
             *dst++ = ((unsigned long)c0 << 24) | ((unsigned long)c1 << 16) |
                      ((unsigned long)c2 << 8) | c3;
@@ -160,6 +182,8 @@ static void lcd_draw_2x_cgb(struct lcd *lcd_ptr)
             unsigned char packed = src[gx];
             int px = gx * 4;
             unsigned char c0, c1, c2, c3;
+            unsigned char attr0, attr1, attr2, attr3;
+            int lut0, lut1, lut2, lut3;
             unsigned long lo, hi;
 
             int p0 = (packed >> 6) & 3;
@@ -167,27 +191,21 @@ static void lcd_draw_2x_cgb(struct lcd *lcd_ptr)
             int p2 = (packed >> 2) & 3;
             int p3 = packed & 3;
 
-            // Look up each pixel with its own attribute
-            {
-                unsigned char attr0 = row_attr[px];
-                unsigned char *pal0 = (attr0 & ATTR_IS_SPRITE) ? cgb_obj_color_cache : cgb_bg_color_cache;
-                c0 = pal0[(attr0 & ATTR_PALETTE_MASK) * 4 + p0];
-            }
-            {
-                unsigned char attr1 = row_attr[px + 1];
-                unsigned char *pal1 = (attr1 & ATTR_IS_SPRITE) ? cgb_obj_color_cache : cgb_bg_color_cache;
-                c1 = pal1[(attr1 & ATTR_PALETTE_MASK) * 4 + p1];
-            }
-            {
-                unsigned char attr2 = row_attr[px + 2];
-                unsigned char *pal2 = (attr2 & ATTR_IS_SPRITE) ? cgb_obj_color_cache : cgb_bg_color_cache;
-                c2 = pal2[(attr2 & ATTR_PALETTE_MASK) * 4 + p2];
-            }
-            {
-                unsigned char attr3 = row_attr[px + 3];
-                unsigned char *pal3 = (attr3 & ATTR_IS_SPRITE) ? cgb_obj_color_cache : cgb_bg_color_cache;
-                c3 = pal3[(attr3 & ATTR_PALETTE_MASK) * 4 + p3];
-            }
+            // Convert attr to LUT index: ((attr >> 1) & 0x08) | (attr & 0x07)
+            attr0 = row_attr[px];
+            attr1 = row_attr[px + 1];
+            attr2 = row_attr[px + 2];
+            attr3 = row_attr[px + 3];
+
+            lut0 = ((attr0 >> 1) & 0x08) | (attr0 & 0x07);
+            lut1 = ((attr1 >> 1) & 0x08) | (attr1 & 0x07);
+            lut2 = ((attr2 >> 1) & 0x08) | (attr2 & 0x07);
+            lut3 = ((attr3 >> 1) & 0x08) | (attr3 & 0x07);
+
+            c0 = cgb_color_lut[lut0][p0];
+            c1 = cgb_color_lut[lut1][p1];
+            c2 = cgb_color_lut[lut2][p2];
+            c3 = cgb_color_lut[lut3][p3];
 
             // 2x: each pixel doubled horizontally
             lo = ((unsigned long)c0 << 24) | ((unsigned long)c0 << 16) |

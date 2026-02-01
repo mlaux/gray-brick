@@ -55,6 +55,10 @@ struct lcd {
     u8 obj_palette_ram[64];
     u8 bcps;  // BG palette index + auto-increment (bit 7)
     u8 ocps;  // Sprite palette index + auto-increment (bit 7)
+
+    // CGB palette dirty tracking (32 bits = 32 colors)
+    u32 bg_palette_dirty;
+    u32 obj_palette_dirty;
 };
 
 void lcd_new(struct lcd *lcd);
@@ -111,6 +115,7 @@ void lcd_render_background(struct dmg *dmg, int lcdc, int window_enabled);
 void lcd_render_objs(struct dmg *dmg);
 
 // CGB-specific rendering (in lcd_cgb.c)
+void lcd_cgb_init_lut(void);
 void lcd_cgb_render_background(struct dmg *dmg, int lcdc, int window_enabled);
 void lcd_cgb_render_objs(struct dmg *dmg);
 

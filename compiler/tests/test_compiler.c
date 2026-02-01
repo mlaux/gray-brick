@@ -259,8 +259,9 @@ void run_program(uint8_t *gb_rom, uint16_t start_pc)
         m68k_set_reg(M68K_REG_A0 + k, 0);
     }
 
-    // Initialize GB stack pointer (A3 = base + SP)
+    // Initialize GB stack pointer (A3 = base + SP, and JIT_CTX_GB_SP for slow path)
     m68k_set_reg(M68K_REG_A3, GB_MEM_BASE + DEFAULT_GB_SP);
+    m68k_write_memory_16(JIT_CTX_ADDR + JIT_CTX_GB_SP, DEFAULT_GB_SP);
 
     // Set A4 to runtime context
     m68k_set_reg(M68K_REG_A4, JIT_CTX_ADDR);
