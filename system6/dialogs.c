@@ -340,6 +340,12 @@ void LoadPreferences(void)
     } else {
       gbc_enabled = 1;  // default: enabled
     }
+    // Load ignore_double_speed if available (newer format)
+    if (GetHandleSize(h) >= sizeof(int) * 9) {
+      ignore_double_speed = prefs[8];
+    } else {
+      ignore_double_speed = 0;  // default: accurate emulation
+    }
   } else {
     cycles_per_exit = cyclesValues[0];
     frame_skip = 4;
@@ -347,6 +353,7 @@ void LoadPreferences(void)
     limit_fps = 0;
     current_palette = 0;
     gbc_enabled = 1;
+    ignore_double_speed = 0;
     if (screen_depth >= 8) {
       video_mode = VIDEO_INDEXED;
       screen_scale = 1;
@@ -370,7 +377,7 @@ void SavePreferences(void)
 {
   Handle h;
   int *prefs;
-  Size needed = sizeof(int) * 8;
+  Size needed = sizeof(int) * 9;
 
   h = GetResource(RES_PREFS_TYPE, RES_PREFS_ID);
   if (h == nil) {
@@ -392,6 +399,7 @@ void SavePreferences(void)
   prefs[5] = limit_fps;
   prefs[6] = current_palette;
   prefs[7] = gbc_enabled;
+  prefs[8] = ignore_double_speed;
   ChangedResource(h);
   WriteResource(h);
 }

@@ -450,7 +450,8 @@ void dmg_sync_hw(struct dmg *dmg, int cycles)
     dmg->total_cycles += cycles;
 
     // In double speed mode, PPU/APU run at normal speed (half the CPU cycles)
-    ppu_cycles = (dmg->cgb && dmg->cgb->double_speed) ? (cycles >> 1) : cycles;
+    // If ignore_double_speed is set, treat as normal speed for better performance
+    ppu_cycles = (dmg->cgb && dmg->cgb->double_speed && !ignore_double_speed) ? (cycles >> 1) : cycles;
     dmg->frame_cycles += ppu_cycles;
 
     audio_mac_sync(ppu_cycles);

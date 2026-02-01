@@ -66,6 +66,7 @@ unsigned char app_running;
 unsigned char sound_enabled;
 unsigned char limit_fps;
 unsigned char gbc_enabled = 1;  // default: GBC support enabled
+unsigned char ignore_double_speed = 0;  // default: emulate double-speed accurately
 int screen_depth;
 
 static u32 last_frame_count;
@@ -172,6 +173,7 @@ void InitToolbox(void)
   // Add GBC mode toggle to Options menu (after Key Mappings)
   InsertMenuItem(GetMenuHandle(MENU_EDIT), "\p(-", EDIT_KEY_MAPPINGS);
   InsertMenuItem(GetMenuHandle(MENU_EDIT), "\pRun as GBC", EDIT_KEY_MAPPINGS + 1);
+  InsertMenuItem(GetMenuHandle(MENU_EDIT), "\pIgnore Double Speed", EDIT_KEY_MAPPINGS + 2);
   DrawMenuBar();
 
   app_running = 1;
@@ -411,6 +413,7 @@ static void UpdateMenuItems(void)
   CheckItem(menu, EDIT_SCALE_1X, screen_scale == 1);
   CheckItem(menu, EDIT_SCALE_2X, screen_scale == 2);
   CheckItem(menu, EDIT_GBC_MODE, gbc_enabled);
+  CheckItem(menu, EDIT_IGNORE_DOUBLE_SPEED, ignore_double_speed);
 }
 
 void SetScreenScale(int scale)
@@ -660,6 +663,10 @@ void OnMenuAction(long action)
           dmg.cgb = NULL;
         }
       }
+      SavePreferences();
+    } else if (item == EDIT_IGNORE_DOUBLE_SPEED) {
+      ignore_double_speed = !ignore_double_speed;
+      CheckItem(GetMenuHandle(MENU_EDIT), EDIT_IGNORE_DOUBLE_SPEED, ignore_double_speed);
       SavePreferences();
     }
   }
