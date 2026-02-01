@@ -753,10 +753,10 @@ int main(int argc, char *argv[])
 
   InitToolbox();
   DetectScreenDepth();
-  // if (screen_depth > 1) {
-  //   InstallPalettesMenu();
-  //   DrawMenuBar();
-  // }
+  if (screen_depth > 1) {
+    InstallPalettesMenu();
+    DrawMenuBar();
+  }
   LoadKeyMappings();
   LoadPreferences();
   UpdateMenuItems();
