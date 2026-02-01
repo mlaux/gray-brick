@@ -118,8 +118,8 @@ void jit_init(struct dmg *dmg)
   jit_ctx.dispatcher_return = get_dispatcher_code();
   jit_ctx.patch_helper = get_patch_helper_code();
   jit_ctx.frame_cycles_ptr = &dmg->frame_cycles;
-  jit_ctx.gb_sp = 0xfffe;  // initial SP (HRAM, slow mode)
-  jit_ctx.stack_in_ram = 0;   // slow mode - A3 holds GB SP
+  jit_ctx.gb_sp = 0xfffe; // initial SP
+  jit_ctx.stack_in_ram = 1;
   sync_cache_pointers();
 
   jit_regs.d3 = 0x100; // initial PC
@@ -128,7 +128,7 @@ void jit_init(struct dmg *dmg)
   jit_regs.d6 = 0x000000d8; // DE
   jit_regs.d7 = 0x05; // flags
   jit_regs.a2 = 0x014d; // HL
-  jit_regs.a3 = 0xfffe; // initial SP
+  jit_regs.a3 = (unsigned long) dmg->zero_page + (0xfffe - 0xff80); // initial SP
   jit_regs.a4 = (unsigned long) &jit_ctx;
   jit_regs.a5 = (unsigned long) dmg->read_page;
   jit_regs.a6 = (unsigned long) dmg->write_page;
