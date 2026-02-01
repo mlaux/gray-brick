@@ -144,7 +144,8 @@ void jit_init(struct dmg *dmg)
   sync_cache_pointers();
 
   jit_regs.d3 = 0x100; // initial PC
-  jit_regs.d4 = 0x01; // A
+  // A register: 0x11 for CGB, 0x01 for DMG
+  jit_regs.d4 = (dmg->cgb && dmg->cgb->mode) ? 0x11 : 0x01;
   jit_regs.d5 = 0x00000013; // BC
   jit_regs.d6 = 0x000000d8; // DE
   jit_regs.d7 = 0x05; // flags

@@ -670,6 +670,17 @@ void OnMenuAction(long action)
       SavePreferences();
     }
   }
+
+  else if (menu == MENU_DEBUG) {
+    if (item == DEBUG_DUMP_VRAM) {
+      if (g_wp) {
+        debug_dump_vram(&dmg);
+        set_status_bar("VRAM dumped");
+      } else {
+        set_status_bar("No ROM loaded");
+      }
+    }
+  }
 }
 
 void OnMouseDown(EventRecord *pEvt)
@@ -792,10 +803,10 @@ int main(int argc, char *argv[])
 
   InitToolbox();
   DetectScreenDepth();
-  // if (screen_depth > 1) {
-  //   InstallPalettesMenu();
-  //   DrawMenuBar();
-  // }
+  if (screen_depth > 1) {
+    InstallPalettesMenu();
+    DrawMenuBar();
+  }
   LoadKeyMappings();
   LoadPreferences();
   UpdateMenuItems();
