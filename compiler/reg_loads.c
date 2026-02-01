@@ -397,6 +397,7 @@ int compile_reg_load(struct code_block *block, uint8_t op)
         break;
 
     case 0x7e: // ld a, (hl)
+        emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
         compile_call_dmg_read_a(block);
         break;

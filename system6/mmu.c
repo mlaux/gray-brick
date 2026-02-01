@@ -168,6 +168,18 @@ void pflusha_040(void)
     );
 }
 
+// Flush a single page from the ATC (68040)
+static void pflush_040(uint32_t addr)
+{
+    asm volatile(
+        "movea.l %0, %%a0\n\t"
+        ".word   0xf508"                /* pflush (a0) */
+        :
+        : "g" (addr)
+        : "a0", "memory"
+    );
+}
+
 static int cpu_type;
 
 static int get_cpu_type(void)
@@ -304,7 +316,8 @@ void mmu_update_rom_bank(struct dmg *dmg)
 
         page_table_040[2] = ((uint32_t) bank_data & 0xffffe000) | 0x24 | PDT_RESIDENT;
         page_table_040[3] = ((uint32_t) (bank_data + 0x2000) & 0xffffe000) | 0x24 | PDT_RESIDENT;
-        pflusha_040();
+        pflush_040(GB_VIRTUAL_BASE + 0x4000);
+        pflush_040(GB_VIRTUAL_BASE + 0x6000);
 
         asm volatile("move.w %0, %%sr" : : "d" (sr));
     }
@@ -325,7 +338,7 @@ void mmu_update_ram_bank(struct dmg *dmg)
         } else {
             page_table_040[5] = ((uint32_t) dmg->unused_area & 0xffffe000) | 0x20 | PDT_RESIDENT;
         }
-        pflusha_040();
+        pflush_040(GB_VIRTUAL_BASE + 0xa000);
 
         asm volatile("move.w %0, %%sr" : : "d" (sr));
     }

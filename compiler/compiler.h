@@ -36,7 +36,7 @@
 #define REG_68K_A_HL 2
 #define REG_68K_A_SP 3
 #define REG_68K_A_CTX 4
-#define REG_68K_A_READ_PAGE 5
+#define REG_68K_A_VIRT_BASE 5
 #define REG_68K_A_WRITE_PAGE 6
 
 #define COND_CC  4   // carry clear (nc)

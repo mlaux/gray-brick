@@ -25,9 +25,6 @@ void compile_slow_dmg_write(struct code_block *block, uint8_t val_reg)
     emit_pop_l_dn(block, REG_68K_D_CYCLE_COUNT); // 2
 }
 
-// MMU virtual address base for GB memory (0x0000-0xFDFF)
-#define GB_VIRT_BASE 0x08000000
-
 // move.w (An,Dm.l), Dd - load word from indexed address
 static void emit_move_w_idx_an_dn(
     struct code_block *block,
@@ -60,24 +57,22 @@ static void compile_inline_dmg_write(struct code_block *block, uint8_t val_reg)
     // Fast path: use MMU for 0x8000 <= addr < 0xFE00
     // cmpi.w #$fe00, d1                 ; 4 bytes [0-3]
     emit_cmpi_w_imm_dn(block, 0xfe00, REG_68K_D_SCRATCH_1);
-    // bcc.s slow_path (+24)             ; 2 bytes [4-5] -> offset 30
-    emit_bcc_s(block, 24);
+    // bcc.s slow_path (+18)             ; 2 bytes [4-5] -> offset 24
+    emit_bcc_s(block, 18);
     // btst #15, d1                      ; 4 bytes [6-9] - check if addr >= 0x8000
     emit_btst_imm_dn(block, 15, REG_68K_D_SCRATCH_1);
-    // beq.s slow_path (+18)             ; 2 bytes [10-11] -> offset 30 (MBC writes)
-    emit_beq_b(block, 18);
+    // beq.s slow_path (+12)             ; 2 bytes [10-11] -> offset 24 (MBC writes)
+    emit_beq_b(block, 12);
     // andi.l #$ffff, d1                 ; 6 bytes [12-17] - clear high word
     emit_andi_l_dn(block, REG_68K_D_SCRATCH_1, 0xffff);
-    // movea.l #$08000000, a0            ; 6 bytes [18-23]
-    emit_movea_l_imm32(block, REG_68K_A_SCRATCH_1, GB_VIRT_BASE);
-    // move.b val_reg, (a0,d1.l)         ; 4 bytes [24-27]
-    emit_move_b_dn_idx_an(block, val_reg, REG_68K_A_SCRATCH_1, REG_68K_D_SCRATCH_1);
-    // bra.s done (+24)                  ; 2 bytes [28-29] -> offset 54
+    // move.b val_reg, (a5,d1.l)         ; 4 bytes [18-21]
+    emit_move_b_dn_idx_an(block, val_reg, REG_68K_A_VIRT_BASE, REG_68K_D_SCRATCH_1);
+    // bra.s done (+24)                  ; 2 bytes [22-23] -> offset 48
     emit_bra_b(block, 24);
 
-    // slow_path: (offset 30)
+    // slow_path: (offset 24)
     compile_slow_dmg_write(block, val_reg);
-    // falls through to done (offset 54)
+    // falls through to done (offset 48)
 }
 
 // Call dmg_write(dmg, addr, val) - addr in D1, val in D4 (A register)
@@ -127,20 +122,18 @@ void compile_call_dmg_read(struct code_block *block)
     // Fast path: use MMU for addresses < 0xFE00
     // cmpi.w #$fe00, d1                 ; 4 bytes [0-3]
     emit_cmpi_w_imm_dn(block, 0xfe00, REG_68K_D_SCRATCH_1);
-    // bcc.s slow_path (+18)             ; 2 bytes [4-5] -> offset 24
-    emit_bcc_s(block, 18);
+    // bcc.s slow_path (+12)             ; 2 bytes [4-5] -> offset 18
+    emit_bcc_s(block, 12);
     // andi.l #$ffff, d1                 ; 6 bytes [6-11] - clear high word
     emit_andi_l_dn(block, REG_68K_D_SCRATCH_1, 0xffff);
-    // movea.l #$08000000, a0            ; 6 bytes [12-17]
-    emit_movea_l_imm32(block, REG_68K_A_SCRATCH_1, GB_VIRT_BASE);
-    // move.b (a0,d1.l), d0              ; 4 bytes [18-21]
-    emit_move_b_idx_an_dn(block, REG_68K_A_SCRATCH_1, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);
-    // bra.s done (+22)                  ; 2 bytes [22-23] -> offset 46
+    // move.b (a5,d1.l), d0              ; 4 bytes [12-15]
+    emit_move_b_idx_an_dn(block, REG_68K_A_VIRT_BASE, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);
+    // bra.s done (+22)                  ; 2 bytes [16-17] -> offset 40
     emit_bra_b(block, 22);
 
-    // slow_path: (offset 24)
+    // slow_path: (offset 18)
     compile_slow_dmg_read(block);
-    // falls through to done (offset 46)
+    // falls through to done (offset 40)
 }
 
 // Call dmg_read(dmg, addr) - addr in D1, result goes to D4 (A register)
@@ -186,22 +179,20 @@ void compile_call_dmg_read16(struct code_block *block)
     // Fast path: use MMU for addresses where both bytes < 0xFE00
     // cmpi.w #$fdff, d1                 ; 4 bytes [0-3]
     emit_cmpi_w_imm_dn(block, 0xfdff, REG_68K_D_SCRATCH_1);
-    // bcc.s slow_path (+20)             ; 2 bytes [4-5] -> offset 26
-    emit_bcc_s(block, 20);
+    // bcc.s slow_path (+14)             ; 2 bytes [4-5] -> offset 20
+    emit_bcc_s(block, 14);
     // andi.l #$ffff, d1                 ; 6 bytes [6-11] - clear high word
     emit_andi_l_dn(block, REG_68K_D_SCRATCH_1, 0xffff);
-    // movea.l #$08000000, a0            ; 6 bytes [12-17]
-    emit_movea_l_imm32(block, REG_68K_A_SCRATCH_1, GB_VIRT_BASE);
-    // move.w (a0,d1.l), d0              ; 4 bytes [18-21] - word read (bytes swapped)
-    emit_move_w_idx_an_dn(block, REG_68K_A_SCRATCH_1, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);
-    // rol.w #8, d0                      ; 2 bytes [22-23] - fix byte order
+    // move.w (a5,d1.l), d0              ; 4 bytes [12-15] - word read (bytes swapped)
+    emit_move_w_idx_an_dn(block, REG_68K_A_VIRT_BASE, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);
+    // rol.w #8, d0                      ; 2 bytes [16-17] - fix byte order
     emit_rol_w_8(block, REG_68K_D_SCRATCH_0);
-    // bra.b done (+22)                  ; 2 bytes [24-25] -> offset 48
+    // bra.b done (+22)                  ; 2 bytes [18-19] -> offset 42
     emit_bra_b(block, 22);
 
-    // slow_path: (offset 26)
+    // slow_path: (offset 20)
     compile_slow_dmg_read16(block);
-    // falls through to done (offset 48)
+    // falls through to done (offset 42)
 }
 
 // Slow path for dmg_write16 - addr in D1.w, data in D0.w
@@ -225,24 +216,22 @@ void compile_call_dmg_write16_d0(struct code_block *block)
     // Fast path: use MMU for addresses where both bytes < 0xFE00 and >= 0x8000
     // cmpi.w #$fdff, d1                 ; 4 bytes [0-3]
     emit_cmpi_w_imm_dn(block, 0xfdff, REG_68K_D_SCRATCH_1);
-    // bcc.s slow_path (+26)             ; 2 bytes [4-5] -> offset 32
-    emit_bcc_s(block, 26);
+    // bcc.s slow_path (+20)             ; 2 bytes [4-5] -> offset 26
+    emit_bcc_s(block, 20);
     // btst #15, d1                      ; 4 bytes [6-9] - check if addr >= 0x8000
     emit_btst_imm_dn(block, 15, REG_68K_D_SCRATCH_1);
-    // beq.s slow_path (+20)             ; 2 bytes [10-11] -> offset 32 (MBC writes)
-    emit_beq_b(block, 20);
+    // beq.s slow_path (+14)             ; 2 bytes [10-11] -> offset 26 (MBC writes)
+    emit_beq_b(block, 14);
     // andi.l #$ffff, d1                 ; 6 bytes [12-17] - clear high word
     emit_andi_l_dn(block, REG_68K_D_SCRATCH_1, 0xffff);
-    // movea.l #$08000000, a0            ; 6 bytes [18-23]
-    emit_movea_l_imm32(block, REG_68K_A_SCRATCH_1, GB_VIRT_BASE);
-    // rol.w #8, d0                      ; 2 bytes [24-25] - swap bytes for big-endian
+    // rol.w #8, d0                      ; 2 bytes [18-19] - swap bytes for big-endian
     emit_rol_w_8(block, REG_68K_D_SCRATCH_0);
-    // move.w d0, (a0,d1.l)              ; 4 bytes [26-29] - word write
-    emit_move_w_dn_idx_an(block, REG_68K_D_SCRATCH_0, REG_68K_A_SCRATCH_1, REG_68K_D_SCRATCH_1);
-    // bra.b done (+24)                  ; 2 bytes [30-31] -> offset 56
+    // move.w d0, (a5,d1.l)              ; 4 bytes [20-23] - word write
+    emit_move_w_dn_idx_an(block, REG_68K_D_SCRATCH_0, REG_68K_A_VIRT_BASE, REG_68K_D_SCRATCH_1);
+    // bra.b done (+24)                  ; 2 bytes [24-25] -> offset 50
     emit_bra_b(block, 24);
 
-    // slow_path: (offset 32)
+    // slow_path: (offset 26)
     compile_slow_dmg_write16(block);
-    // falls through to done (offset 56)
+    // falls through to done (offset 50)
 }

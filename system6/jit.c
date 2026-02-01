@@ -131,7 +131,7 @@ void jit_init(struct dmg *dmg)
   jit_regs.a2 = 0x014d; // HL
   jit_regs.a3 = (unsigned long) dmg->zero_page + (0xfffe - 0xff80); // initial SP
   jit_regs.a4 = (unsigned long) &jit_ctx;
-  jit_regs.a5 = (unsigned long) dmg->read_page;
+  jit_regs.a5 = 0x08000000;
   jit_regs.a6 = (unsigned long) dmg->write_page;
 
   mmu_setup_translation(dmg);
