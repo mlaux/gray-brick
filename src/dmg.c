@@ -521,6 +521,8 @@ void dmg_sync_hw(struct dmg *dmg, int cycles)
         dmg->sent_vblank_start = 0;
         dmg->sent_ly_interrupt = 0;
         dmg->rendered_this_frame = 0;
+        dmg->lazy_ly = 0;
+        dmg->ly_read_cycle = 0;
 
         // Reset HDMA line tracking for new frame
         if (dmg->cgb) {
