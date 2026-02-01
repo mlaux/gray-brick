@@ -139,3 +139,13 @@ uint32_t read_urp_040(void)
     );
     return urp;
 }
+
+void pflusha_040(void)
+{
+    asm volatile(
+        ".word   0xf518"                /* pflusha */
+        :
+        :
+        : "memory"
+    );
+}

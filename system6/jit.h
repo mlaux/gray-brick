@@ -12,7 +12,7 @@ typedef struct {
     /*  4 */ void *read_func;
     /*  8 */ void *write_func;
     /*  c */ void *ei_di_func;
-    /* 10 */ volatile u8 interrupt_check; // no longer used, can go away
+    /* 10 */ volatile u8 trace_enabled; // if set, dispatcher always returns to C
     /* 11 */ volatile u8 current_rom_bank;
     /* 12 */ u8 _pad[2];
     /* 14 */ void **bank0_cache;

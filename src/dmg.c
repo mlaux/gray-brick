@@ -152,7 +152,7 @@ static u8 get_button_state(struct dmg *dmg)
 
 u8 dmg_read_slow(struct dmg *dmg, u16 address)
 {
-      if (address == REG_LY) {
+    if (address == REG_LY) {
         // the compiler detects "ldh a, [$44]; cp N; jr cc" which is the most
         // common case, and skips to that line, so this actually doesn't run
         // that much
@@ -438,6 +438,7 @@ void dmg_sync_hw(struct dmg *dmg, int cycles)
         dmg->sent_ly_interrupt = 0;
         dmg->rendered_this_frame = 0;
         dmg->lazy_ly = 0;
+        dmg->ly_read_cycle = 0;
     }
 }
 

@@ -44,5 +44,6 @@ void pflusha_030(void);
 uint16_t read_tc_040(void);
 uint32_t read_srp_040(void);
 uint32_t read_urp_040(void);
+void pflusha_040(void);
 
 #endif /* _MMU_H */

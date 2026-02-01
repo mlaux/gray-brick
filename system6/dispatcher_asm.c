@@ -15,6 +15,8 @@ static void dispatcher_code_asm(void)
 {
     asm volatile(
         "\t"
+        "tst.b 16(%%a4)\n\t" // check trace_enabled
+        "bne.s .Ldisp_exit\n\t" // if set, always return to C
         "cmp.l %[cycles], %%d2\n\t"
         "bcc.s .Ldisp_exit\n\t"
 

@@ -276,16 +276,19 @@ void StopEmulation(void)
 
   if (screen_depth > 1) {
     PaletteHandle pal = GetPalette(g_wp);
+    DisposeWindow(g_wp);
     if (pal) {
       DisposePalette(pal);
     }
+  } else {
+    DisposeWindow(g_wp);
   }
+
+  g_wp = NULL;
   if (rom.data) {
     DisposePtr((Ptr) rom.data);
     rom.data = NULL;
   }
-  DisposeWindow(g_wp);
-  g_wp = NULL;
   UpdateMenuItems();
 }
 
@@ -430,15 +433,17 @@ void SetScreenScale(int scale)
 
   if (g_wp) {
     Rect newBounds;
+    PaletteHandle pal;
 
-    // dispose palette before window (Color QuickDraw only)
     if (screen_depth > 1) {
-      PaletteHandle pal = GetPalette(g_wp);
+      pal = GetPalette(g_wp);
+      DisposeWindow(g_wp);
       if (pal) {
         DisposePalette(pal);
       }
+    } else {
+      DisposeWindow(g_wp);
     }
-    DisposeWindow(g_wp);
 
     // create new window with updated size
     newBounds.top = WINDOW_Y;
@@ -673,7 +678,18 @@ static int ProcessEvents(void)
       case keyDown:
       case autoKey:
         if (evt.modifiers & cmdKey) {
-          OnMenuAction(MenuKey(evt.message & charCodeMask));
+          char ch = evt.message & charCodeMask;
+          // Command-T: toggle trace mode
+          if (ch == 't' && g_wp) {
+            jit_ctx.trace_enabled = !jit_ctx.trace_enabled;
+            if (jit_ctx.trace_enabled) {
+              set_status_bar("Trace ON");
+            } else {
+              set_status_bar("Trace OFF");
+            }
+          } else {
+            OnMenuAction(MenuKey(ch));
+          }
         } else if (g_wp) {
           int key = (evt.message & keyCodeMask) >> 8;
           HandleKeyEvent(key, 1);
@@ -737,10 +753,10 @@ int main(int argc, char *argv[])
 
   InitToolbox();
   DetectScreenDepth();
-  if (screen_depth > 1) {
-    InstallPalettesMenu();
-    DrawMenuBar();
-  }
+  // if (screen_depth > 1) {
+  //   InstallPalettesMenu();
+  //   DrawMenuBar();
+  // }
   LoadKeyMappings();
   LoadPreferences();
   UpdateMenuItems();

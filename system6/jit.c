@@ -123,6 +123,11 @@ void jit_init(struct dmg *dmg)
   sync_cache_pointers();
 
   jit_regs.d3 = 0x100; // initial PC
+  jit_regs.d4 = 0x01; // A
+  jit_regs.d5 = 0x00000013; // BC
+  jit_regs.d6 = 0x000000d8; // DE
+  jit_regs.d7 = 0x05; // flags
+  jit_regs.a2 = 0x014d; // HL
   jit_regs.a3 = 0xfffe; // initial SP
   jit_regs.a4 = (unsigned long) &jit_ctx;
   jit_regs.a5 = (unsigned long) dmg->read_page;
@@ -278,6 +283,12 @@ int jit_run(struct dmg *dmg)
     }
 
     code = block->code;
+  }
+
+  // trace mode: show PC before every block execution
+  if (jit_ctx.trace_enabled) {
+    sprintf(buf, "$%02x:%04lx", jit_ctx.current_rom_bank, jit_regs.d3);
+    set_status_bar(buf);
   }
 
   t1 = TickCount();
