@@ -46,4 +46,11 @@ uint32_t read_srp_040(void);
 uint32_t read_urp_040(void);
 void pflusha_040(void);
 
+// GB memory mapping via MMU
+struct dmg;
+void mmu_setup_translation(struct dmg *dmg);
+void mmu_cleanup(void);
+void mmu_update_rom_bank(struct dmg *dmg);
+void mmu_update_ram_bank(struct dmg *dmg);
+
 #endif /* _MMU_H */

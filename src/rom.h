@@ -10,10 +10,6 @@ struct rom {
     struct mbc *mbc;
 };
 
-int rom_load(struct rom *rom, const char *filename);
-
-void rom_free(struct rom *rom);
-
 // Extract game title from ROM header. buf should be at least 17 bytes.
 // Returns pointer to buf.
 char *rom_get_title(struct rom *rom, char *buf);

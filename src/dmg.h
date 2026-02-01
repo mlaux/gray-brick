@@ -36,14 +36,16 @@ struct dmg {
     struct lcd *lcd;
     struct audio *audio;
 
-    u8 main_ram[0x2000];
-    u8 video_ram[0x2000];
+    u8 *main_ram;
+    u8 *video_ram;
+    u8 *unused_area;
     u32 frames_rendered;
     int joypad_selected;
     int action_selected;
     u8 interrupt_enable;
     u8 interrupt_request_mask;
     void (*rom_bank_switch_hook)(int new_bank);
+    void (*ram_bank_switch_hook)(void);
 
     u8 joypad;
     u8 action_buttons;

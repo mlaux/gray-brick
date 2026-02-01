@@ -16,6 +16,7 @@
 #include "debug.h"
 #include "arena.h"
 #include "cpu_cache.h"
+#include "mmu.h"
 
 static u32 time_in_jit = 0;
 static u32 time_in_sync = 0;
@@ -132,6 +133,8 @@ void jit_init(struct dmg *dmg)
   jit_regs.a4 = (unsigned long) &jit_ctx;
   jit_regs.a5 = (unsigned long) dmg->read_page;
   jit_regs.a6 = (unsigned long) dmg->write_page;
+
+  mmu_setup_translation(dmg);
 
   jit_halted = 0;
 }
@@ -323,6 +326,7 @@ int jit_run(struct dmg *dmg)
 
 void jit_cleanup(void)
 {
+  mmu_cleanup();
   // we need this memory back to load the next ROM
   arena_destroy();
 }

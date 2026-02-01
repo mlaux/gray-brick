@@ -1,5 +1,23 @@
 // mmu.c - 68030/68040 MMU register access
 
+#include <Gestalt.h>
+
+#include "../src/dmg.h"
+#include "../src/rom.h"
+#include "../src/mbc.h"
+
+#define ROOT_040_ENTRIES     128
+#define POINTER_040_ENTRIES  128
+#define PAGE_040_ENTRIES     64
+
+/* 68040 UDT=2: resident descriptor pointing to next level */
+#define UDT_RESIDENT    0x02
+/* 68040 PDT=1: resident page descriptor */
+#define PDT_RESIDENT    0x01
+
+// 128 MB, maybe move to 0x3f000000? right below ROM
+#define GB_VIRTUAL_BASE 0x08000000
+
 #include "mmu.h"
 
 // 68030 MMU register access via PMOVE
@@ -148,4 +166,167 @@ void pflusha_040(void)
         :
         : "memory"
     );
+}
+
+static int cpu_type;
+
+static int get_cpu_type(void)
+{
+    long response;
+    if (Gestalt(gestaltProcessorType, &response) != noErr) {
+        return 0;
+    }
+
+    return (int) response;
+}
+
+// storage with padding for manual alignment
+static uint8_t pointer_table_040_storage[POINTER_040_ENTRIES * 4 + 512];
+static uint8_t page_table_040_storage[PAGE_040_ENTRIES * 4 + 256];
+// aligned pointers (set during init)
+static uint32_t *pointer_table_040;
+static uint32_t *page_table_040;
+static uint32_t old_root_entry_040;
+
+static void mmu_setup_translation_040(struct dmg *dmg)
+{
+    uint16_t tc;
+    uint32_t srp;
+    uint32_t *root_table;
+    int root_index, pointer_index;
+    short sr;
+    int k;
+
+    // manually align page tables since linker may not honor __attribute__((aligned))
+    pointer_table_040 = (uint32_t *)(((uint32_t)pointer_table_040_storage + 511) & ~511);
+    page_table_040 = (uint32_t *)(((uint32_t)page_table_040_storage + 255) & ~255);
+
+    // zero the tables
+    for (k = 0; k < POINTER_040_ENTRIES; k++)
+        pointer_table_040[k] = 0;
+    for (k = 0; k < PAGE_040_ENTRIES; k++)
+        page_table_040[k] = 0;
+
+    root_index = GB_VIRTUAL_BASE >> 25;              /* bits 31:25 */
+    pointer_index = (GB_VIRTUAL_BASE >> 18) & 0x7f;  /* bits 24:18 */
+
+    tc = read_tc_040();
+    srp = read_srp_040();
+    root_table = (uint32_t *)(srp & 0xfffffe00);
+    old_root_entry_040 = root_table[root_index];
+
+    // UDT=2, page table address in bits 31:8
+    pointer_table_040[pointer_index] = ((uint32_t) page_table_040 & 0xffffff00) | UDT_RESIDENT;
+
+    // PDT=1, physical address in bits 31:13, copyback cache (CM=01)
+    // rom bank 0
+    page_table_040[0] = ((uint32_t) dmg->rom->data & 0xffffe000) | 0x24 | PDT_RESIDENT;
+    page_table_040[1] = ((uint32_t) (dmg->rom->data + 0x2000) & 0xffffe000) | 0x24 | PDT_RESIDENT;
+    // rom bank switchable - start with bank 1
+    page_table_040[2] = ((uint32_t) (dmg->rom->data + 0x4000) & 0xffffe000) | 0x24 | PDT_RESIDENT;
+    page_table_040[3] = ((uint32_t) (dmg->rom->data + 0x6000) & 0xffffe000) | 0x24 | PDT_RESIDENT;
+    // video ram
+    page_table_040[4] = ((uint32_t) dmg->video_ram & 0xffffe000) | 0x20 | PDT_RESIDENT;
+    // cart ram - default to not present
+    page_table_040[5] = ((uint32_t) dmg->unused_area & 0xffffe000) | 0x20 | PDT_RESIDENT;
+    // main ram
+    page_table_040[6] = ((uint32_t) dmg->main_ram & 0xffffe000) | 0x20 | PDT_RESIDENT;
+    // echo ram + I/O... I/O will branch before trying to read/write here though
+    page_table_040[7] = ((uint32_t) dmg->main_ram & 0xffffe000) | 0x20 | PDT_RESIDENT;
+
+    // disable interrupts
+    asm volatile("move.w %%sr, %0" : "=d" (sr));
+    asm volatile("ori.w #0x0700, %sr");
+
+    // UDT=2, pointer table address in bits 31:9
+    root_table[root_index] = ((uint32_t) pointer_table_040 & 0xfffffe00) | UDT_RESIDENT;
+    pflusha_040();
+    // enable interrupts
+    asm volatile("move.w %0, %%sr" : : "d" (sr));
+}
+
+static void mmu_cleanup_040(void)
+{
+    uint32_t srp;
+    uint32_t *root_table;
+    short sr;
+
+    srp = read_srp_040();
+    root_table = (uint32_t *)(srp & 0xfffffe00);
+
+    asm volatile("move.w %%sr, %0" : "=d" (sr));
+    asm volatile("ori.w #0x0700, %sr");
+
+    root_table[GB_VIRTUAL_BASE >> 25] = old_root_entry_040;
+    pflusha_040();
+
+    asm volatile("move.w %0, %%sr" : : "d" (sr));
+}
+
+static void mmu_setup_translation_030(struct dmg *dmg)
+{
+
+}
+
+static void mmu_cleanup_030(void)
+{
+
+}
+
+void mmu_setup_translation(struct dmg *dmg)
+{
+    cpu_type = get_cpu_type();
+    if (cpu_type == gestalt68040) {
+        mmu_setup_translation_040(dmg);
+    } else if (cpu_type == gestalt68030) {
+        mmu_setup_translation_030(dmg);
+    }
+}
+
+void mmu_cleanup(void)
+{
+    if (cpu_type == gestalt68040) {
+        mmu_cleanup_040();
+    } else if (cpu_type == gestalt68030) {
+        mmu_cleanup_030();
+    }
+}
+
+void mmu_update_rom_bank(struct dmg *dmg)
+{
+    if (cpu_type == gestalt68040) {
+        struct mbc *mbc = dmg->rom->mbc;
+        uint8_t *bank_data = dmg->rom->data + mbc->rom_bank * 0x4000;
+        short sr;
+
+        asm volatile("move.w %%sr, %0" : "=d" (sr));
+        asm volatile("ori.w #0x0700, %sr");
+
+        page_table_040[2] = ((uint32_t) bank_data & 0xffffe000) | 0x24 | PDT_RESIDENT;
+        page_table_040[3] = ((uint32_t) (bank_data + 0x2000) & 0xffffe000) | 0x24 | PDT_RESIDENT;
+        pflusha_040();
+
+        asm volatile("move.w %0, %%sr" : : "d" (sr));
+    }
+}
+
+void mmu_update_ram_bank(struct dmg *dmg)
+{
+    if (cpu_type == gestalt68040) {
+        struct mbc *mbc = dmg->rom->mbc;
+        short sr;
+
+        asm volatile("move.w %%sr, %0" : "=d" (sr));
+        asm volatile("ori.w #0x0700, %sr");
+
+        if (mbc->ram_enabled) {
+            uint8_t *ram_data = mbc->ram + mbc->ram_bank * 0x2000;
+            page_table_040[5] = ((uint32_t) ram_data & 0xffffe000) | 0x20 | PDT_RESIDENT;
+        } else {
+            page_table_040[5] = ((uint32_t) dmg->unused_area & 0xffffe000) | 0x20 | PDT_RESIDENT;
+        }
+        pflusha_040();
+
+        asm volatile("move.w %0, %%sr" : : "d" (sr));
+    }
 }

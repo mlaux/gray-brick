@@ -870,12 +870,13 @@ void emit_move_b_idx_an_dn(
     uint8_t dest_dreg
 ) {
     // move.b ea, Dn: 00 01 ddd 000 110 aaa (mode 110 = An with index)
-    // extension word: D/A=0 | idx_reg | W/L=0 | 000 | 0 (disp=0)
+    // extension word: D/A=0 | idx_reg | W/L=1 | 000 | 0 (disp=0)
+    // W/L=1 (bit 11) uses .L index - no sign extension for values >= 0x8000
     emit_word(block, 0x1030 | (dest_dreg << 9) | base_areg);
-    emit_word(block, idx_dreg << 12);
+    emit_word(block, (idx_dreg << 12) | 0x0800);
 }
 
-// move.b Ds, (An,Dm.w) - store byte to indexed address
+// move.b Ds, (An,Dm.l) - store byte to indexed address
 void emit_move_b_dn_idx_an(
     struct code_block *block,
     uint8_t src_dreg,
@@ -883,12 +884,13 @@ void emit_move_b_dn_idx_an(
     uint8_t idx_dreg
 ) {
     // move.b Dn, ea: 00 01 aaa 110 000 sss (mode 110 = An with index)
-    // extension word: D/A=0 | idx_reg | W/L=0 | 000 | 0 (disp=0)
+    // extension word: D/A=0 | idx_reg | W/L=1 | 000 | 0 (disp=0)
+    // W/L=1 (bit 11) uses .L index - no sign extension for values >= 0x8000
     emit_word(block, 0x1180 | (base_areg << 9) | src_dreg);
-    emit_word(block, idx_dreg << 12);
+    emit_word(block, (idx_dreg << 12) | 0x0800);
 }
 
-// move.b d(An,Dm.w), Dd - load byte from indexed address with 8-bit displacement
+// move.b d(An,Dm.l), Dd - load byte from indexed address with 8-bit displacement
 void emit_move_b_disp_idx_an_dn(
     struct code_block *block,
     int8_t disp,
@@ -897,12 +899,13 @@ void emit_move_b_disp_idx_an_dn(
     uint8_t dest_dreg
 ) {
     // move.b ea, Dn: 00 01 ddd 000 110 aaa (mode 110 = An with index)
-    // extension word: D/A=0 | idx_reg | W/L=0 | 000 | disp8
+    // extension word: D/A=0 | idx_reg | W/L=1 | 000 | disp8
+    // W/L=1 (bit 11) uses .L index - no sign extension for values >= 0x8000
     emit_word(block, 0x1030 | (dest_dreg << 9) | base_areg);
-    emit_word(block, (idx_dreg << 12) | ((uint8_t) disp));
+    emit_word(block, (idx_dreg << 12) | 0x0800 | ((uint8_t) disp));
 }
 
-// move.b Ds, d(An,Dm.w) - store byte to indexed address with 8-bit displacement
+// move.b Ds, d(An,Dm.l) - store byte to indexed address with 8-bit displacement
 void emit_move_b_dn_disp_idx_an(
     struct code_block *block,
     uint8_t src_dreg,
@@ -911,9 +914,10 @@ void emit_move_b_dn_disp_idx_an(
     uint8_t idx_dreg
 ) {
     // move.b Dn, ea: 00 01 aaa 110 000 sss (mode 110 = An with index)
-    // extension word: D/A=0 | idx_reg | W/L=0 | 000 | disp8
+    // extension word: D/A=0 | idx_reg | W/L=1 | 000 | disp8
+    // W/L=1 (bit 11) uses .L index - no sign extension for values >= 0x8000
     emit_word(block, 0x1180 | (base_areg << 9) | src_dreg);
-    emit_word(block, (idx_dreg << 12) | ((uint8_t) disp));
+    emit_word(block, (idx_dreg << 12) | 0x0800 | ((uint8_t) disp));
 }
 
 // lea d(An), An - load effective address with 16-bit displacement

@@ -42,6 +42,7 @@
 #include "gb_palettes.h"
 
 #include "compiler.h"
+#include "mmu.h"
 
 static void UpdateMenuItems(void);
 
@@ -49,9 +50,13 @@ static void UpdateMenuItems(void);
 static void on_rom_bank_switch(int new_bank)
 {
     jit_ctx.current_rom_bank = (u8) new_bank;
-    // force exit to dispatcher ?
-    // only way this is needed is if games switch banks and then don't jump
-    // or call afterwards...
+    mmu_update_rom_bank(&dmg);
+}
+
+// Called by dmg.c when RAM bank switches or RAM enabled/disabled
+static void on_ram_bank_switch(void)
+{
+    mmu_update_ram_bank(&dmg);
 }
 
 struct rom rom;
@@ -78,6 +83,9 @@ static unsigned long soft_reset_release_tick;
 static char save_filename[32];
 // for GetFInfo/SetFInfo
 static Str63 save_filename_p;
+
+// original allocation pointer for 8KB-aligned ROM
+static unsigned char *rom_data_alloc;
 
 // 2x scaled: 336x288 @ 1bpp = 42 bytes per row (168 GB pixels for scroll offset)
 char offscreen_buf[42 * 288];
@@ -285,8 +293,9 @@ void StopEmulation(void)
   }
 
   g_wp = NULL;
-  if (rom.data) {
-    DisposePtr((Ptr) rom.data);
+  if (rom_data_alloc) {
+    DisposePtr((Ptr) rom_data_alloc);
+    rom_data_alloc = NULL;
     rom.data = NULL;
   }
   UpdateMenuItems();
@@ -329,6 +338,7 @@ void StartEmulation(void)
 
   dmg_new(&dmg, &rom, &lcd);
   dmg.rom_bank_switch_hook = on_rom_bank_switch;
+  dmg.ram_bank_switch_hook = on_ram_bank_switch;
   mbc_load_ram(dmg.rom->mbc, save_filename);
   audio_init(&audio);
   dmg.audio = &audio;
@@ -486,11 +496,13 @@ int LoadRom(Str63 fileName, short vRefNum)
   }
   
   GetEOF(fileNo, (long *) &rom.length);
-  rom.data = (unsigned char *) NewPtr(rom.length);
-  if(rom.data == NULL) {
+  // allocate with 8KB padding for page alignment (MMU requirement)
+  rom_data_alloc = (unsigned char *) NewPtr(rom.length + 8192);
+  if (rom_data_alloc == NULL) {
     ShowCenteredAlert(ALRT_NOT_ENOUGH_RAM, "\p", "\p", "\p", "\p", ALERT_NORMAL);
     return false;
   }
+  rom.data = (unsigned char *)(((uint32_t)rom_data_alloc + 8191) & ~8191);
   
   amtRead = rom.length;
   FSRead(fileNo, &amtRead, rom.data);

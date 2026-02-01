@@ -14,7 +14,7 @@ struct mbc {
   int rom_bank;
   int ram_bank;
   int ram_enabled;
-  u8 ram[RAM_SIZE];
+  u8 *ram;
 
   // MBC3 RTC registers
   u8 rtc_s;       // seconds (0-59)

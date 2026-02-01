@@ -11,6 +11,9 @@
 
 #define RTC_SAVE_SIZE 48
 
+// storage with padding for manual 8KB alignment
+static u8 mbc_ram_storage[RAM_SIZE + 8192];
+
 static int is_mbc2(int type)
 {
   return type == 0x05 || type == 0x06;
@@ -255,6 +258,8 @@ struct mbc *mbc_new(int type)
   memset(&mbc, 0, sizeof mbc);
   mbc.type = type;
   mbc.rtc_select = -1;
+  // manually align since linker may not honor __attribute__((aligned))
+  mbc.ram = (u8 *)(((u32)mbc_ram_storage + 8191) & ~8191);
 
   if (type == 3) {
     // MBC1+RAM+BATTERY

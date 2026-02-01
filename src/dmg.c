@@ -26,10 +26,20 @@
 // TAC clock select -> cycles per TIMA increment
 static const u16 timer_divisors[] = { 1024, 16, 64, 256 };
 
+// storage with padding for manual 8KB alignment
+static u8 main_ram_storage[0x2000 + 8192];
+static u8 video_ram_storage[0x2000 + 8192];
+static u8 unused_area_storage[0x2000 + 8192];
+
 void dmg_new(struct dmg *dmg, struct rom *rom, struct lcd *lcd)
 {
     dmg->rom = rom;
     dmg->lcd = lcd;
+
+    // manually align since linker may not honor __attribute__((aligned))
+    dmg->main_ram = (u8 *)(((u32) main_ram_storage + 8191) & ~8191);
+    dmg->video_ram = (u8 *)(((u32) video_ram_storage + 8191) & ~8191);
+    dmg->unused_area = (u8 *)(((u32) unused_area_storage + 8191) & ~8191);
 
     dmg->joypad = 0xf; // nothing pressed
     dmg->action_buttons = 0xf;
@@ -111,6 +121,10 @@ void dmg_update_ram_bank(struct dmg *dmg, u8 *ram_base)
             dmg->read_page[k] = NULL;
             dmg->write_page[k] = NULL;
         }
+    }
+
+    if (dmg->ram_bank_switch_hook) {
+        dmg->ram_bank_switch_hook();
     }
 }
 

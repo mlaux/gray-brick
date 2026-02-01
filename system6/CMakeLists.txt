@@ -32,6 +32,7 @@ add_application("Gray Brick"
     jit.c
     input.c
     lcd_mac.c
+    mmu.c
     cache.c
     audio_mac.c
     emulator.c
