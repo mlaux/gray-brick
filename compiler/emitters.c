@@ -862,7 +862,7 @@ void emit_movea_l_idx_an_an(
     emit_word(block, (idx_dreg << 12) | ((uint8_t) disp));
 }
 
-// move.b (An,Dm.w), Dd - load byte from indexed address
+// move.b (An,Dm.l), Dd - load byte from indexed address
 void emit_move_b_idx_an_dn(
     struct code_block *block,
     uint8_t base_areg,

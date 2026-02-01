@@ -66,8 +66,10 @@
 #define JIT_CTX_FRAME_CYCLES_PTR 60  // u32 *frame_cycles_ptr (dmg->frame_cycles)
 #define JIT_CTX_UNUSED_2    64
 #define JIT_CTX_UNUSED_3    68
-#define JIT_CTX_GB_SP       72  // u16: GB stack pointer value
-#define JIT_CTX_STACK_IN_RAM 76  // non-zero if A3 points to native WRAM/HRAM
+#define JIT_CTX_GB_SP       72  // unused - GB SP now encoded in A3's low word
+
+// Virtual address base for MMU-translated GB memory access
+#define GB_VIRTUAL_BASE 0x08000000
 
 struct code_block {
     uint8_t code[1024];

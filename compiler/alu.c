@@ -318,19 +318,23 @@ int compile_alu_op(
         return 1;
 
     case 0x34: // inc (hl)
+        emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
         compile_call_dmg_read(block);
         emit_addq_b_dn(block, 0, 1);
         compile_set_z_flag(block);
+        emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
         compile_call_dmg_write_d0(block);
         return 1;
 
     case 0x35: // dec (hl)
+        emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
         compile_call_dmg_read(block);
         emit_subq_b_dn(block, 0, 1);
         compile_set_z_flag(block);
+        emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
         compile_call_dmg_write_d0(block);
         return 1;
@@ -412,6 +416,7 @@ int compile_alu_op(
 
     case 0x86: // add a, (hl)
         compile_daa_track_add(block);
+        emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
         compile_call_dmg_read(block);
         emit_add_b_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_A);
@@ -461,6 +466,7 @@ int compile_alu_op(
         return 1;
 
     case 0x8e: // adc a, (hl)
+        emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
         compile_call_dmg_read(block);
         emit_move_b_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_SCRATCH_1);
@@ -517,6 +523,7 @@ int compile_alu_op(
 
     case 0x96: // sub a, (hl)
         compile_daa_track_sub(block);
+        emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
         compile_call_dmg_read(block);
         emit_sub_b_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_A);
@@ -566,6 +573,7 @@ int compile_alu_op(
         return 1;
 
     case 0x9e: // sbc a, (hl)
+        emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
         compile_call_dmg_read(block);
         emit_move_b_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_SCRATCH_1);
@@ -615,6 +623,7 @@ int compile_alu_op(
         return 1;
 
     case 0xa6: // and a, (hl)
+        emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
         compile_call_dmg_read(block);
         emit_and_b_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_A);
@@ -665,6 +674,7 @@ int compile_alu_op(
         return 1;
 
     case 0xae: // xor a, (hl)
+        emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
         compile_call_dmg_read(block);
         emit_eor_b_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_A);
@@ -714,6 +724,7 @@ int compile_alu_op(
         return 1;
 
     case 0xb6: // or a, (hl)
+        emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
         compile_call_dmg_read(block);
         emit_or_b_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_A);
@@ -770,6 +781,7 @@ int compile_alu_op(
         return 1;
 
     case 0xbe: // cp a, (hl)
+        emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
         compile_call_dmg_read(block);
         emit_cmp_b_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_A);

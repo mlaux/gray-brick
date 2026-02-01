@@ -191,6 +191,7 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
             break;
 
         case 0x32: // ld (hl-), a
+            emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
             emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1); // D1.w = HL
             compile_call_dmg_write_a(block); // dmg_write(dmg, D1.w, A)
             emit_subq_w_an(block, REG_68K_A_HL, 1); // HL--
@@ -201,12 +202,14 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
             break;
 
         case 0x2a: // ld a, (hl+)
+            emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
             emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1); // D1.w = HL
             compile_call_dmg_read_a(block); // dmg_read(dmg, D1.w) into A
             emit_addq_w_an(block, REG_68K_A_HL, 1); // HL++
             break;
 
         case 0x3a: // ld a, (hl-)
+            emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
             emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1); // D1.w = HL
             compile_call_dmg_read_a(block); // dmg_read(dmg, D1.w) into A
             emit_subq_w_an(block, REG_68K_A_HL, 1); // HL--
@@ -218,7 +221,6 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
 
         case 0x3b: // dec sp
             emit_subq_l_an(block, REG_68K_A_SP, 1);
-            emit_subi_w_disp_an(block, 1, JIT_CTX_GB_SP, REG_68K_A_CTX);
             break;
 
         case 0x03: // inc bc
@@ -348,6 +350,7 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
             break;
 
         case 0x22: // ld (hl+), a
+            emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
             emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
             compile_call_dmg_write_a(block);
             emit_addq_w_an(block, REG_68K_A_HL, 1);
@@ -516,7 +519,7 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
             break;
 
         case 0xe2: // ld ($ff00 + c), a
-            emit_move_w_dn(block, REG_68K_D_SCRATCH_1, 0xff00);
+            emit_move_l_dn(block, REG_68K_D_SCRATCH_1, 0x0000ff00);
             emit_or_b_dn_dn(block, REG_68K_D_BC, REG_68K_D_SCRATCH_1);
             compile_call_dmg_write_a(block);
             break;
@@ -569,7 +572,7 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
             break;
 
         case 0xf2: // ld a, ($ff00 + c)
-            emit_move_w_dn(block, REG_68K_D_SCRATCH_1, 0xff00);
+            emit_move_l_dn(block, REG_68K_D_SCRATCH_1, 0x0000ff00);
             emit_or_b_dn_dn(block, REG_68K_D_BC, REG_68K_D_SCRATCH_1);
             compile_call_dmg_read_a(block);
             break;
@@ -591,6 +594,7 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
         case 0x36: // ld (hl), u8
             {
                 uint8_t val = READ_BYTE(src_ptr++);
+                emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
                 emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);  // D1.w = HL
                 compile_call_dmg_write_imm(block, val);
             }
@@ -600,8 +604,13 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
             {
                 uint16_t addr = READ_BYTE(src_ptr) | (READ_BYTE(src_ptr + 1) << 8);
                 src_ptr += 2;
-                emit_move_w_dn(block, REG_68K_D_SCRATCH_1, addr);
-                compile_call_dmg_write_a(block);
+                emit_move_l_dn(block, REG_68K_D_SCRATCH_1, addr);
+                if (addr >= 0x8000 && addr < 0xfe00) {
+                    emit_move_b_dn_idx_an(block, REG_68K_D_A, REG_68K_A_VIRT_BASE, REG_68K_D_SCRATCH_1);
+                } else {
+                    // ROM writes for MBC, or HRAM/IO
+                    compile_call_dmg_write_a(block);
+                }
             }
             break;
 
@@ -612,8 +621,11 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
                 if (addr < 0x8000) {
                     uint8_t val = ctx->read(ctx->dmg, addr);
                     emit_moveq_dn(block, REG_68K_D_A, val);
+                } else if (addr < 0xfe00) {
+                    emit_move_l_dn(block, REG_68K_D_SCRATCH_1, addr);
+                    emit_move_b_idx_an_dn(block, REG_68K_A_VIRT_BASE, REG_68K_D_SCRATCH_1, REG_68K_D_A);
                 } else {
-                    emit_move_w_dn(block, REG_68K_D_SCRATCH_1, addr);
+                    emit_move_l_dn(block, REG_68K_D_SCRATCH_1, addr);
                     compile_call_dmg_read_a(block);
                 }
             }

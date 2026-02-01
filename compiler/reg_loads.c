@@ -46,6 +46,7 @@ int compile_reg_load(struct code_block *block, uint8_t op)
         break;
 
     case 0x46: // ld b, (hl)
+        emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
         compile_call_dmg_read(block);  // result in D0
         emit_swap(block, REG_68K_D_BC);
@@ -92,6 +93,7 @@ int compile_reg_load(struct code_block *block, uint8_t op)
         break;
 
     case 0x4e: // ld c, (hl)
+        emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
         compile_call_dmg_read(block);  // result in D0
         emit_move_b_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_BC);  // D0 -> C
@@ -142,6 +144,7 @@ int compile_reg_load(struct code_block *block, uint8_t op)
         break;
 
     case 0x56: // ld d, (hl)
+        emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
         compile_call_dmg_read(block);  // result in D0
         emit_swap(block, REG_68K_D_DE);
@@ -187,6 +190,7 @@ int compile_reg_load(struct code_block *block, uint8_t op)
         break;
 
     case 0x5e: // ld e, (hl)
+        emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
         compile_call_dmg_read(block);  // result in D0
         emit_move_b_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_DE);  // D0 -> E
@@ -245,6 +249,7 @@ int compile_reg_load(struct code_block *block, uint8_t op)
         break;
 
     case 0x66: // ld h, (hl)
+        emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
         compile_call_dmg_read(block);  // result in D0
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
@@ -303,6 +308,7 @@ int compile_reg_load(struct code_block *block, uint8_t op)
         break;
 
     case 0x6e: // ld l, (hl)
+        emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
         compile_call_dmg_read(block);  // result in D0
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
@@ -320,12 +326,14 @@ int compile_reg_load(struct code_block *block, uint8_t op)
         emit_swap(block, REG_68K_D_BC);
         emit_move_b_dn_dn(block, REG_68K_D_BC, REG_68K_D_SCRATCH_0);  // D0 = B
         emit_swap(block, REG_68K_D_BC);
+        emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
         compile_call_dmg_write_d0(block);
         break;
 
     case 0x71: // ld (hl), c
         emit_move_b_dn_dn(block, REG_68K_D_BC, REG_68K_D_SCRATCH_0);  // D0 = C
+        emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
         compile_call_dmg_write_d0(block);
         break;
@@ -334,17 +342,20 @@ int compile_reg_load(struct code_block *block, uint8_t op)
         emit_swap(block, REG_68K_D_DE);
         emit_move_b_dn_dn(block, REG_68K_D_DE, REG_68K_D_SCRATCH_0);  // D0 = D
         emit_swap(block, REG_68K_D_DE);
+        emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
         compile_call_dmg_write_d0(block);
         break;
 
     case 0x73: // ld (hl), e
         emit_move_b_dn_dn(block, REG_68K_D_DE, REG_68K_D_SCRATCH_0);  // D0 = E
+        emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
         compile_call_dmg_write_d0(block);
         break;
 
     case 0x74: // ld (hl), h
+        emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
         emit_rol_w_8(block, REG_68K_D_SCRATCH_1);  // H in low byte
         emit_move_b_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);  // D0 = H
@@ -353,6 +364,7 @@ int compile_reg_load(struct code_block *block, uint8_t op)
         break;
 
     case 0x75: // ld (hl), l
+        emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
         emit_move_b_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);  // D0 = L
         compile_call_dmg_write_d0(block);
@@ -361,6 +373,7 @@ int compile_reg_load(struct code_block *block, uint8_t op)
     // 0x76 is HALT - not handled here
 
     case 0x77: // ld (hl), a
+        emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
         compile_call_dmg_write_a(block);
         break;

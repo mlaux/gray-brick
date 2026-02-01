@@ -58,13 +58,11 @@ static void compile_inline_dmg_write(struct code_block *block, uint8_t val_reg)
     // cmpi.w #$fe00, d1                 ; 4 bytes [0-3]
     emit_cmpi_w_imm_dn(block, 0xfe00, REG_68K_D_SCRATCH_1);
     // bcc.s slow_path (+18)             ; 2 bytes [4-5] -> offset 24
-    emit_bcc_s(block, 18);
+    emit_bcc_s(block, 12);
     // btst #15, d1                      ; 4 bytes [6-9] - check if addr >= 0x8000
     emit_btst_imm_dn(block, 15, REG_68K_D_SCRATCH_1);
     // beq.s slow_path (+12)             ; 2 bytes [10-11] -> offset 24 (MBC writes)
-    emit_beq_b(block, 12);
-    // andi.l #$ffff, d1                 ; 6 bytes [12-17] - clear high word
-    emit_andi_l_dn(block, REG_68K_D_SCRATCH_1, 0xffff);
+    emit_beq_b(block, 6);
     // move.b val_reg, (a5,d1.l)         ; 4 bytes [18-21]
     emit_move_b_dn_idx_an(block, val_reg, REG_68K_A_VIRT_BASE, REG_68K_D_SCRATCH_1);
     // bra.s done (+24)                  ; 2 bytes [22-23] -> offset 48
@@ -123,9 +121,7 @@ void compile_call_dmg_read(struct code_block *block)
     // cmpi.w #$fe00, d1                 ; 4 bytes [0-3]
     emit_cmpi_w_imm_dn(block, 0xfe00, REG_68K_D_SCRATCH_1);
     // bcc.s slow_path (+12)             ; 2 bytes [4-5] -> offset 18
-    emit_bcc_s(block, 12);
-    // andi.l #$ffff, d1                 ; 6 bytes [6-11] - clear high word
-    emit_andi_l_dn(block, REG_68K_D_SCRATCH_1, 0xffff);
+    emit_bcc_s(block, 6);
     // move.b (a5,d1.l), d0              ; 4 bytes [12-15]
     emit_move_b_idx_an_dn(block, REG_68K_A_VIRT_BASE, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);
     // bra.s done (+22)                  ; 2 bytes [16-17] -> offset 40
@@ -180,9 +176,7 @@ void compile_call_dmg_read16(struct code_block *block)
     // cmpi.w #$fdff, d1                 ; 4 bytes [0-3]
     emit_cmpi_w_imm_dn(block, 0xfdff, REG_68K_D_SCRATCH_1);
     // bcc.s slow_path (+14)             ; 2 bytes [4-5] -> offset 20
-    emit_bcc_s(block, 14);
-    // andi.l #$ffff, d1                 ; 6 bytes [6-11] - clear high word
-    emit_andi_l_dn(block, REG_68K_D_SCRATCH_1, 0xffff);
+    emit_bcc_s(block, 8);
     // move.w (a5,d1.l), d0              ; 4 bytes [12-15] - word read (bytes swapped)
     emit_move_w_idx_an_dn(block, REG_68K_A_VIRT_BASE, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);
     // rol.w #8, d0                      ; 2 bytes [16-17] - fix byte order
@@ -217,13 +211,11 @@ void compile_call_dmg_write16_d0(struct code_block *block)
     // cmpi.w #$fdff, d1                 ; 4 bytes [0-3]
     emit_cmpi_w_imm_dn(block, 0xfdff, REG_68K_D_SCRATCH_1);
     // bcc.s slow_path (+20)             ; 2 bytes [4-5] -> offset 26
-    emit_bcc_s(block, 20);
+    emit_bcc_s(block, 14);
     // btst #15, d1                      ; 4 bytes [6-9] - check if addr >= 0x8000
     emit_btst_imm_dn(block, 15, REG_68K_D_SCRATCH_1);
     // beq.s slow_path (+14)             ; 2 bytes [10-11] -> offset 26 (MBC writes)
-    emit_beq_b(block, 14);
-    // andi.l #$ffff, d1                 ; 6 bytes [12-17] - clear high word
-    emit_andi_l_dn(block, REG_68K_D_SCRATCH_1, 0xffff);
+    emit_beq_b(block, 8);
     // rol.w #8, d0                      ; 2 bytes [18-19] - swap bytes for big-endian
     emit_rol_w_8(block, REG_68K_D_SCRATCH_0);
     // move.w d0, (a5,d1.l)              ; 4 bytes [20-23] - word write

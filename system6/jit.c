@@ -110,8 +110,8 @@ void jit_init(struct dmg *dmg)
   compile_ctx.hram_base = dmg->zero_page;
 
   jit_ctx.dmg = dmg;
-  jit_ctx.read_func = dmg_read;
-  jit_ctx.write_func = dmg_write;
+  jit_ctx.read_func = dmg_read_slow;
+  jit_ctx.write_func = dmg_write_slow;
   jit_ctx.read16_func = dmg_read16;
   jit_ctx.write16_func = dmg_write16;
   jit_ctx.ei_di_func = dmg_ei_di;
@@ -119,8 +119,6 @@ void jit_init(struct dmg *dmg)
   jit_ctx.dispatcher_return = get_dispatcher_code();
   jit_ctx.patch_helper = get_patch_helper_code();
   jit_ctx.frame_cycles_ptr = &dmg->frame_cycles;
-  jit_ctx.gb_sp = 0xfffe; // initial SP
-  jit_ctx.stack_in_ram = 1;
   sync_cache_pointers();
 
   jit_regs.d3 = 0x100; // initial PC
@@ -129,7 +127,7 @@ void jit_init(struct dmg *dmg)
   jit_regs.d6 = 0x000000d8; // DE
   jit_regs.d7 = 0x05; // flags
   jit_regs.a2 = 0x014d; // HL
-  jit_regs.a3 = (unsigned long) dmg->zero_page + (0xfffe - 0xff80); // initial SP
+  jit_regs.a3 = 0x0800fffe; // initial SP (virtual address)
   jit_regs.a4 = (unsigned long) &jit_ctx;
   jit_regs.a5 = 0x08000000;
   jit_regs.a6 = (unsigned long) dmg->write_page;
@@ -168,9 +166,8 @@ static void check_interrupts(struct dmg *dmg)
       dmg->interrupt_request_mask &= ~(1 << k);
       dmg->interrupt_enable = 0;
 
-      jit_ctx.gb_sp -= 2;
       jit_regs.a3 -= 2;
-      dmg_write16(dmg, jit_ctx.gb_sp, jit_regs.d3);
+      dmg_write16(dmg, jit_regs.a3 & 0xffff, jit_regs.d3);
 
       // Jump to handler
       jit_regs.d3 = handlers[k];

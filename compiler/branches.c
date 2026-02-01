@@ -262,9 +262,8 @@ void compile_call_imm16(
     uint16_t ret_addr = src_address + *src_ptr + 2;  // address after call
     *src_ptr += 2;
 
-    // push return address (A3 = native WRAM pointer)
+    // push return address (A3 = virtual address)
     emit_subq_w_an(block, REG_68K_A_SP, 2);
-    emit_subi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
     emit_move_w_dn(block, REG_68K_D_SCRATCH_1, ret_addr);
     emit_move_b_dn_ind_an(block, REG_68K_D_SCRATCH_1, REG_68K_A_SP);
     emit_rol_w_8(block, REG_68K_D_SCRATCH_1);
@@ -295,17 +294,16 @@ void compile_call_cond(
     emit_btst_imm_dn(block, flag_bit, REG_68K_D_FLAGS);
 
     // If condition NOT met, skip the call sequence
-    // call sequence: subq(2) + subi(6) + move.w(4) + move.b(2) + rol(2) + move.b(4) +
-    //                moveq(2) + move.w(4) + patchable_exit(16) = 42, +2 = 44
+    // call sequence: subq(2) + move.w(4) + move.b(2) + rol(2) + move.b(4) +
+    //                moveq(2) + move.w(4) + patchable_exit(16) = 36, +2 = 38
     if (branch_if_set) {
-        emit_beq_w(block, 44);
+        emit_beq_w(block, 38);
     } else {
-        emit_bne_w(block, 44);
+        emit_bne_w(block, 38);
     }
 
     // Push return address
     emit_subq_w_an(block, REG_68K_A_SP, 2);
-    emit_subi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
     emit_move_w_dn(block, REG_68K_D_SCRATCH_1, ret_addr);
     emit_move_b_dn_ind_an(block, REG_68K_D_SCRATCH_1, REG_68K_A_SP);
     emit_rol_w_8(block, REG_68K_D_SCRATCH_1);
@@ -319,13 +317,12 @@ void compile_call_cond(
 
 void compile_ret(struct code_block *block)
 {
-    // pop return address from stack (A3 = native WRAM pointer)
+    // pop return address from stack (A3 = virtual address)
     emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
     emit_move_b_disp_an_dn(block, 1, REG_68K_A_SP, REG_68K_D_NEXT_PC);
     emit_rol_w_8(block, REG_68K_D_NEXT_PC);
     emit_move_b_ind_an_dn(block, REG_68K_A_SP, REG_68K_D_NEXT_PC);
     emit_addq_w_an(block, REG_68K_A_SP, 2);
-    emit_addi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
     emit_dispatch_jump(block);
 }
 
@@ -338,12 +335,12 @@ void compile_ret_cond(struct code_block *block, uint8_t flag_bit, int branch_if_
     emit_btst_imm_dn(block, flag_bit, REG_68K_D_FLAGS);
 
     // If condition NOT met, skip the return sequence
-    // ret sequence: moveq(2) + move.b(4) + rol(2) + move.b(2) + addq(2) + addi(6) +
-    //               dispatch_jump(6) = 24, +2 = 26
+    // ret sequence: moveq(2) + move.b(4) + rol(2) + move.b(2) + addq(2) +
+    //               dispatch_jump(6) = 18, +2 = 20
     if (branch_if_set) {
-        emit_beq_w(block, 26);
+        emit_beq_w(block, 20);
     } else {
-        emit_bne_w(block, 26);
+        emit_bne_w(block, 20);
     }
 
     // Pop return address and dispatch
@@ -352,7 +349,6 @@ void compile_ret_cond(struct code_block *block, uint8_t flag_bit, int branch_if_
     emit_rol_w_8(block, REG_68K_D_NEXT_PC);
     emit_move_b_ind_an_dn(block, REG_68K_A_SP, REG_68K_D_NEXT_PC);
     emit_addq_w_an(block, REG_68K_A_SP, 2);
-    emit_addi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
     emit_dispatch_jump(block);
 }
 
@@ -360,7 +356,6 @@ void compile_rst_n(struct code_block *block, uint8_t target, uint16_t ret_addr)
 {
     // push return address
     emit_subq_w_an(block, REG_68K_A_SP, 2);
-    emit_subi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
     emit_move_w_dn(block, REG_68K_D_SCRATCH_1, ret_addr);
     emit_move_b_dn_ind_an(block, REG_68K_D_SCRATCH_1, REG_68K_A_SP);
     emit_rol_w_8(block, REG_68K_D_SCRATCH_1);
@@ -477,9 +472,9 @@ void compile_jp_cond_fused(
 void compile_ret_cond_fused(struct code_block *block, int cond)
 {
     // Skip return if condition NOT met
-    // ret sequence: moveq(2) + move.b(4) + rol(2) + move.b(2) + addq(2) + addi(6) +
-    //               dispatch_jump(6) = 24, +2 = 26
-    emit_bcc_opcode_w(block, invert_cond(cond), 26);
+    // ret sequence: moveq(2) + move.b(4) + rol(2) + move.b(2) + addq(2) +
+    //               dispatch_jump(6) = 18, +2 = 20
+    emit_bcc_opcode_w(block, invert_cond(cond), 20);
 
     // Pop return address and dispatch
     emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
@@ -487,7 +482,6 @@ void compile_ret_cond_fused(struct code_block *block, int cond)
     emit_rol_w_8(block, REG_68K_D_NEXT_PC);
     emit_move_b_ind_an_dn(block, REG_68K_A_SP, REG_68K_D_NEXT_PC);
     emit_addq_w_an(block, REG_68K_A_SP, 2);
-    emit_addi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
     emit_dispatch_jump(block);
 }
 
@@ -504,13 +498,12 @@ void compile_call_cond_fused(
     *src_ptr += 2;
 
     // Skip call if condition NOT met
-    // call sequence: subq(2) + subi(6) + move.w(4) + move.b(2) + rol(2) + move.b(4) +
-    //                moveq(2) + move.w(4) + patchable_exit(16) = 42, +2 = 44
-    emit_bcc_opcode_w(block, invert_cond(cond), 44);
+    // call sequence: subq(2) + move.w(4) + move.b(2) + rol(2) + move.b(4) +
+    //                moveq(2) + move.w(4) + patchable_exit(16) = 36, +2 = 38
+    emit_bcc_opcode_w(block, invert_cond(cond), 38);
 
     // Push return address
     emit_subq_w_an(block, REG_68K_A_SP, 2);
-    emit_subi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
     emit_move_w_dn(block, REG_68K_D_SCRATCH_1, ret_addr);
     emit_move_b_dn_ind_an(block, REG_68K_D_SCRATCH_1, REG_68K_A_SP);
     emit_rol_w_8(block, REG_68K_D_SCRATCH_1);
