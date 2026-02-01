@@ -50,12 +50,11 @@ struct cgb_state {
     u8 wram_bank;          // SVBK register - WRAM bank (1-7, 0 treated as 1)
 
     // HDMA state
-    u16 hdma_src;          // Source address (assembled from HDMA1/2)
-    u16 hdma_dst;          // Destination in VRAM (assembled from HDMA3/4)
-    u8 hdma_length;        // Remaining blocks - 1 (0x7F when inactive)
-    u8 hdma_active;        // 1 if HDMA transfer in progress
-    u8 hdma_mode;          // 0 = GPDMA (immediate), 1 = HDMA (per-HBlank)
-    u8 hdma_last_line;     // Last scanline where HDMA chunk was transferred
+    u8 hdma_active;        // 1 if HDMA transfer is in progress
+    u8 hdma_remaining;     // Blocks remaining - 1 (0 = 1 block left)
+    u16 hdma_source;       // Current source address (updated during transfer)
+    u16 hdma_dest;         // Current destination address (updated during transfer)
+    u8 hdma_last_ly;       // Last LY that triggered HDMA (0xFF = none this frame)
 };
 
 struct dmg;
@@ -72,11 +71,13 @@ int cgb_write_reg(struct cgb_state *cgb, struct dmg *dmg, u16 address, u8 data);
 void cgb_update_vram_bank(struct cgb_state *cgb, struct dmg *dmg);
 void cgb_update_wram_bank(struct cgb_state *cgb, struct dmg *dmg);
 
-// HDMA processing - call during lcd_sync for HBlank DMA
-void cgb_process_hdma(struct cgb_state *cgb, struct dmg *dmg, int current_line);
-
 // Speed switch - called by STOP instruction
 // Returns 1 if speed was switched, 0 if should halt
 int cgb_speed_switch(struct cgb_state *cgb);
+
+// HDMA functions
+// Called when HBlank starts (LY < 144) to transfer 16 bytes if HDMA is active
+// Returns number of M-cycles the CPU should be halted (8 in normal speed, 16 in double speed)
+int cgb_hdma_hblank(struct cgb_state *cgb, struct dmg *dmg, u8 ly);
 
 #endif

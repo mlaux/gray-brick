@@ -5,6 +5,33 @@
 #include "lcd.h"
 #include "types.h"
 
+// Perform GPDMA: immediate transfer that halts CPU
+// Returns number of M-cycles taken
+static int cgb_perform_gpdma(struct cgb_state *cgb, struct dmg *dmg, u8 length_value)
+{
+    int blocks = (length_value & 0x7f) + 1;
+    int bytes = blocks * 16;
+    int i;
+
+    for (i = 0; i < bytes; i++) {
+        // Read from source
+        u8 data = dmg_read(dmg, cgb->hdma_source);
+        cgb->hdma_source++;
+
+        // Write to destination (always in VRAM $8000-$9FFF)
+        u16 vram_addr = 0x8000 | (cgb->hdma_dest & 0x1fff);
+        u8 *vram = &dmg->video_ram[cgb->vram_bank * 0x2000];
+        vram[vram_addr & 0x1fff] = data;
+        cgb->hdma_dest++;
+    }
+
+    // Transfer complete
+    cgb->hdma_active = 0;
+
+    // Return cycles taken: 8 M-cycles per block in both speed modes
+    return blocks * 8;
+}
+
 void cgb_init(struct cgb_state *cgb, int cgb_flag)
 {
     memset(cgb, 0, sizeof(struct cgb_state));
@@ -17,14 +44,7 @@ void cgb_init(struct cgb_state *cgb, int cgb_flag)
     cgb->speed_switch_armed = 0;
     cgb->vram_bank = 0;
     cgb->wram_bank = 1;  // SVBK defaults to bank 1
-
-    // Initialize HDMA state
-    cgb->hdma_src = 0;
-    cgb->hdma_dst = 0x8000;
-    cgb->hdma_length = 0x7F;  // inactive
-    cgb->hdma_active = 0;
-    cgb->hdma_mode = 0;
-    cgb->hdma_last_line = 0;
+    cgb->hdma_last_ly = 0xff;  // No HDMA triggered yet
 }
 
 int cgb_read_reg(struct cgb_state *cgb, struct lcd *lcd, u16 address, u8 *out)
@@ -65,29 +85,13 @@ int cgb_read_reg(struct cgb_state *cgb, struct lcd *lcd, u16 address, u8 *out)
         *out = cgb->wram_bank | 0xf8;
         return 1;
 
-    case REG_HDMA1:
-        *out = (cgb->hdma_src >> 8) & 0xff;
-        return 1;
-
-    case REG_HDMA2:
-        *out = cgb->hdma_src & 0xf0;
-        return 1;
-
-    case REG_HDMA3:
-        *out = (cgb->hdma_dst >> 8) & 0x1f;
-        return 1;
-
-    case REG_HDMA4:
-        *out = cgb->hdma_dst & 0xf0;
-        return 1;
-
     case REG_HDMA5:
-        // Bit 7 = 0 means HDMA active, 1 means inactive
-        // Bits 0-6 = remaining length - 1
+        // Bit 7 = 0 if HDMA active, 1 if not active
+        // Bits 6-0 = remaining blocks - 1 (or 0x7F if not active)
         if (cgb->hdma_active) {
-            *out = cgb->hdma_length;  // bit 7 already 0
+            *out = cgb->hdma_remaining;  // bit 7 = 0 (active)
         } else {
-            *out = 0xff;  // inactive: bit 7 = 1, length = 0x7F
+            *out = 0xff;  // bit 7 = 1 (not active), all other bits = 1
         }
         return 1;
     }
@@ -97,8 +101,6 @@ int cgb_read_reg(struct cgb_state *cgb, struct lcd *lcd, u16 address, u8 *out)
 
 int cgb_write_reg(struct cgb_state *cgb, struct dmg *dmg, u16 address, u8 data)
 {
-    int k;
-
     if (!cgb->mode) {
         return 0;
     }
@@ -154,58 +156,49 @@ int cgb_write_reg(struct cgb_state *cgb, struct dmg *dmg, u16 address, u8 data)
 
     case REG_HDMA1:
         // Source high byte
-        cgb->hdma_src = (cgb->hdma_src & 0x00f0) | (data << 8);
+        cgb->hdma_source = (cgb->hdma_source & 0x00ff) | (data << 8);
         return 1;
 
     case REG_HDMA2:
-        // Source low byte (bits 0-3 ignored)
-        cgb->hdma_src = (cgb->hdma_src & 0xff00) | (data & 0xf0);
+        // Source low byte (bits 0-3 ignored, 16-byte aligned)
+        cgb->hdma_source = (cgb->hdma_source & 0xff00) | (data & 0xf0);
         return 1;
 
     case REG_HDMA3:
-        // Dest high byte (forced to $80-$9F range)
-        cgb->hdma_dst = (cgb->hdma_dst & 0x00f0) | (((data & 0x1f) | 0x80) << 8);
+        // Destination high byte (bits 5-7 ignored, forced to VRAM $8000-$9FFF)
+        cgb->hdma_dest = (cgb->hdma_dest & 0x00ff) | ((data & 0x1f) << 8);
         return 1;
 
     case REG_HDMA4:
-        // Dest low byte (bits 0-3 ignored)
-        cgb->hdma_dst = (cgb->hdma_dst & 0xff00) | (data & 0xf0);
+        // Destination low byte (bits 0-3 ignored, 16-byte aligned)
+        cgb->hdma_dest = (cgb->hdma_dest & 0xff00) | (data & 0xf0);
         return 1;
 
     case REG_HDMA5:
-        // Writing to HDMA5 starts or cancels a transfer
-
-        // If HDMA is active and bit 7 is clear, cancel the HDMA (don't start GPDMA)
-        // This is used by Pokemon Crystal to terminate HDMA early
-        if (cgb->hdma_active && cgb->hdma_mode == 1 && !(data & 0x80)) {
+        if (cgb->hdma_active && !(data & 0x80)) {
+            // Cancel active HDMA: writing with bit 7 = 0 while HDMA is active
             cgb->hdma_active = 0;
-            // Keep the current hdma_length (don't update from data)
-            // After cancellation, bit 7 reads as 1 (inactive) with remaining length
-            return 1;
-        }
+            // hdma_remaining stays as-is for reads (with bit 7 = 1 set)
+        } else if (data & 0x80) {
+            // Start HDMA (HBlank DMA): bit 7 = 1
+            cgb->hdma_active = 1;
+            cgb->hdma_remaining = data & 0x7f;
 
-        cgb->hdma_length = data & 0x7f;
-        cgb->hdma_mode = (data >> 7) & 1;
-
-        if (cgb->hdma_mode == 0) {
-            // GPDMA: immediate transfer, blocks CPU
-            int bytes = (cgb->hdma_length + 1) * 16;
-            for (k = 0; k < bytes; k++) {
-                u8 val = dmg_read(dmg, cgb->hdma_src);
-                // Write directly to VRAM (respects current bank)
-                dmg->video_ram[(cgb->vram_bank * 0x2000) + (cgb->hdma_dst & 0x1fff)] = val;
-                cgb->hdma_src++;
-                cgb->hdma_dst++;
-                // Destination wraps within $8000-$9FFF
-                if ((cgb->hdma_dst & 0x1fff) == 0) {
-                    cgb->hdma_dst = 0x8000;
+            // Check if we're currently in HBlank - if so, immediately transfer first chunk
+            // HBlank is approximately cycles 252-456 of each scanline (456 cycles/line)
+            // This handles games like The Little Mermaid II: Pinball Frenzy
+            {
+                u32 cycle_in_line = dmg->frame_cycles % 456;
+                u8 current_ly = dmg->frame_cycles / 456;
+                if (current_ly < 144 && cycle_in_line >= 252) {
+                    // We're in HBlank - immediately transfer first chunk
+                    cgb_hdma_hblank(cgb, dmg, current_ly);
+                    cgb->hdma_last_ly = current_ly;
                 }
             }
-            cgb->hdma_active = 0;
-            cgb->hdma_length = 0x7f;
         } else {
-            // HDMA: set up for per-HBlank transfer
-            cgb->hdma_active = 1;
+            // Start GPDMA (immediate transfer): bit 7 = 0, no active HDMA
+            cgb_perform_gpdma(cgb, dmg, data);
         }
         return 1;
     }
@@ -247,47 +240,6 @@ void cgb_update_wram_bank(struct cgb_state *cgb, struct dmg *dmg)
     }
 }
 
-// Transfer one 16-byte HDMA chunk
-static void hdma_transfer_chunk(struct cgb_state *cgb, struct dmg *dmg)
-{
-    int k;
-    for (k = 0; k < 16; k++) {
-        u8 val = dmg_read(dmg, cgb->hdma_src);
-        dmg->video_ram[(cgb->vram_bank * 0x2000) + (cgb->hdma_dst & 0x1fff)] = val;
-        cgb->hdma_src++;
-        cgb->hdma_dst++;
-        // Destination wraps within $8000-$9FFF
-        if ((cgb->hdma_dst & 0x1fff) == 0) {
-            cgb->hdma_dst = 0x8000;
-        }
-    }
-
-    // Decrement remaining length
-    if (cgb->hdma_length == 0) {
-        // Transfer complete
-        cgb->hdma_active = 0;
-        cgb->hdma_length = 0x7f;
-    } else {
-        cgb->hdma_length--;
-    }
-}
-
-void cgb_process_hdma(struct cgb_state *cgb, struct dmg *dmg, int current_line)
-{
-    if (!cgb->hdma_active || cgb->hdma_mode != 1) {
-        return;
-    }
-
-    // Only transfer during visible scanlines (0-143)
-    if (current_line < 144) {
-        // Transfer chunks for any lines we've passed since last sync
-        while (cgb->hdma_last_line < current_line && cgb->hdma_active) {
-            hdma_transfer_chunk(cgb, dmg);
-            cgb->hdma_last_line++;
-        }
-    }
-}
-
 int cgb_speed_switch(struct cgb_state *cgb)
 {
     if (!cgb->mode) {
@@ -302,4 +254,43 @@ int cgb_speed_switch(struct cgb_state *cgb)
     }
 
     return 0;  // Not armed - halt
+}
+
+int cgb_hdma_hblank(struct cgb_state *cgb, struct dmg *dmg, u8 ly)
+{
+    int i;
+    u8 *vram;
+
+    if (!cgb->mode || !cgb->hdma_active) {
+        return 0;
+    }
+
+    // No transfers during VBlank (LY 144-153)
+    if (ly >= 144) {
+        return 0;
+    }
+
+    // Transfer 16 bytes
+    vram = &dmg->video_ram[cgb->vram_bank * 0x2000];
+    for (i = 0; i < 16; i++) {
+        // Read from source
+        u8 data = dmg_read(dmg, cgb->hdma_source);
+        cgb->hdma_source++;
+
+        // Write to destination (always in VRAM $8000-$9FFF)
+        vram[cgb->hdma_dest & 0x1fff] = data;
+        cgb->hdma_dest++;
+    }
+
+    // Update remaining count
+    if (cgb->hdma_remaining == 0) {
+        // Transfer complete
+        cgb->hdma_active = 0;
+    } else {
+        cgb->hdma_remaining--;
+    }
+
+    // Return cycles: 8 M-cycles in normal speed, 16 M-cycles in double speed
+    // (same real-time duration, but different CPU cycles)
+    return cgb->double_speed ? 16 : 8;
 }

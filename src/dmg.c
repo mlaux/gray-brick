@@ -361,16 +361,50 @@ void dmg_write16(void *_dmg, u16 address, u16 data)
     dmg_write(_dmg, address + 1, (data >> 8) & 0xff);
 }
 
+// HDMA sync - triggers HDMA transfers for any lines we've crossed
+static void hdma_sync(struct dmg *dmg)
+{
+    u8 current_ly;
+    u8 start_ly;
+    u8 ly;
+
+    // Only applies to CGB mode with active HDMA
+    if (!dmg->cgb || !dmg->cgb->mode || !dmg->cgb->hdma_active) {
+        return;
+    }
+
+    // Calculate current LY from frame cycles
+    current_ly = (dmg->frame_cycles / CYCLES_PER_LINE);
+    if (current_ly > 153) current_ly = 153;
+
+    // Determine starting line for HDMA catch-up
+    if (dmg->cgb->hdma_last_ly == 0xff) {
+        // First HDMA this frame - start from line 0
+        start_ly = 0;
+    } else {
+        // Continue from next line after last HDMA
+        start_ly = dmg->cgb->hdma_last_ly + 1;
+    }
+
+    // Trigger HDMA for any lines we've passed (only for LY 0-143)
+    for (ly = start_ly; ly <= current_ly && ly < 144 && dmg->cgb->hdma_active; ly++) {
+        cgb_hdma_hblank(dmg->cgb, dmg, ly);
+        dmg->cgb->hdma_last_ly = ly;
+    }
+
+    // If we're in VBlank, just update the tracking
+    if (current_ly >= 144 && dmg->cgb->hdma_last_ly < 144) {
+        dmg->cgb->hdma_last_ly = 143;
+    }
+}
+
 static void lcd_sync(struct dmg *dmg)
 {
     int lcdc = lcd_read(dmg->lcd, REG_LCDC);
     int lyc_cycles = lcd_read(dmg->lcd, REG_LYC) * CYCLES_PER_LINE;
 
-    // Process HBlank DMA if active (CGB mode only)
-    if (dmg->cgb && dmg->cgb->mode) {
-        int current_line = dmg->frame_cycles / CYCLES_PER_LINE;
-        cgb_process_hdma(dmg->cgb, dmg, current_line);
-    }
+    // Process HDMA transfers for any lines we've crossed
+    hdma_sync(dmg);
 
     if (dmg->frame_cycles >= lyc_cycles && !dmg->sent_ly_interrupt) {
         lcd_set_bit(dmg->lcd, REG_STAT, STAT_FLAG_MATCH);
@@ -469,9 +503,10 @@ void dmg_sync_hw(struct dmg *dmg, int cycles)
         dmg->sent_vblank_start = 0;
         dmg->sent_ly_interrupt = 0;
         dmg->rendered_this_frame = 0;
-        // Reset HDMA line counter for CGB
+
+        // Reset HDMA line tracking for new frame
         if (dmg->cgb) {
-            dmg->cgb->hdma_last_line = 0;
+            dmg->cgb->hdma_last_ly = 0xff;
         }
     }
 }
