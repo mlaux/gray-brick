@@ -28,7 +28,7 @@ extern BitMap offscreen_bmp;
 extern char offscreen_color_buf[];
 extern PixMap offscreen_pixmap;
 
-#define APP_VERSION "1.3.1 ${GIT_SHA}"
+#define APP_VERSION "1.4.0 ${GIT_SHA}"
 
 #define WINDOW_X 8
 #define WINDOW_Y 40
@@ -61,10 +61,10 @@ extern PixMap offscreen_pixmap;
 #define EDIT_LIMIT_FPS 2
 #define EDIT_SCALE_1X 5
 #define EDIT_SCALE_2X 6
-#define EDIT_PREFERENCES 8
-#define EDIT_KEY_MAPPINGS 9
-#define EDIT_GBC_MODE 11
-#define EDIT_IGNORE_DOUBLE_SPEED 12
+#define EDIT_GBC_MODE 8
+#define EDIT_IGNORE_DOUBLE_SPEED 9
+#define EDIT_PREFERENCES 11
+#define EDIT_KEY_MAPPINGS 12
 
 #define RES_MDEF_ID 128
 

@@ -170,10 +170,6 @@ void InitToolbox(void)
   if (!audio_mac_available()) {
     DisableItem(GetMenuHandle(MENU_EDIT), EDIT_SOUND);
   }
-  // Add GBC mode toggle to Options menu (after Key Mappings)
-  InsertMenuItem(GetMenuHandle(MENU_EDIT), "\p(-", EDIT_KEY_MAPPINGS);
-  InsertMenuItem(GetMenuHandle(MENU_EDIT), "\pRun as GBC", EDIT_KEY_MAPPINGS + 1);
-  InsertMenuItem(GetMenuHandle(MENU_EDIT), "\pIgnore Double Speed", EDIT_KEY_MAPPINGS + 2);
   DrawMenuBar();
 
   app_running = 1;
@@ -412,8 +408,23 @@ static void UpdateMenuItems(void)
   CheckItem(menu, EDIT_LIMIT_FPS, limit_fps);
   CheckItem(menu, EDIT_SCALE_1X, screen_scale == 1);
   CheckItem(menu, EDIT_SCALE_2X, screen_scale == 2);
-  CheckItem(menu, EDIT_GBC_MODE, gbc_enabled);
   CheckItem(menu, EDIT_IGNORE_DOUBLE_SPEED, ignore_double_speed);
+  if (g_wp) {
+    int supports_cgb = rom.cgb_flag == 0x80 || rom.cgb_flag == 0xC0;
+    if (!supports_cgb) {
+      // force menu item off for non-cgb roms so it's not disabled and checked
+      // which would be confusing
+      CheckItem(menu, EDIT_GBC_MODE, 0);
+    } else {
+      // show real state
+      CheckItem(menu, EDIT_GBC_MODE, gbc_enabled);
+    }
+    DisableItem(menu, EDIT_GBC_MODE);
+  } else {
+    // no game loaded, CGB can be adjusted freely
+    EnableItem(menu, EDIT_GBC_MODE);
+    CheckItem(menu, EDIT_GBC_MODE, gbc_enabled);
+  }
 }
 
 void SetScreenScale(int scale)
@@ -654,15 +665,6 @@ void OnMenuAction(long action)
     } else if (item == EDIT_GBC_MODE) {
       gbc_enabled = !gbc_enabled;
       CheckItem(GetMenuHandle(MENU_EDIT), EDIT_GBC_MODE, gbc_enabled);
-      // Update dmg.cgb if emulator is running
-      if (g_wp) {
-        if (gbc_enabled && (rom.cgb_flag == 0x80 || rom.cgb_flag == 0xC0)) {
-          cgb_init(&cgb_state, rom.cgb_flag);
-          dmg.cgb = &cgb_state;
-        } else {
-          dmg.cgb = NULL;
-        }
-      }
       SavePreferences();
     } else if (item == EDIT_IGNORE_DOUBLE_SPEED) {
       ignore_double_speed = !ignore_double_speed;
