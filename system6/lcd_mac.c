@@ -6,6 +6,8 @@
 #include <Palettes.h>
 
 #include "../src/lcd.h"
+#include "../src/dmg.h"
+#include "../src/cgb.h"
 #include "emulator.h"
 #include "lcd_mac.h"
 #include "settings.h"
@@ -362,9 +364,18 @@ void (*draw_funcs[2][3])(struct lcd *) = {
   { lcd_draw_2x_copybits, lcd_draw_2x_direct, lcd_draw_2x_indexed },
 };
 
+// External CGB draw function (in lcd_mac_cgb.c)
+void lcd_draw_cgb(struct lcd *lcd_ptr);
+
 // called by dmg_step at vblank
 void lcd_draw(struct lcd *lcd_ptr)
 {
+  // Check if CGB mode - if so, use CGB-specific rendering
+  if (dmg.cgb && dmg.cgb->mode && screen_depth > 1) {
+    lcd_draw_cgb(lcd_ptr);
+    return;
+  }
+
   // screen scale is 1 based, video mode is 0 based
   draw_funcs[screen_scale - 1][video_mode](lcd_ptr);
 }

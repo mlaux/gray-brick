@@ -19,4 +19,7 @@ void compile_call_dmg_write16_d0(struct code_block *block); // addr in D1, data 
 void compile_slow_dmg_read16(struct code_block *block);
 void compile_slow_dmg_write16(struct code_block *block);
 
+// STOP instruction - calls stop_func, returns 0=continue, 1=halt
+void compile_call_stop(struct code_block *block, int next_pc);
+
 #endif

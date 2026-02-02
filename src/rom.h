@@ -8,6 +8,7 @@ struct rom {
     u32 length;
     u8 *data;
     struct mbc *mbc;
+    u8 cgb_flag;  // ROM header byte 0x143: 0x80 = CGB enhanced, 0xC0 = CGB only
 };
 
 int rom_load(struct rom *rom, const char *filename);

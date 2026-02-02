@@ -8,6 +8,7 @@
 #include "jit.h"
 #include "compiler.h"
 #include "dmg.h"
+#include "cgb.h"
 #include "cache.h"
 #include "lcd.h"
 #include "rom.h"
@@ -17,12 +18,16 @@
 #include "arena.h"
 #include "cpu_cache.h"
 
+// Debug: ring buffer of last 16 PCs executed
+#define PC_HISTORY_SIZE 16
+static u32 pc_history[PC_HISTORY_SIZE];
+static u8 op_history[PC_HISTORY_SIZE];  // first opcode of each block
+static int pc_history_idx = 0;
+
 static u32 time_in_jit = 0;
 static u32 time_in_sync = 0;
 static u32 call_count = 0;
 static u32 last_report_tick = 0;
-
-int dmg_reads, dmg_writes;
 
 // register state that persists between block executions
 struct {
@@ -80,6 +85,18 @@ static void sync_cache_pointers(void)
   cache_get_arrays(&jit_ctx.bank0_cache, &jit_ctx.banked_cache, &jit_ctx.upper_cache);
 }
 
+// Handle STOP instruction - checks for CGB speed switch
+// Returns 0 to continue execution, non-zero to halt
+static int jit_handle_stop(struct dmg *dmg)
+{
+  if (dmg->cgb && cgb_speed_switch(dmg->cgb)) {
+    // Speed switched successfully, continue execution
+    return 0;
+  }
+  // DMG mode or speed switch not armed - halt
+  return 1;
+}
+
 // Initialize JIT state for a new emulation session
 void jit_init(struct dmg *dmg)
 {
@@ -101,6 +118,9 @@ void jit_init(struct dmg *dmg)
 
   memset(&jit_regs, 0, sizeof jit_regs);
 
+  // Set initial A register for CGB mode ($11) vs DMG mode ($01)
+  jit_regs.d4 = (dmg->cgb && dmg->cgb->mode) ? 0x11 : 0x01;
+
   compile_ctx.dmg = dmg;
   compile_ctx.read = dmg_read;
   compile_ctx.cache_store = cache_store;
@@ -114,21 +134,25 @@ void jit_init(struct dmg *dmg)
   jit_ctx.read16_func = dmg_read16;
   jit_ctx.write16_func = dmg_write16;
   jit_ctx.ei_di_func = dmg_ei_di;
+  jit_ctx.stop_func = jit_handle_stop;
   jit_ctx.current_rom_bank = 1; // bank 1 is default after boot
   jit_ctx.dispatcher_return = get_dispatcher_code();
   jit_ctx.patch_helper = get_patch_helper_code();
   jit_ctx.frame_cycles_ptr = &dmg->frame_cycles;
-  jit_ctx.gb_sp = 0xfffe; // initial SP
-  jit_ctx.stack_in_ram = 1;
+  jit_ctx.gb_sp = 0xfffe;  // initial SP (HRAM)
+  jit_ctx.stack_in_ram = 1;   // fast mode - A3 points to native HRAM
   sync_cache_pointers();
 
   jit_regs.d3 = 0x100; // initial PC
-  jit_regs.d4 = 0x01; // A
+  // A register: 0x11 for CGB, 0x01 for DMG
+  jit_regs.d4 = (dmg->cgb && dmg->cgb->mode) ? 0x11 : 0x01;
   jit_regs.d5 = 0x00000013; // BC
   jit_regs.d6 = 0x000000d8; // DE
   jit_regs.d7 = 0x05; // flags
   jit_regs.a2 = 0x014d; // HL
-  jit_regs.a3 = (unsigned long) dmg->zero_page + (0xfffe - 0xff80); // initial SP
+  // A3 = native pointer to HRAM at GB SP 0xFFFE
+  // HRAM is at dmg->zero_page (0xFF80-0xFFFF), 0xFFFE - 0xFF80 = 0x7E
+  jit_regs.a3 = (unsigned long) (dmg->zero_page + 0x7e);
   jit_regs.a4 = (unsigned long) &jit_ctx;
   jit_regs.a5 = (unsigned long) dmg->read_page;
   jit_regs.a6 = (unsigned long) dmg->write_page;
@@ -220,9 +244,9 @@ int jit_run(struct dmg *dmg)
 
   if (!code) {
     sprintf(buf, "$%02x:%04x %luk/%luk",
-      jit_ctx.current_rom_bank, 
-      jit_regs.d3, 
-      arena_remaining() / 1024, 
+      jit_ctx.current_rom_bank,
+      jit_regs.d3,
+      arena_remaining() / 1024,
       arena_size() / 1024
     );
     set_status_bar(buf);
@@ -290,6 +314,11 @@ int jit_run(struct dmg *dmg)
     sprintf(buf, "$%02x:%04lx", jit_ctx.current_rom_bank, jit_regs.d3);
     set_status_bar(buf);
   }
+
+  // Log PC and first opcode to ring buffer for crash debugging
+  pc_history[pc_history_idx] = jit_regs.d3;
+  op_history[pc_history_idx] = dmg_read(dmg, jit_regs.d3);
+  pc_history_idx = (pc_history_idx + 1) % PC_HISTORY_SIZE;
 
   t1 = TickCount();
   enter_asm_world(code);

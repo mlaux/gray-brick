@@ -287,3 +287,30 @@ void compile_call_dmg_write16_d0(struct code_block *block)
     compile_slow_dmg_write16(block);
     // falls through to done (offset 76)
 }
+
+// Call stop_func(dmg) - returns 0 to continue, non-zero to halt
+// If returns 0, execution continues after STOP
+// If returns non-zero, we set HALT_SENTINEL and exit
+void compile_call_stop(struct code_block *block, int next_pc)
+{
+    // push dmg pointer
+    emit_push_l_disp_an(block, JIT_CTX_DMG, REG_68K_A_CTX);  // 4
+    // load stop_func address
+    emit_movea_l_disp_an_an(block, JIT_CTX_STOP_FUNC, REG_68K_A_CTX, REG_68K_A_SCRATCH_1);  // 4
+    // call stop_func
+    emit_jsr_ind_an(block, REG_68K_A_SCRATCH_1);  // 2
+    // clean up stack
+    emit_addq_l_an(block, 7, 4);  // 2
+
+    // D0 = return value. If 0, continue execution. If non-zero, halt.
+    emit_tst_b_dn(block, REG_68K_D_SCRATCH_0);  // 2
+    emit_beq_b(block, 12);  // if 0, skip halt sequence (+12 to skip: 2 + move.l(6) + jmp(6) = 14? no wait...)
+
+    // Halt: set HALT_SENTINEL and dispatch
+    emit_move_l_dn(block, REG_68K_D_NEXT_PC, 0xffffffff);  // 6
+    emit_dispatch_jump(block);  // 6
+
+    // Continue: set next PC and dispatch
+    emit_move_l_dn(block, REG_68K_D_NEXT_PC, next_pc);  // 6
+    emit_dispatch_jump(block);  // 6
+}

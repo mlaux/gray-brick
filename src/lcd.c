@@ -18,9 +18,18 @@ static u8 tile_decode_base[256][4];
 // Renders 21 tiles starting at tile-aligned position for fast path always
 static u8 pixels[42 * 144];
 
+// CGB attribute buffer: 1 byte per pixel, stores palette/priority
+static u8 attr_buffer[168 * 144];
+
+// LUT for horizontal flip: reverses bit order in a byte
+u8 hflip_lut[256];
+
+// Shift amounts for packed pixel access (avoids 6 - idx * 2 multiply)
+static const u8 pixel_shift[4] = { 6, 4, 2, 0 };
+
 void lcd_init_lut(void)
 {
-    int n1, n2;
+    int n1, n2, k;
     for (n1 = 0; n1 < 16; n1++) {
         for (n2 = 0; n2 < 16; n2++) {
             int idx = (n1 << 4) | n2;
@@ -33,6 +42,21 @@ void lcd_init_lut(void)
     }
     // Initialize with identity palette (no mapping)
     lcd_update_palette_lut(0xe4); // default: 3,2,1,0
+
+    // Initialize horizontal flip LUT (reverses bit order)
+    for (k = 0; k < 256; k++) {
+        u8 v = k;
+        u8 r = 0;
+        r |= (v & 0x80) >> 7;
+        r |= (v & 0x40) >> 5;
+        r |= (v & 0x20) >> 3;
+        r |= (v & 0x10) >> 1;
+        r |= (v & 0x08) << 1;
+        r |= (v & 0x04) << 3;
+        r |= (v & 0x02) << 5;
+        r |= (v & 0x01) << 7;
+        hflip_lut[k] = r;
+    }
 }
 
 void lcd_update_palette_lut(u8 palette)
@@ -65,6 +89,10 @@ void lcd_new(struct lcd *lcd)
 {
     // todo < 8 bpp
     lcd->pixels = pixels;
+    lcd->attrs = attr_buffer;
+    // Initialize CGB palette dirty flags to all-dirty so first frame updates everything
+    lcd->bg_palette_dirty = 0xFFFFFFFF;
+    lcd->obj_palette_dirty = 0xFFFFFFFF;
 }
 
 u8 lcd_is_valid_addr(u16 addr)
@@ -94,13 +122,13 @@ static inline void render_tile_row_packed(u8 *p, u8 data1, u8 data2)
 // helper to extract single pixel from packed byte (pixel 0 is bits 7-6)
 static inline u8 packed_get_pixel(u8 packed, int pixel_idx)
 {
-    return (packed >> (6 - pixel_idx * 2)) & 3;
+    return (packed >> pixel_shift[pixel_idx]) & 3;
 }
 
 // helper to set single pixel in packed byte
 static inline u8 packed_set_pixel(u8 packed, int pixel_idx, u8 value)
 {
-    int shift = 6 - pixel_idx * 2;
+    int shift = pixel_shift[pixel_idx];
     return (packed & ~(3 << shift)) | ((value & 3) << shift);
 }
 

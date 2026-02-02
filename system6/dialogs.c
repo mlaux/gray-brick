@@ -187,14 +187,25 @@ static pascal Boolean RomFileFilter(CInfoPBRec *pb)
     return false;
   }
 
-  // show files ending in .gb or .GB (for imports)
+  // show files ending in .gb or .gbc (case insensitive)
   name = pb->hFileInfo.ioNamePtr;
   len = name[0];
   if (len >= 3) {
     char c1 = name[len - 2];
     char c2 = name[len - 1];
     char c3 = name[len];
+    // Check for .gb
     if (c1 == '.' && (c2 == 'g' || c2 == 'G') && (c3 == 'b' || c3 == 'B')) {
+      return false;
+    }
+  }
+  if (len >= 4) {
+    char c1 = name[len - 3];
+    char c2 = name[len - 2];
+    char c3 = name[len - 1];
+    char c4 = name[len];
+    // Check for .gbc
+    if (c1 == '.' && (c2 == 'g' || c2 == 'G') && (c3 == 'b' || c3 == 'B') && (c4 == 'c' || c4 == 'C')) {
       return false;
     }
   }
@@ -311,7 +322,7 @@ void LoadPreferences(void)
   int incompatibleDirect, incompatibleIndexed;
 
   h = GetResource(RES_PREFS_TYPE, RES_PREFS_ID);
-  if (h != nil && GetHandleSize(h) >= sizeof(int) * 7) {
+  if (h != nil && GetHandleSize(h) >= sizeof(int) * 9) {
     prefs = (int *) *h;
     cycles_per_exit = prefs[0];
     frame_skip = prefs[1];
@@ -323,12 +334,16 @@ void LoadPreferences(void)
     if (current_palette < 0 || current_palette >= gb_palette_count) {
       current_palette = 0;
     }
+    gbc_enabled = prefs[7];
+    ignore_double_speed = prefs[8];
   } else {
     cycles_per_exit = cyclesValues[0];
     frame_skip = 4;
     sound_enabled = 0;
     limit_fps = 0;
     current_palette = 0;
+    gbc_enabled = 1;
+    ignore_double_speed = 0;
     if (screen_depth >= 8) {
       video_mode = VIDEO_INDEXED;
       screen_scale = 1;
@@ -352,7 +367,7 @@ void SavePreferences(void)
 {
   Handle h;
   int *prefs;
-  Size needed = sizeof(int) * 7;
+  Size needed = sizeof(int) * 9;
 
   h = GetResource(RES_PREFS_TYPE, RES_PREFS_ID);
   if (h == nil) {
@@ -373,6 +388,8 @@ void SavePreferences(void)
   prefs[4] = sound_enabled;
   prefs[5] = limit_fps;
   prefs[6] = current_palette;
+  prefs[7] = gbc_enabled;
+  prefs[8] = ignore_double_speed;
   ChangedResource(h);
   WriteResource(h);
 }

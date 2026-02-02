@@ -13,7 +13,7 @@ COMPILER_OBJS = compiler.o emitters.o branches.o flags.o interop.o cb_prefix.o r
 TEST_BIN = tests/test_compiler
 TEST_SRCS = tests/test_compiler.c tests/test_exec_loads.c tests/test_exec_alu.c \
             tests/test_exec_branches.c tests/test_exec_cb.c tests/test_exec_stack.c \
-            tests/test_exec_timing.c
+            tests/test_exec_timing.c tests/test_exec_cgb.c
 
 .PHONY: all test clean
 

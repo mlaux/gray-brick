@@ -135,8 +135,7 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
         // also, a block of all NOPs (Link's Awakening DX has this) overflows
         // the m68k_offsets array, and i don't want to make it bigger, so
         // just chain to another block. worst case: 253 nops then a fused compare/branch
-        if (block->length > sizeof(block->code) - 200
-                || block->count > 254) {
+        if (block->length > sizeof(block->code) - 200 || src_ptr >= 256) {
             emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
             emit_move_w_dn(block, REG_68K_D_NEXT_PC, src_address + src_ptr);
             emit_patchable_exit(block);
@@ -219,6 +218,11 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
         case 0x3b: // dec sp
             emit_subq_l_an(block, REG_68K_A_SP, 1);
             emit_subi_w_disp_an(block, 1, JIT_CTX_GB_SP, REG_68K_A_CTX);
+            break;
+
+        case 0x33: // inc sp
+            emit_addq_l_an(block, REG_68K_A_SP, 1);
+            emit_addi_w_disp_an(block, 1, JIT_CTX_GB_SP, REG_68K_A_CTX);
             break;
 
         case 0x03: // inc bc
@@ -324,9 +328,9 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
             emit_moveq_dn(block, REG_68K_D_A, READ_BYTE(src_ptr++));
             break;
 
-        case 0x10: // stop - end of execution
-            emit_move_l_dn(block, REG_68K_D_NEXT_PC, 0xffffffff);
-            emit_dispatch_jump(block);
+        case 0x10: // stop - CGB speed switch or end of execution
+            src_ptr++;  // skip the padding byte (0x00) after STOP opcode
+            compile_call_stop(block, src_address + src_ptr);
             done = 1;
             break;
 

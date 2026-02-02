@@ -27,6 +27,7 @@
 #include "rom.h"
 #include "mbc.h"
 #include "audio.h"
+#include "cgb.h"
 
 #include "debug.h"
 #include "dialogs.h"
@@ -58,11 +59,14 @@ struct rom rom;
 struct lcd lcd;
 struct audio audio;
 struct dmg dmg;
+struct cgb_state cgb_state;
 
 WindowPtr g_wp;
 unsigned char app_running;
 unsigned char sound_enabled;
 unsigned char limit_fps;
+unsigned char gbc_enabled = 1;  // default: GBC support enabled
+unsigned char ignore_double_speed = 0;  // default: emulate double-speed accurately
 int screen_depth;
 
 static u32 last_frame_count;
@@ -166,6 +170,10 @@ void InitToolbox(void)
   if (!audio_mac_available()) {
     DisableItem(GetMenuHandle(MENU_EDIT), EDIT_SOUND);
   }
+  // Add GBC mode toggle to Options menu (after Key Mappings)
+  InsertMenuItem(GetMenuHandle(MENU_EDIT), "\p(-", EDIT_KEY_MAPPINGS);
+  InsertMenuItem(GetMenuHandle(MENU_EDIT), "\pRun as GBC", EDIT_KEY_MAPPINGS + 1);
+  InsertMenuItem(GetMenuHandle(MENU_EDIT), "\pIgnore Double Speed", EDIT_KEY_MAPPINGS + 2);
   DrawMenuBar();
 
   app_running = 1;
@@ -329,6 +337,15 @@ void StartEmulation(void)
 
   dmg_new(&dmg, &rom, &lcd);
   dmg.rom_bank_switch_hook = on_rom_bank_switch;
+
+  // Initialize CGB state if ROM supports it and user has enabled GBC mode
+  if (gbc_enabled && (rom.cgb_flag == 0x80 || rom.cgb_flag == 0xC0)) {
+    cgb_init(&cgb_state, rom.cgb_flag);
+    dmg.cgb = &cgb_state;
+  } else {
+    dmg.cgb = NULL;
+  }
+
   mbc_load_ram(dmg.rom->mbc, save_filename);
   audio_init(&audio);
   dmg.audio = &audio;
@@ -395,6 +412,8 @@ static void UpdateMenuItems(void)
   CheckItem(menu, EDIT_LIMIT_FPS, limit_fps);
   CheckItem(menu, EDIT_SCALE_1X, screen_scale == 1);
   CheckItem(menu, EDIT_SCALE_2X, screen_scale == 2);
+  CheckItem(menu, EDIT_GBC_MODE, gbc_enabled);
+  CheckItem(menu, EDIT_IGNORE_DOUBLE_SPEED, ignore_double_speed);
 }
 
 void SetScreenScale(int scale)
@@ -495,6 +514,9 @@ int LoadRom(Str63 fileName, short vRefNum)
   amtRead = rom.length;
   FSRead(fileNo, &amtRead, rom.data);
   FSClose(fileNo);
+
+  // Read CGB flag from ROM header byte 0x143
+  rom.cgb_flag = rom.data[0x143];
 
   rom.mbc = mbc_new(rom.data[0x147]);
   if (!rom.mbc) {
@@ -625,9 +647,37 @@ void OnMenuAction(long action)
       ShowPreferencesDialog();
       if (cycles_per_exit != old_cycles_per_exit && g_wp) {
         if (!jit_clear_all_blocks()) {
-          // no-op. failure here causes the JIT to stop with a 
+          // no-op. failure here causes the JIT to stop with a
           // status bar message, so no special error handling needed
         }
+      }
+    } else if (item == EDIT_GBC_MODE) {
+      gbc_enabled = !gbc_enabled;
+      CheckItem(GetMenuHandle(MENU_EDIT), EDIT_GBC_MODE, gbc_enabled);
+      // Update dmg.cgb if emulator is running
+      if (g_wp) {
+        if (gbc_enabled && (rom.cgb_flag == 0x80 || rom.cgb_flag == 0xC0)) {
+          cgb_init(&cgb_state, rom.cgb_flag);
+          dmg.cgb = &cgb_state;
+        } else {
+          dmg.cgb = NULL;
+        }
+      }
+      SavePreferences();
+    } else if (item == EDIT_IGNORE_DOUBLE_SPEED) {
+      ignore_double_speed = !ignore_double_speed;
+      CheckItem(GetMenuHandle(MENU_EDIT), EDIT_IGNORE_DOUBLE_SPEED, ignore_double_speed);
+      SavePreferences();
+    }
+  }
+
+  else if (menu == MENU_DEBUG) {
+    if (item == DEBUG_DUMP_VRAM) {
+      if (g_wp) {
+        debug_dump_vram(&dmg);
+        set_status_bar("VRAM dumped");
+      } else {
+        set_status_bar("No ROM loaded");
       }
     }
   }
@@ -763,6 +813,7 @@ int main(int argc, char *argv[])
 
   init_dither_lut();
   lcd_init_lut();
+  lcd_cgb_init_lut();
 
   finderResult = CheckFinderFiles();
   if (finderResult == 1 || ShowOpenBox()) {

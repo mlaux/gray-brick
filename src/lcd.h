@@ -48,6 +48,17 @@ struct lcd {
     u8 oam[0xa0];
     u8 regs[0x0c];
     u8 *pixels; // 168x144 packed buffer (42 bytes/row) for scroll offset handling
+    u8 *attrs;  // CGB: attribute buffer (168 bytes/row) with per-pixel palette/priority
+
+    // CGB color palettes (64 bytes each = 8 palettes x 4 colors x 2 bytes RGB555)
+    u8 bg_palette_ram[64];
+    u8 obj_palette_ram[64];
+    u8 bcps;  // BG palette index + auto-increment (bit 7)
+    u8 ocps;  // Sprite palette index + auto-increment (bit 7)
+
+    // CGB palette dirty tracking (32 bits = 32 colors)
+    u32 bg_palette_dirty;
+    u32 obj_palette_dirty;
 };
 
 void lcd_new(struct lcd *lcd);
@@ -102,5 +113,13 @@ void lcd_draw(struct lcd *lcd);
 struct dmg;
 void lcd_render_background(struct dmg *dmg, int lcdc, int window_enabled);
 void lcd_render_objs(struct dmg *dmg);
+
+// CGB-specific rendering (in lcd_cgb.c)
+void lcd_cgb_init_lut(void);
+void lcd_cgb_render_background(struct dmg *dmg, int lcdc, int window_enabled);
+void lcd_cgb_render_objs(struct dmg *dmg);
+
+// Horizontal flip LUT (initialized by lcd_init_lut)
+extern u8 hflip_lut[256];
 
 #endif
