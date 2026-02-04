@@ -28,6 +28,7 @@
 #include "mbc.h"
 #include "audio.h"
 #include "cgb.h"
+#include "patches.h"
 
 #include "debug.h"
 #include "dialogs.h"
@@ -525,6 +526,17 @@ int LoadRom(Str63 fileName, short vRefNum)
   amtRead = rom.length;
   FSRead(fileNo, &amtRead, rom.data);
   FSClose(fileNo);
+
+  {
+    char title[17];
+    const struct rom_patch_list *patch_list;
+
+    rom_get_title(&rom, title);
+    patch_list = patches_find(title);
+    if (patch_list) {
+      patches_apply(rom.data, rom.length, patch_list);
+    }
+  }
 
   // Read CGB flag from ROM header byte 0x143
   rom.cgb_flag = rom.data[0x143];

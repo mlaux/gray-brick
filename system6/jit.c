@@ -332,6 +332,8 @@ int jit_run(struct dmg *dmg)
   }
 
   // sync hardware with cycles accumulated by compiled code
+  // sprintf(buf, "%lu %lu", dmg->frame_cycles, jit_regs.d2);
+  // set_status_bar(buf);
   dmg_sync_hw(dmg, jit_regs.d2);
   if (dmg->interrupt_enable) {
     check_interrupts(dmg);

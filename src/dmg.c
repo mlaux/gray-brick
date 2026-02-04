@@ -58,6 +58,7 @@ void dmg_init_pages(struct dmg *dmg)
     for (k = 0x40; k <= 0x7f; k++) {
         dmg->read_page[k] = &dmg->rom->data[k << 8];
     }
+    dmg->current_rom_bank = 1;
 
     // video RAM: 0x8000-0x9fff (pages 0x80-0x9f)
     // Uses bank 0 initially, cgb_update_vram_bank() can switch for CGB
@@ -106,7 +107,14 @@ void dmg_init_pages(struct dmg *dmg)
 void dmg_update_rom_bank(struct dmg *dmg, int bank)
 {
     int k;
-    u8 *bank_base = &dmg->rom->data[bank * 0x4000];
+    u8 *bank_base;
+
+    if (dmg->current_rom_bank == bank) {
+        return;
+    }
+    dmg->current_rom_bank = bank;
+
+    bank_base = &dmg->rom->data[bank * 0x4000];
     for (k = 0x40; k <= 0x7f; k++) {
         dmg->read_page[k] = &bank_base[(k - 0x40) << 8];
     }
@@ -363,9 +371,9 @@ void dmg_write(void *_dmg, u16 address, u8 data)
     u8 *page = dmg->write_page[address >> 8];
     if (page) {
         page[address & 0xff] = data;
-        return;
+    } else {
+        dmg_write_slow(dmg, address, data);
     }
-    dmg_write_slow(dmg, address, data);
 }
 
 u16 dmg_read16(void *_dmg, u16 address)

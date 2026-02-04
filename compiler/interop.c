@@ -29,26 +29,26 @@ void compile_slow_dmg_write(struct code_block *block, uint8_t val_reg)
 static void compile_inline_dmg_write(struct code_block *block, uint8_t val_reg)
 {
     // Fast path: check write page table
-    // move.w d1, d0                     ; 2 bytes [0-1]
-    emit_move_w_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);
-    // lsr.w #8, d0                      ; 2 bytes [2-3]
-    emit_lsr_w_imm_dn(block, 8, REG_68K_D_SCRATCH_0);
-    // lsl.w #2, d0                      ; 2 bytes [4-5]
-    emit_lsl_w_imm_dn(block, 2, REG_68K_D_SCRATCH_0);
-    // movea.l (a6,d0.w), a0             ; 4 bytes [6-9]
-    emit_movea_l_idx_an_an(block, 0, REG_68K_A_WRITE_PAGE, REG_68K_D_SCRATCH_0, REG_68K_A_SCRATCH_1);
+    // move.w d1, d3                     ; 2 bytes [0-1]
+    emit_move_w_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_NEXT_PC);
+    // lsr.w #8, d3                      ; 2 bytes [2-3]
+    emit_lsr_w_imm_dn(block, 8, REG_68K_D_NEXT_PC);
+    // lsl.w #2, d3                      ; 2 bytes [4-5]
+    emit_lsl_w_imm_dn(block, 2, REG_68K_D_NEXT_PC);
+    // movea.l (a6,d3.w), a0             ; 4 bytes [6-9]
+    emit_movea_l_idx_an_an(block, 0, REG_68K_A_WRITE_PAGE, REG_68K_D_NEXT_PC, REG_68K_A_SCRATCH_1);
     // cmpa.w #0, a0                     ; 4 bytes [10-13]
     emit_cmpa_w_imm_an(block, 0, REG_68K_A_SCRATCH_1);
     // beq.s slow_path (+12)             ; 2 bytes [14-15] -> offset 28
     emit_beq_b(block, 12);
 
     // Page hit (offset 16):
-    // move.w d1, d0                     ; 2 bytes [16-17]
-    emit_move_w_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);
-    // andi.w #$ff, d0                   ; 4 bytes [18-21]
-    emit_andi_w_dn(block, REG_68K_D_SCRATCH_0, 0x00ff);
-    // move.b val_reg, (a0,d0.w)         ; 4 bytes [22-25]
-    emit_move_b_dn_idx_an(block, val_reg, REG_68K_A_SCRATCH_1, REG_68K_D_SCRATCH_0);
+    // move.w d1, d3                     ; 2 bytes [16-17]
+    emit_move_w_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_NEXT_PC);
+    // andi.w #$ff, d3                   ; 4 bytes [18-21]
+    emit_andi_w_dn(block, REG_68K_D_NEXT_PC, 0x00ff);
+    // move.b val_reg, (a0,d3.w)         ; 4 bytes [22-25]
+    emit_move_b_dn_idx_an(block, val_reg, REG_68K_A_SCRATCH_1, REG_68K_D_NEXT_PC);
     // bra.s done (+24)                  ; 2 bytes [26-27] -> offset 52
     emit_bra_b(block, 24);
 
@@ -67,20 +67,14 @@ void compile_call_dmg_write_a(struct code_block *block)
 // Call dmg_write(dmg, addr, val) - addr in D1, val is immediate
 void compile_call_dmg_write_imm(struct code_block *block, uint8_t val)
 {
-    emit_move_b_dn(block, 3, val);
-    compile_inline_dmg_write(block, 3);
-    // emit_move_b_dn(block, 0, val);
-    // compile_slow_dmg_write(block, 0);
+    emit_move_b_dn(block, 0, val);
+    compile_inline_dmg_write(block, 0);
 }
 
 // Call dmg_write(dmg, addr, val) - addr in D1, val in D0
 void compile_call_dmg_write_d0(struct code_block *block)
 {
-    // uses d0 as scratch so need to move to d3, but it's so long that
-    // what's one more instruction...
-    emit_move_b_dn_dn(block, 0, 3);
-    compile_inline_dmg_write(block, 3);
-    // compile_slow_dmg_write(block, 0);
+    compile_inline_dmg_write(block, 0);
 }
 
 // Emit slow path call to dmg_read - expects address in D1, returns in D0

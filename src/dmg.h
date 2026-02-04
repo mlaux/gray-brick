@@ -68,6 +68,9 @@ struct dmg {
 
     // for TIMA timer
     u32 timer_cycles;
+
+    // current ROM bank (to avoid redundant page table updates)
+    int current_rom_bank;
 };
 
 void dmg_new(struct dmg *dmg, struct rom *rom, struct lcd *lcd);
