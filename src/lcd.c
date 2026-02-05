@@ -180,16 +180,27 @@ void lcd_render_background(struct dmg *dmg, int lcdc, int window_enabled)
     // scx offset within buffer - sprites and display need this
     int scx_offset = scx & 7;
 
-    int sy;
-    for (sy = 0; sy < 144; sy++) {
-        u8 *row = out + sy * 42;
-        int window_active = window_enabled && sy >= wy && wx < 160;
+    // calculate how many BG tiles to render when window is active,
+    // skip tiles that would be fully covered by the window
+    int bg_tile_limit = 21;
+    int window_on_screen = window_enabled && wx < 160 && wy < 144;
+    if (window_on_screen) {
+        int win_start_buf = (wx > 0 ? wx : 0) + scx_offset;
+        bg_tile_limit = (win_start_buf + 7) / 8;
+        if (bg_tile_limit > 21) bg_tile_limit = 21;
+        if (bg_tile_limit < 0) bg_tile_limit = 0;
+    }
 
-        // always render 21 full tiles starting at tile-aligned position
+    int sy_limit = window_on_screen ? wy : 144;
+    int sy;
+
+    // before window: render all 21 BG tiles, no window overlay
+    for (sy = 0; sy < sy_limit; sy++) {
+        u8 *row = out + sy * 42;
         int bg_y = (sy + scy) & 0xff;
         int tile_row = bg_y >> 3;
         int row_in_tile = bg_y & 7;
-        int bg_x = scx & ~7; // tile-aligned start
+        int bg_x = scx & ~7;
 
         int tile;
         for (tile = 0; tile < 21; tile++) {
@@ -205,44 +216,82 @@ void lcd_render_background(struct dmg *dmg, int lcdc, int window_enabled)
             render_tile_row_packed(row + tile * 2, data1, data2);
             bg_x = (bg_x + 8) & 0xff;
         }
+    }
 
-        // overlay window if active
-        if (window_active) {
-            int win_y = sy - wy;
-            int win_tile_row = win_y >> 3;
-            int win_row_in_tile = win_y & 7;
-            // window screen position, adjusted for buffer offset
-            int win_start = (wx > 0 ? wx : 0) + scx_offset;
-            int win_end = 160 + scx_offset;
-            int win_x = wx < 0 ? -wx : 0;
+    // lines with window: render only visible BG tiles, then window overlay
+    for (sy = sy_limit; sy < 144; sy++) {
+        u8 *row = out + sy * 42;
+        int bg_y = (sy + scy) & 0xff;
+        int tile_row = bg_y >> 3;
+        int row_in_tile = bg_y & 7;
+        int bg_x = scx & ~7;
 
-            // render window tiles over the background
-            while (win_start < win_end) {
-                int tile_col = (win_x >> 3) & 31;
-                int pixel_in_tile = win_x & 7;
-                int tile_idx = vram[win_map_off + win_tile_row * 32 + tile_col];
-                int tile_off = unsigned_mode
-                    ? tile_base_off + 16 * tile_idx
-                    : tile_base_off + 16 * (signed char) tile_idx;
+        int tile;
+        for (tile = 0; tile < bg_tile_limit; tile++) {
+            int tile_col = (bg_x >> 3) & 31;
+            int tile_idx = vram[bg_map_off + tile_row * 32 + tile_col];
+            int tile_off = unsigned_mode
+                ? tile_base_off + 16 * tile_idx
+                : tile_base_off + 16 * (signed char) tile_idx;
 
-                u8 data1 = vram[tile_off + win_row_in_tile * 2];
-                u8 data2 = vram[tile_off + win_row_in_tile * 2 + 1];
+            u8 data1 = vram[tile_off + row_in_tile * 2];
+            u8 data2 = vram[tile_off + row_in_tile * 2 + 1];
 
-                if (pixel_in_tile == 0 && (win_start & 3) == 0 && win_start + 8 <= win_end) {
-                    // full tile, buffer position is 4-aligned
-                    render_tile_row_packed(row + (win_start >> 2), data1, data2);
-                    win_start += 8;
-                    win_x += 8;
+            render_tile_row_packed(row + tile * 2, data1, data2);
+            bg_x = (bg_x + 8) & 0xff;
+        }
+
+        // Window overlay
+        int win_y = sy - wy;
+        int win_tile_row = win_y >> 3;
+        int win_row_in_tile = win_y & 7;
+        int win_start = (wx > 0 ? wx : 0) + scx_offset;
+        int win_end = 160 + scx_offset;
+        int win_x = wx < 0 ? -wx : 0;
+
+        while (win_start < win_end) {
+            int tile_col = (win_x >> 3) & 31;
+            int pixel_in_tile = win_x & 7;
+            int tile_idx = vram[win_map_off + win_tile_row * 32 + tile_col];
+            int tile_off = unsigned_mode
+                ? tile_base_off + 16 * tile_idx
+                : tile_base_off + 16 * (signed char) tile_idx;
+
+            u8 data1 = vram[tile_off + win_row_in_tile * 2];
+            u8 data2 = vram[tile_off + win_row_in_tile * 2 + 1];
+
+            if (pixel_in_tile == 0 && win_start + 8 <= win_end) {
+                // full tile - decode with LUT then write (possibly misaligned)
+                int idx_hi = (data1 & 0xf0) | (data2 >> 4);
+                int idx_lo = ((data1 & 0x0f) << 4) | (data2 & 0x0f);
+                u8 tile0 = tile_decode_packed[idx_hi];
+                u8 tile1 = tile_decode_packed[idx_lo];
+
+                int byte_idx = win_start >> 2;
+                int off = win_start & 3;
+
+                if (off == 0) {
+                    // aligned: direct write
+                    row[byte_idx] = tile0;
+                    row[byte_idx + 1] = tile1;
                 } else {
-                    // partial tile (start or end of window)
-                    int pixels_to_draw = 8 - pixel_in_tile;
-                    if (win_start + pixels_to_draw > win_end) {
-                        pixels_to_draw = win_end - win_start;
-                    }
-                    render_partial_start(row, data1, data2, pixel_in_tile, pixels_to_draw, win_start);
-                    win_start += pixels_to_draw;
-                    win_x += pixels_to_draw;
+                    // misaligned: shift and merge across 3 bytes
+                    int shift = off * 2;
+                    row[byte_idx] = (row[byte_idx] & (0xff << (8 - shift))) | (tile0 >> shift);
+                    row[byte_idx + 1] = (tile0 << (8 - shift)) | (tile1 >> shift);
+                    row[byte_idx + 2] = (row[byte_idx + 2] & (0xff >> shift)) | (tile1 << (8 - shift));
                 }
+                win_start += 8;
+                win_x += 8;
+            } else {
+                // partial tile (start or end of window, or mid-tile start)
+                int pixels_to_draw = 8 - pixel_in_tile;
+                if (win_start + pixels_to_draw > win_end) {
+                    pixels_to_draw = win_end - win_start;
+                }
+                render_partial_start(row, data1, data2, pixel_in_tile, pixels_to_draw, win_start);
+                win_start += pixels_to_draw;
+                win_x += pixels_to_draw;
             }
         }
     }
