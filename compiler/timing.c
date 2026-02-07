@@ -43,6 +43,11 @@ void compile_ly_wait(
     emit_move_l_dn(block, REG_68K_D_CYCLE_COUNT, 70224 + target_cycles);
     emit_sub_l_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_CYCLE_COUNT);
 
+    // double D2 if effective double speed is active (CPU cycles = 2x PPU cycles)
+    emit_tst_b_disp_an(block, JIT_CTX_EFF_DOUBLE_SPEED, REG_68K_A_CTX);
+    emit_beq_b(block, 2);
+    emit_add_l_dn_dn(block, REG_68K_D_CYCLE_COUNT, REG_68K_D_CYCLE_COUNT);
+
     // set A to the LY value we waited for
     emit_moveq_dn(block, REG_68K_D_A, wait_ly);
 
@@ -135,6 +140,11 @@ void compile_ly_wait_reg(
     emit_addi_l_dn(block, REG_68K_D_CYCLE_COUNT, 70224);
     emit_sub_l_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_CYCLE_COUNT);
 
+    // double D2 if effective double speed is active (CPU cycles = 2x PPU cycles)
+    emit_tst_b_disp_an(block, JIT_CTX_EFF_DOUBLE_SPEED, REG_68K_A_CTX);
+    emit_beq_b(block, 2);
+    emit_add_l_dn_dn(block, REG_68K_D_CYCLE_COUNT, REG_68K_D_CYCLE_COUNT);
+
     // restore wait_ly from stack into A register
     emit_pop_l_dn(block, REG_68K_D_A);
 
@@ -176,6 +186,11 @@ void compile_halt(struct code_block *block, int next_pc)
     // in vblank: d2 = (70224 - frame_cycles) + 65664
     emit_move_l_dn(block, REG_68K_D_CYCLE_COUNT, 70224 + 65664);
     emit_sub_l_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_CYCLE_COUNT);
+
+    // double D2 if effective double speed is active (CPU cycles = 2x PPU cycles)
+    emit_tst_b_disp_an(block, JIT_CTX_EFF_DOUBLE_SPEED, REG_68K_A_CTX);
+    emit_beq_b(block, 2);
+    emit_add_l_dn_dn(block, REG_68K_D_CYCLE_COUNT, REG_68K_D_CYCLE_COUNT);
 
     // exit to C
     emit_move_l_dn(block, REG_68K_D_NEXT_PC, next_pc);
