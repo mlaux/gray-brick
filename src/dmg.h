@@ -86,6 +86,8 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data);
 
 void dmg_sync_hw(struct dmg *dmg, int cycles);
 
+void hdma_sync(struct dmg *dmg);
+
 // page table management
 void dmg_init_pages(struct dmg *dmg);
 void dmg_update_rom_bank(struct dmg *dmg, int bank);

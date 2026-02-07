@@ -27,7 +27,8 @@ typedef struct {
     /* 38 */ u32 _pad2;
     /* 3c */ u32 *frame_cycles_ptr; // pointer to dmg->frame_cycles for HALT
     /* 40 */ void *stop_func;  // STOP handler (for CGB speed switch)
-    /* 44 */ u32 temp2;
+    /* 44 */ volatile u8 effective_double_speed;  // 1 when cgb double_speed && !ignore_double_speed
+    /* 45 */ u8 _pad4[3];
     /* 48 */ u16 gb_sp; // GB stack pointer value (always valid)
     /* 4a */ u16 _pad3;
     /* 4c */ long stack_in_ram; // non-zero if A3 points to native WRAM/HRAM
