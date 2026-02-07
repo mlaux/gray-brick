@@ -320,6 +320,37 @@ TEST(test_daa_no_adjustment)
     ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 0x46);
 }
 
+// Test that dec a preserves carry flag (Pokemon Crystal xor_a_dec_a pattern)
+TEST(test_dec_a_preserves_carry)
+{
+    // xor a sets C=0, dec a should preserve C=0
+    // Then adc a, $00 should NOT add carry (result = $FF + 0 + 0 = $FF)
+    uint8_t rom[] = {
+        0xaf,             // xor a (A=0, C=0)
+        0x3d,             // dec a (A=$FF, C should stay 0)
+        0xce, 0x00,       // adc a, $00 -> if C preserved: $FF+0+0=$FF, if C clobbered: $FF+0+1=$00
+        0x10              // stop
+    };
+    run_program(rom, 0);
+    ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 0xff);
+}
+
+// Test that inc a preserves carry flag
+TEST(test_inc_a_preserves_carry)
+{
+    // scf sets C=1, inc a should preserve C=1
+    // Then adc a, $00 should add carry (result = $02 + 0 + 1 = $03)
+    uint8_t rom[] = {
+        0x3e, 0x01,       // ld a, $01
+        0x37,             // scf (C=1)
+        0x3c,             // inc a (A=$02, C should stay 1)
+        0xce, 0x00,       // adc a, $00 -> $02 + 0 + 1 = $03
+        0x10              // stop
+    };
+    run_program(rom, 0);
+    ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 0x03);
+}
+
 void register_alu_tests(void)
 {
     printf("\n8-bit inc/dec:\n");
@@ -381,4 +412,8 @@ void register_alu_tests(void)
     RUN_TEST(test_daa_add_both_nibbles);
     RUN_TEST(test_daa_sub_lower_nibble);
     RUN_TEST(test_daa_no_adjustment);
+
+    printf("\nInc/dec carry preservation:\n");
+    RUN_TEST(test_dec_a_preserves_carry);
+    RUN_TEST(test_inc_a_preserves_carry);
 }

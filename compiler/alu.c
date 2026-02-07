@@ -811,19 +811,19 @@ int compile_alu_op(
     case 0xe6: // and a, #nn
         emit_andi_b_dn(block, REG_68K_D_A, READ_BYTE(*src_ptr));
         (*src_ptr)++;
-        compile_set_z_flag(block);
+        compile_set_zc_flags(block);
         return 1;
 
     case 0xee: // xor a, u8
         emit_eor_b_imm_dn(block, READ_BYTE(*src_ptr), REG_68K_D_A);
         (*src_ptr)++;
-        compile_set_z_flag(block);
+        compile_set_zc_flags(block);
         return 1;
 
     case 0xf6: // or a, #imm
         emit_ori_b_dn(block, REG_68K_D_A, READ_BYTE(*src_ptr));
         (*src_ptr)++;
-        compile_set_z_flag(block);
+        compile_set_zc_flags(block);
         return 1;
 
     case 0xfe: // cp a, imm8

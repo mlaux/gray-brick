@@ -19,25 +19,22 @@ void compile_set_zc_flags(struct code_block *block)
 
 void compile_set_z_flag(struct code_block *block)
 {
-    emit_move_sr_dn(block, REG_68K_D_FLAGS);
-
-    // certain instructions only set Z and leave C alone, and vice versa.
-    // this version emulates that. i haven't found anything that breaks
-    // if it just always overwrites both Z and C, though
-    // emit_move_sr_dn(block, REG_68K_D_NEXT_PC);
-    // emit_andi_b_dn(block, REG_68K_D_NEXT_PC, 0x04);
-    // emit_andi_b_dn(block, REG_68K_D_FLAGS, ~0x04);
-    // emit_or_b_dn_dn(block, REG_68K_D_NEXT_PC, REG_68K_D_FLAGS);
-    // emit_move_dn_ccr(block, REG_68K_D_FLAGS);
+    // inc/dec/bit must set Z from result but preserve C from previous flags.
+    // Save new CCR to D3, extract Z, merge with old C from D7.
+    // Then load merged flags into CCR so fused branches see correct Z.
+    emit_move_sr_dn(block, REG_68K_D_NEXT_PC);
+    emit_andi_b_dn(block, REG_68K_D_NEXT_PC, 0x04);
+    emit_andi_b_dn(block, REG_68K_D_FLAGS, 0x01);
+    emit_or_b_dn_dn(block, REG_68K_D_NEXT_PC, REG_68K_D_FLAGS);
+    emit_move_dn_ccr(block, REG_68K_D_FLAGS);
 }
 
 void compile_set_c_flag(struct code_block *block)
 {
-    emit_move_sr_dn(block, REG_68K_D_FLAGS);
-
-    // emit_move_sr_dn(block, REG_68K_D_NEXT_PC);
-    // emit_andi_b_dn(block, REG_68K_D_NEXT_PC, 0x01);
-    // emit_andi_b_dn(block, REG_68K_D_FLAGS, ~0x01);
-    // emit_or_b_dn_dn(block, REG_68K_D_NEXT_PC, REG_68K_D_FLAGS);
-    // emit_move_dn_ccr(block, REG_68K_D_FLAGS);
+    // add hl,rr sets C from result but preserves Z from previous flags.
+    // Save new CCR to D3, extract C, merge with old Z from D7.
+    emit_move_sr_dn(block, REG_68K_D_NEXT_PC);
+    emit_andi_b_dn(block, REG_68K_D_NEXT_PC, 0x01);
+    emit_andi_b_dn(block, REG_68K_D_FLAGS, 0x04);
+    emit_or_b_dn_dn(block, REG_68K_D_NEXT_PC, REG_68K_D_FLAGS);
 }
