@@ -421,10 +421,13 @@ static void UpdateMenuItems(void)
       CheckItem(menu, EDIT_GBC_MODE, gbc_enabled);
     }
     DisableItem(menu, EDIT_GBC_MODE);
+    // Ignore Double Speed only takes effect on speed switch, so disable while running
+    DisableItem(menu, EDIT_IGNORE_DOUBLE_SPEED);
   } else {
     // no game loaded, CGB can be adjusted freely
     EnableItem(menu, EDIT_GBC_MODE);
     CheckItem(menu, EDIT_GBC_MODE, gbc_enabled);
+    EnableItem(menu, EDIT_IGNORE_DOUBLE_SPEED);
   }
 }
 
