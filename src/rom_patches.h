@@ -1,5 +1,5 @@
-#ifndef _PATCHES_H
-#define _PATCHES_H
+#ifndef _ROM_PATCHES_H
+#define _ROM_PATCHES_H
 
 #include "types.h"
 

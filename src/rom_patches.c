@@ -1,5 +1,5 @@
 #include <string.h>
-#include "patches.h"
+#include "rom_patches.h"
 
 // Pokemon Red/Blue: fix terrible frame rate in menus
 // make HandleMenuInput and WaitForTextScrollButtonPress halt instead of spin

@@ -1,3 +1,5 @@
+#include <Patches.h>
+
 #include "cpu_cache.h"
 
 // from Inside Macintosh: OS Utilities

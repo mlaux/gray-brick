@@ -28,7 +28,7 @@
 #include "mbc.h"
 #include "audio.h"
 #include "cgb.h"
-#include "patches.h"
+#include "rom_patches.h"
 
 #include "debug.h"
 #include "dialogs.h"

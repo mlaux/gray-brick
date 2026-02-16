@@ -14,7 +14,7 @@ add_application("Gray Brick"
     ../src/cgb.c
     ../src/audio.c
     ../src/rom.c
-    ../src/patches.c
+    ../src/rom_patches.c
     ../src/mbc.c
     ../compiler/compiler.c
     ../compiler/emitters.c
