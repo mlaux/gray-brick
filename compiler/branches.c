@@ -150,13 +150,15 @@ void compile_jr_cond(
 
         // Tiny loops (disp >= -3): skip interrupt check, just branch
         if (disp >= -3) {
-            // bxx.w displacement needs adjustment for where we emit it
-            int16_t cond_disp = (int16_t) target_m68k - (int16_t) (block->length + 2);
+            // Skip if NOT taken (skip: addq(2) + bra.w(4) = 6, +2 = 8)
             if (branch_if_set) {
-                emit_bne_w(block, cond_disp);
+                emit_beq_w(block, 8);
             } else {
-                emit_beq_w(block, cond_disp);
+                emit_bne_w(block, 8);
             }
+            emit_add_cycles(block, 4);  // extra cycles for taken branch
+            int16_t bra_disp = (int16_t) target_m68k - (int16_t) (block->length + 2);
+            emit_bra_w(block, bra_disp);
             return;
         }
 
@@ -185,10 +187,11 @@ void compile_jr_cond(
             emit_beq_w(block, 6);
         }
 
-        // bra.w to .fall_through (cmpi.l(6) + bcs.w(4) + moveq(2) + move.w(4) + patchable_exit(16) = 32, plus 2 for PC = 34)
-        emit_bra_w(block, 34);
+        // bra.w to .fall_through (addq(2) + cmpi.l(6) + bcs.w(4) + moveq(2) + move.w(4) + patchable_exit(16) = 34, plus 2 for PC = 36)
+        emit_bra_w(block, 36);
 
         // .check_cycles:
+        emit_add_cycles(block, 4);  // extra cycles for taken branch
         emit_cmpi_l_imm_dn(block, cycles_per_exit, REG_68K_D_CYCLE_COUNT);
 
         // bcs.w to native loop target (cycles < cycles_per_exit)
@@ -210,12 +213,13 @@ void compile_jr_cond(
 
     if (branch_if_set) {
         // Skip exit if flag is clear (btst Z=1 when bit=0)
-        emit_beq_w(block, 24);  // skip: moveq(2) + move.w(4) + patchable_exit(16) = 22, plus 2 = 24
+        emit_beq_w(block, 26);  // skip: addq(2) + moveq(2) + move.w(4) + patchable_exit(16) = 24, plus 2 = 26
     } else {
         // Skip exit if flag is set (btst Z=0 when bit=1)
-        emit_bne_w(block, 24);
+        emit_bne_w(block, 26);
     }
 
+    emit_add_cycles(block, 4);  // extra cycles for taken branch
     emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
     emit_move_w_dn(block, REG_68K_D_NEXT_PC, target_gb_pc);
     emit_patchable_exit(block);
@@ -241,12 +245,13 @@ void compile_jp_cond(
     // If condition NOT met, skip the exit sequence
     if (branch_if_set) {
         // Skip exit if flag is clear (btst Z=1 when bit=0)
-        emit_beq_w(block, 24);  // skip: moveq(2) + move.w(4) + patchable_exit(16) = 22, plus 2 = 24
+        emit_beq_w(block, 26);  // skip: addq(2) + moveq(2) + move.w(4) + patchable_exit(16) = 24, plus 2 = 26
     } else {
         // Skip exit if flag is set (btst Z=0 when bit=1)
-        emit_bne_w(block, 24);
+        emit_bne_w(block, 26);
     }
 
+    emit_add_cycles(block, 4);  // extra cycles for taken branch
     emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
     emit_move_w_dn(block, REG_68K_D_NEXT_PC, target);
     emit_patchable_exit(block);
@@ -295,13 +300,15 @@ void compile_call_cond(
     emit_btst_imm_dn(block, flag_bit, REG_68K_D_FLAGS);
 
     // If condition NOT met, skip the call sequence
-    // call sequence: subq(2) + subi(6) + move.w(4) + move.b(2) + rol(2) + move.b(4) +
-    //                moveq(2) + move.w(4) + patchable_exit(16) = 42, +2 = 44
+    // call sequence: addi(6) + subq(2) + subi(6) + move.w(4) + move.b(2) + rol(2) + move.b(4) +
+    //                moveq(2) + move.w(4) + patchable_exit(16) = 48, +2 = 50
     if (branch_if_set) {
-        emit_beq_w(block, 44);
+        emit_beq_w(block, 50);
     } else {
-        emit_bne_w(block, 44);
+        emit_bne_w(block, 50);
     }
+
+    emit_add_cycles(block, 12);  // extra cycles for taken branch
 
     // Push return address
     emit_subq_w_an(block, REG_68K_A_SP, 2);
@@ -338,13 +345,15 @@ void compile_ret_cond(struct code_block *block, uint8_t flag_bit, int branch_if_
     emit_btst_imm_dn(block, flag_bit, REG_68K_D_FLAGS);
 
     // If condition NOT met, skip the return sequence
-    // ret sequence: moveq(2) + move.b(4) + rol(2) + move.b(2) + addq(2) + addi(6) +
-    //               dispatch_jump(6) = 24, +2 = 26
+    // ret sequence: addi(6) + moveq(2) + move.b(4) + rol(2) + move.b(2) + addq(2) + addi(6) +
+    //               dispatch_jump(6) = 30, +2 = 32
     if (branch_if_set) {
-        emit_beq_w(block, 26);
+        emit_beq_w(block, 32);
     } else {
-        emit_bne_w(block, 26);
+        emit_bne_w(block, 32);
     }
+
+    emit_add_cycles(block, 12);  // extra cycles for taken branch
 
     // Pop return address and dispatch
     emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
@@ -406,8 +415,11 @@ int compile_jr_cond_fused(
 
         // Tiny loops: skip cycle check
         if (disp >= -3) {
+            // Skip if NOT taken (skip: addq(2) + bra.w(4) = 6, +2 = 8)
+            emit_bcc_opcode_w(block, invert_cond(cond), 8);
+            emit_add_cycles(block, 4);  // extra cycles for taken branch
             m68k_disp = (int16_t) target_m68k - (int16_t) (block->length + 2);
-            emit_bcc_opcode_w(block, cond, m68k_disp);
+            emit_bra_w(block, m68k_disp);
             return 0;
         }
 
@@ -416,6 +428,7 @@ int compile_jr_cond_fused(
         //   bcc.w .check_cycles      ; if condition met
         //   bra.w .fall_through      ; condition not met
         // .check_cycles:
+        //   addq.l #4, d2            ; extra cycles for taken branch
         //   cmpi.l #cycles_per_exit, d2
         //   bcs.w loop_target        ; cycles < cycles_per_exit
         //   <exit via patchable_exit>
@@ -424,10 +437,11 @@ int compile_jr_cond_fused(
         // Branch to check_cycles if condition met
         emit_bcc_opcode_w(block, cond, 6);
 
-        // bra.w to .fall_through (cmpi.l(6) + bcs.w(4) + exit(22) = 32, plus 2 = 34)
-        emit_bra_w(block, 34);
+        // bra.w to .fall_through (addq(2) + cmpi.l(6) + bcs.w(4) + exit(22) = 34, plus 2 = 36)
+        emit_bra_w(block, 36);
 
         // .check_cycles:
+        emit_add_cycles(block, 4);  // extra cycles for taken branch
         emit_cmpi_l_imm_dn(block, cycles_per_exit, REG_68K_D_CYCLE_COUNT);
 
         // bcs.w to native loop target (cycles < cycles_per_exit)
@@ -445,9 +459,10 @@ int compile_jr_cond_fused(
     // Forward/external jump - conditionally exit via patchable exit
     target_gb_pc = src_address + target_gb_offset;
 
-    // Skip exit if condition NOT met (skip: moveq(2) + move.w(4) + patchable_exit(16) = 22, +2 = 24)
-    emit_bcc_opcode_w(block, invert_cond(cond), 24);
+    // Skip exit if condition NOT met (skip: addq(2) + moveq(2) + move.w(4) + patchable_exit(16) = 24, +2 = 26)
+    emit_bcc_opcode_w(block, invert_cond(cond), 26);
 
+    emit_add_cycles(block, 4);  // extra cycles for taken branch
     emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
     emit_move_w_dn(block, REG_68K_D_NEXT_PC, target_gb_pc);
     emit_patchable_exit(block);
@@ -465,9 +480,10 @@ void compile_jp_cond_fused(
     uint16_t target = READ_BYTE(*src_ptr) | (READ_BYTE(*src_ptr + 1) << 8);
     *src_ptr += 2;
 
-    // Skip exit if condition NOT met (skip: moveq(2) + move.w(4) + patchable_exit(16) = 22, +2 = 24)
-    emit_bcc_opcode_w(block, invert_cond(cond), 24);
+    // Skip exit if condition NOT met (skip: addq(2) + moveq(2) + move.w(4) + patchable_exit(16) = 24, +2 = 26)
+    emit_bcc_opcode_w(block, invert_cond(cond), 26);
 
+    emit_add_cycles(block, 4);  // extra cycles for taken branch
     emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
     emit_move_w_dn(block, REG_68K_D_NEXT_PC, target);
     emit_patchable_exit(block);
@@ -477,9 +493,11 @@ void compile_jp_cond_fused(
 void compile_ret_cond_fused(struct code_block *block, int cond)
 {
     // Skip return if condition NOT met
-    // ret sequence: moveq(2) + move.b(4) + rol(2) + move.b(2) + addq(2) + addi(6) +
-    //               dispatch_jump(6) = 24, +2 = 26
-    emit_bcc_opcode_w(block, invert_cond(cond), 26);
+    // ret sequence: addi(6) + moveq(2) + move.b(4) + rol(2) + move.b(2) + addq(2) + addi(6) +
+    //               dispatch_jump(6) = 30, +2 = 32
+    emit_bcc_opcode_w(block, invert_cond(cond), 32);
+
+    emit_add_cycles(block, 12);  // extra cycles for taken branch
 
     // Pop return address and dispatch
     emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
@@ -504,9 +522,11 @@ void compile_call_cond_fused(
     *src_ptr += 2;
 
     // Skip call if condition NOT met
-    // call sequence: subq(2) + subi(6) + move.w(4) + move.b(2) + rol(2) + move.b(4) +
-    //                moveq(2) + move.w(4) + patchable_exit(16) = 42, +2 = 44
-    emit_bcc_opcode_w(block, invert_cond(cond), 44);
+    // call sequence: addi(6) + subq(2) + subi(6) + move.w(4) + move.b(2) + rol(2) + move.b(4) +
+    //                moveq(2) + move.w(4) + patchable_exit(16) = 48, +2 = 50
+    emit_bcc_opcode_w(block, invert_cond(cond), 50);
+
+    emit_add_cycles(block, 12);  // extra cycles for taken branch
 
     // Push return address
     emit_subq_w_an(block, REG_68K_A_SP, 2);
