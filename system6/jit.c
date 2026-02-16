@@ -14,6 +14,7 @@
 #include "rom.h"
 #include "dispatcher_asm.h"
 #include "emulator.h"
+#include "settings.h"
 #include "debug.h"
 #include "arena.h"
 #include "cpu_cache.h"
@@ -90,7 +91,8 @@ static void sync_cache_pointers(void)
 static int jit_handle_stop(struct dmg *dmg)
 {
   if (dmg->cgb && cgb_speed_switch(dmg->cgb)) {
-    // Speed switched successfully, continue execution
+    // Speed switched successfully - update effective_double_speed
+    jit_ctx.effective_double_speed = (dmg->cgb->double_speed && !ignore_double_speed) ? 1 : 0;
     return 0;
   }
   // DMG mode or speed switch not armed - halt
@@ -141,6 +143,7 @@ void jit_init(struct dmg *dmg)
   jit_ctx.frame_cycles_ptr = &dmg->frame_cycles;
   jit_ctx.gb_sp = 0xfffe;  // initial SP (HRAM)
   jit_ctx.stack_in_ram = 1;   // fast mode - A3 points to native HRAM
+  jit_ctx.effective_double_speed = 0;
   sync_cache_pointers();
 
   jit_regs.d3 = 0x100; // initial PC

@@ -19,10 +19,24 @@ void compile_ld_sp_imm16(
     emit_move_w_dn_disp_an(block, REG_68K_D_SCRATCH_1, JIT_CTX_GB_SP, REG_68K_A_CTX);
 
     // compile-time WRAM/HRAM detection
-    if (ctx && ctx->wram_base && gb_sp >= 0xc000 && gb_sp <= 0xe000) {
-        // WRAM: A3 = wram_base + (gb_sp - 0xC000)
+    if (ctx && ctx->wram_base && gb_sp >= 0xc000 && gb_sp < 0xd000) {
+        // WRAM bank 0 ($C000-$CFFF): always fixed, use compile-time address
         uint32_t addr = (uint32_t) ctx->wram_base + (gb_sp - 0xc000);
         emit_movea_l_imm32(block, REG_68K_A_SP, addr);
+        emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 1);
+        emit_move_l_dn_disp_an(block, REG_68K_D_SCRATCH_1, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
+    } else if (ctx && ctx->wram_base && gb_sp >= 0xd000 && gb_sp <= 0xe000) {
+        // Switchable WRAM ($D000-$DFFF): use page table for correct bank
+        uint8_t page = gb_sp >> 8;
+        uint8_t offset = gb_sp & 0xff;
+        // D0 = page * 4 (index into page table)
+        emit_move_w_dn(block, REG_68K_D_SCRATCH_0, (int16_t)(page * 4));
+        // A3 = read_page[page]
+        emit_movea_l_idx_an_an(block, 0, REG_68K_A_READ_PAGE, REG_68K_D_SCRATCH_0, REG_68K_A_SP);
+        // A3 += offset within page
+        if (offset > 0) {
+            emit_lea_disp_an_an(block, offset, REG_68K_A_SP, REG_68K_A_SP);
+        }
         emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 1);
         emit_move_l_dn_disp_an(block, REG_68K_D_SCRATCH_1, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
     } else if (ctx && ctx->hram_base && gb_sp >= 0xff80 && gb_sp <= 0xfffe) {
@@ -395,11 +409,21 @@ int compile_stack_op(
                 not_wram = block->length;
                 emit_bcc_w(block, 0);  // branch if >= $20 (not WRAM)
 
-                // WRAM path: A3 = wram_base + (HL - $C000)
-                // Must use ADDA.L because ADDA.W sign-extends, which breaks for HL >= $8000
+                // WRAM path: use page table for correct bank
+                // A3 = read_page[HL >> 8] + (HL & 0xFF)
+                // This handles CGB switchable WRAM banks ($D000-$DFFF)
+                // correctly, since the page table is updated on bank switch
                 emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
                 emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
-                emit_movea_l_imm32(block, REG_68K_A_SP, (uint32_t) ctx->wram_base - 0xc000);
+                // D0 = HL >> 8 (page number), then * 4 for pointer index
+                emit_move_w_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);
+                emit_lsr_w_imm_dn(block, 8, REG_68K_D_SCRATCH_0);
+                emit_lsl_w_imm_dn(block, 2, REG_68K_D_SCRATCH_0);
+                // A3 = read_page[page] (base pointer for this 256-byte page)
+                emit_movea_l_idx_an_an(block, 0, REG_68K_A_READ_PAGE, REG_68K_D_SCRATCH_0, REG_68K_A_SP);
+                // D1 = HL & 0xFF (offset within page)
+                emit_andi_w_dn(block, REG_68K_D_SCRATCH_1, 0x00ff);
+                // A3 += offset
                 emit_adda_l_dn_an(block, REG_68K_D_SCRATCH_1, REG_68K_A_SP);
                 emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 1);
                 emit_move_l_dn_disp_an(block, REG_68K_D_SCRATCH_1, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);

@@ -388,7 +388,7 @@ void dmg_write16(void *_dmg, u16 address, u16 data)
 }
 
 // HDMA sync - triggers HDMA transfers for any lines we've crossed
-static void hdma_sync(struct dmg *dmg)
+void hdma_sync(struct dmg *dmg)
 {
     u8 current_ly;
     u8 start_ly;
@@ -532,9 +532,10 @@ void dmg_sync_hw(struct dmg *dmg, int cycles)
         dmg->lazy_ly = 0;
         dmg->ly_read_cycle = 0;
 
-        // Reset HDMA line tracking for new frame
+		// Reset HDMA line tracking for new frame
         if (dmg->cgb) {
             dmg->cgb->hdma_last_ly = 0xff;
+            dmg->cgb->hdma_completed = 0;
         }
     }
 }

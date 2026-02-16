@@ -52,6 +52,7 @@ struct cgb_state {
     // HDMA state
     u8 hdma_active;        // 1 if HDMA transfer is in progress
     u8 hdma_remaining;     // Blocks remaining - 1 (0 = 1 block left)
+    u8 hdma_completed;     // 1 if HDMA just completed naturally (batch processing guard)
     u16 hdma_source;       // Current source address (updated during transfer)
     u16 hdma_dest;         // Current destination address (updated during transfer)
     u8 hdma_last_ly;       // Last LY that triggered HDMA (0xFF = none this frame)
