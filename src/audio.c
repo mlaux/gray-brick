@@ -492,13 +492,21 @@ void audio_generate(struct audio *audio, u8 *buffer, int samples)
         return;
     }
 
+    // for mono, i'll make a channel audible if it's panned to either side
+    u8 pan = audio->panning;
+    u8 audible = pan | (pan >> 4);
+
     for (k = 0; k < samples; k++) {
         s16 mix = 0;
 
-        mix += generate_square(&audio->ch1 /* , duty_table[audio->ch1.duty] */);
-        mix += generate_square(&audio->ch2 /* , duty_table[audio->ch1.duty] */);
-        mix += generate_wave(audio);
-        mix += generate_noise(audio);
+        if (audible & 0x01)
+            mix += generate_square(&audio->ch1 /* , duty_table[audio->ch1.duty] */);
+        if (audible & 0x02)
+            mix += generate_square(&audio->ch2 /* , duty_table[audio->ch1.duty] */);
+        if (audible & 0x04)
+            mix += generate_wave(audio);
+        if (audible & 0x08)
+            mix += generate_noise(audio);
 
         // advance phase accumulators
         audio->ch1.phase += audio->ch1.phase_inc;
@@ -532,7 +540,7 @@ void audio_generate(struct audio *audio, u8 *buffer, int samples)
             step_length(&audio->ch4, 64);
         }
 
-        int master = audio->master_vol_right + 1;
+        int master = ((audio->master_vol_left + audio->master_vol_right) >> 1) + 1;
         // >>3 would be "most correct" in terms of keeping the original scale
         // but this scales to -106 - 104 to make it louder
         mix = (mix * master) >> 2;
