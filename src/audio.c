@@ -13,6 +13,19 @@
 // (4194304 * 65536) / (divisor * 11127.27)
 #define PHASE_INC_NOISE 24703086
 
+// DAC enable bits for each channel:
+//   CH1: NR12 (0xff12) bits 3-7 nonzero
+//   CH2: NR22 (0xff17) bits 3-7 nonzero
+//   CH3: NR30 (0xff1a) bit 7
+//   CH4: NR42 (0xff21) bits 3-7 nonzero
+static const u8 dac_reg_off[4] = { 0x02, 0x07, 0x0a, 0x11 };
+static const u8 dac_mask[4]    = { 0xf8, 0xf8, 0x80, 0xf8 };
+
+static int dac_on(struct audio *audio, int ch)
+{
+    return (audio->regs[dac_reg_off[ch]] & dac_mask[ch]) != 0;
+}
+
 static const u8 duty_table[4] = {
     0x01, // 00000001
     0x03, // 00000011
@@ -118,10 +131,9 @@ static void update_phase_inc_noise(struct audio *audio)
     }
 }
 
-static void trigger_non_wave(struct audio_channel *ch)
+static void trigger_non_wave(struct audio_channel *ch, int dac)
 {
-    // only enable if DAC is on (env_initial > 0 OR env_dir is increase)
-    if (ch->env_initial != 0 || ch->env_dir != 0)
+    if (dac)
         ch->enabled = 1;
     ch->phase = 0;
     ch->volume = ch->env_initial;
@@ -259,8 +271,7 @@ void audio_write(struct audio *audio, u16 addr, u8 value)
         audio->ch1.env_initial = (value >> 4) & 0x0f;
         audio->ch1.env_dir = (value >> 3) & 0x01;
         audio->ch1.env_pace = value & 0x07;
-        // DAC disable: if upper 5 bits are 0, channel is disabled
-        if ((value & 0xf8) == 0)
+        if (!dac_on(audio, 0))
             audio->ch1.enabled = 0;
         break;
     case 0xff13:    // NR13 - freq low
@@ -272,7 +283,7 @@ void audio_write(struct audio *audio, u16 addr, u8 value)
         audio->ch1.length_enable = (value >> 6) & 0x01;
         update_phase_inc(&audio->ch1, PHASE_INC_SQUARE);
         if (value & 0x80) {
-            trigger_non_wave(&audio->ch1);
+            trigger_non_wave(&audio->ch1, dac_on(audio, 0));
             // initialize sweep shadow frequency
             audio->ch1.sweep_freq = audio->ch1.freq_reg;
             audio->ch1.sweep_timer = audio->ch1.sweep_pace;
@@ -291,8 +302,7 @@ void audio_write(struct audio *audio, u16 addr, u8 value)
         audio->ch2.env_initial = (value >> 4) & 0x0f;
         audio->ch2.env_dir = (value >> 3) & 0x01;
         audio->ch2.env_pace = value & 0x07;
-        // DAC disable: if upper 5 bits are 0, channel is disabled
-        if ((value & 0xf8) == 0)
+        if (!dac_on(audio, 1))
             audio->ch2.enabled = 0;
         break;
     case 0xff18:    // NR23 - freq low
@@ -304,7 +314,7 @@ void audio_write(struct audio *audio, u16 addr, u8 value)
         audio->ch2.length_enable = (value >> 6) & 0x01;
         update_phase_inc(&audio->ch2, PHASE_INC_SQUARE);
         if (value & 0x80) {
-            trigger_non_wave(&audio->ch2);
+            trigger_non_wave(&audio->ch2, dac_on(audio, 1));
             if (audio->ch2.length_counter >= 64)
                 audio->ch2.length_counter = 0;
         }
@@ -312,7 +322,9 @@ void audio_write(struct audio *audio, u16 addr, u8 value)
 
     // CH3 - wave
     case 0xff1a:    // NR30 - DAC enable
-        audio->ch3.enabled = (value & 0x80) ? 1 : 0;
+        // DAC off force-disables the channel, on doesn't force-enable it
+        if (!dac_on(audio, 2))
+            audio->ch3.enabled = 0;
         break;
     case 0xff1b:    // NR31 - length
         audio->ch3.length_counter = value;
@@ -330,7 +342,8 @@ void audio_write(struct audio *audio, u16 addr, u8 value)
         audio->ch3.length_enable = (value >> 6) & 0x01;
         update_phase_inc(&audio->ch3, PHASE_INC_WAVE);
         if (value & 0x80) {
-            audio->ch3.enabled = 1;
+            if (dac_on(audio, 2))
+                audio->ch3.enabled = 1;
             audio->ch3.phase = 0;
             // wave doesn't use envelope
             if (audio->ch3.length_counter >= 256)
@@ -346,8 +359,7 @@ void audio_write(struct audio *audio, u16 addr, u8 value)
         audio->ch4.env_initial = (value >> 4) & 0x0f;
         audio->ch4.env_dir = (value >> 3) & 0x01;
         audio->ch4.env_pace = value & 0x07;
-        // DAC disable: if upper 5 bits are 0, channel is disabled
-        if ((value & 0xf8) == 0)
+        if (!dac_on(audio, 3))
             audio->ch4.enabled = 0;
         break;
     case 0xff22:    // NR43 - noise params
@@ -359,7 +371,7 @@ void audio_write(struct audio *audio, u16 addr, u8 value)
     case 0xff23:    // NR44 - trigger
         audio->ch4.length_enable = (value >> 6) & 0x01;
         if (value & 0x80) {
-            trigger_non_wave(&audio->ch4);
+            trigger_non_wave(&audio->ch4, dac_on(audio, 3));
             if (audio->ch4.length_counter >= 64)
                 audio->ch4.length_counter = 0;
         }
