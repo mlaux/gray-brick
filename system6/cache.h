@@ -21,4 +21,11 @@ int cache_store(u16 pc, u8 bank, void *code);
 // this is the first time i've ever used a ****
 void cache_get_arrays(void ***out_bank0, void ****out_banked, void ***out_upper);
 
+// Self-modifying code support for the upper region: pages 0x80-0xff that
+// hold compiled code get their fast write mapping removed, and writes that
+// land on compiled source bytes invalidate the page's blocks
+void cache_mark_upper_range(u16 start, u16 end);
+int cache_upper_range_hit(u16 addr);
+void cache_invalidate_upper_page(u8 page);
+
 #endif

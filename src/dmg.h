@@ -28,11 +28,21 @@ struct rom;
 struct lcd;
 struct audio;
 
+// page table entries are biased so that entry + (s16)gb_address yields the
+// host pointer. the JIT indexes pages with (An,Dn.w) addressing, which sign
+// extends the full GB address, so pages >= 0x80 get 0x10000 added to cancel
+// the sign extension. C code must index entries as page[(s16)address]
+#define PAGE_BIAS(ptr, page) \
+    ((u8 *)(ptr) - (((u32)(page)) << 8) + (((page) >= 0x80) ? 0x10000 : 0))
+
 struct dmg {
     u8 zero_page[0x80];
     // page table for fast memory access (256 pages of 256 bytes each)
     u8 *read_page[256];
     u8 *write_page[256];
+    // original write_page entries for upper pages unmapped because they
+    // hold compiled code (self-modifying code detection), NULL otherwise
+    u8 *saved_write_page[0x80];
 
     struct rom *rom;
     struct lcd *lcd;
@@ -56,11 +66,14 @@ struct dmg {
     u8 timer_control;
 
     u32 frame_cycles;
-    u8 sent_ly_interrupt;
     u8 sent_vblank_start;
     u8 rendered_this_frame;
     u16 lazy_ly;
     u32 ly_read_cycle;
+
+    // next pending STAT interrupt event this frame (0xffffffff = none)
+    u32 stat_event_cycle;
+    u16 stat_event_line;
 
     // for DIV evaluation from cycles
     u32 total_cycles;
@@ -85,6 +98,8 @@ u8 dmg_read_slow(struct dmg *dmg, u16 address);
 void dmg_write_slow(struct dmg *dmg, u16 address, u8 data);
 
 void dmg_sync_hw(struct dmg *dmg, int cycles);
+
+u32 dmg_cycles_to_stat_event(struct dmg *dmg);
 
 void hdma_sync(struct dmg *dmg);
 

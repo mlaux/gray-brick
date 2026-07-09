@@ -11,6 +11,7 @@
 #include "../system6/jit.h"
 #include "../system6/audio_mac.h"
 #include "../system6/settings.h"
+#include "../system6/cache.h"
 
 #define INT_VBLANK  (1 << 0)
 #define INT_LCDSTAT (1 << 1)
@@ -35,6 +36,16 @@ void dmg_new(struct dmg *dmg, struct rom *rom, struct lcd *lcd)
     dmg->joypad = 0xf; // nothing pressed
     dmg->action_buttons = 0xf;
 
+    // hardware state as the boot ROM hands it to the cartridge. the LCD is
+    // already on, and games can rely on that: DK '94 waits for its first
+    // vblank before it ever touches LCDC
+    lcd_write(lcd, REG_LCDC, 0x91);
+    lcd_write(lcd, REG_BGP, 0xfc);
+    dmg->interrupt_request_mask = 0xe1;
+
+    // no STAT sources armed until the game writes STAT
+    dmg->stat_event_cycle = 0xffffffff;
+
     dmg_init_pages(dmg);
 }
 
@@ -50,22 +61,22 @@ void dmg_init_pages(struct dmg *dmg)
 
     // ROM bank 0: 0x0000-0x3fff (pages 0x00-0x3f)
     for (k = 0x00; k <= 0x3f; k++) {
-        dmg->read_page[k] = &dmg->rom->data[k << 8];
+        dmg->read_page[k] = PAGE_BIAS(&dmg->rom->data[k << 8], k);
     }
 
     // ROM bank 1: 0x4000-0x7fff (pages 0x40-0x7f)
     // MBC will update this when switching banks
     for (k = 0x40; k <= 0x7f; k++) {
-        dmg->read_page[k] = &dmg->rom->data[k << 8];
+        dmg->read_page[k] = PAGE_BIAS(&dmg->rom->data[k << 8], k);
     }
     dmg->current_rom_bank = 1;
 
     // video RAM: 0x8000-0x9fff (pages 0x80-0x9f)
     // Uses bank 0 initially, cgb_update_vram_bank() can switch for CGB
     for (k = 0x80; k <= 0x9f; k++) {
-        int offset = (k - 0x80) << 8;
-        dmg->read_page[k] = &dmg->video_ram[offset];
-        dmg->write_page[k] = &dmg->video_ram[offset];
+        u8 *page = &dmg->video_ram[(k - 0x80) << 8];
+        dmg->read_page[k] = PAGE_BIAS(page, k);
+        dmg->write_page[k] = PAGE_BIAS(page, k);
     }
 
     // external RAM: 0xa000-0xbfff (pages 0xa0-0xbf)
@@ -73,32 +84,32 @@ void dmg_init_pages(struct dmg *dmg)
 
     // work RAM bank 0: 0xc000-0xcfff (pages 0xc0-0xcf) - always fixed
     for (k = 0xc0; k <= 0xcf; k++) {
-        int offset = (k - 0xc0) << 8;
-        dmg->read_page[k] = &dmg->main_ram[offset];
-        dmg->write_page[k] = &dmg->main_ram[offset];
+        u8 *page = &dmg->main_ram[(k - 0xc0) << 8];
+        dmg->read_page[k] = PAGE_BIAS(page, k);
+        dmg->write_page[k] = PAGE_BIAS(page, k);
     }
 
     // work RAM bank 1: 0xd000-0xdfff (pages 0xd0-0xdf) - switchable in CGB
     // Initially points to bank 1 (offset 0x1000)
     for (k = 0xd0; k <= 0xdf; k++) {
-        int offset = 0x1000 + ((k - 0xd0) << 8);
-        dmg->read_page[k] = &dmg->main_ram[offset];
-        dmg->write_page[k] = &dmg->main_ram[offset];
+        u8 *page = &dmg->main_ram[0x1000 + ((k - 0xd0) << 8)];
+        dmg->read_page[k] = PAGE_BIAS(page, k);
+        dmg->write_page[k] = PAGE_BIAS(page, k);
     }
 
     // echo RAM: 0xe000-0xfdff (pages 0xe0-0xfd)
     // Mirrors 0xc000-0xddff (bank 0 + current switchable bank)
     for (k = 0xe0; k <= 0xef; k++) {
         // Echo of 0xc000-0xcfff (bank 0)
-        int offset = (k - 0xe0) << 8;
-        dmg->read_page[k] = &dmg->main_ram[offset];
-        dmg->write_page[k] = &dmg->main_ram[offset];
+        u8 *page = &dmg->main_ram[(k - 0xe0) << 8];
+        dmg->read_page[k] = PAGE_BIAS(page, k);
+        dmg->write_page[k] = PAGE_BIAS(page, k);
     }
     for (k = 0xf0; k <= 0xfd; k++) {
         // Echo of 0xd000-0xddff (switchable bank)
-        int offset = 0x1000 + ((k - 0xf0) << 8);
-        dmg->read_page[k] = &dmg->main_ram[offset];
-        dmg->write_page[k] = &dmg->main_ram[offset];
+        u8 *page = &dmg->main_ram[0x1000 + ((k - 0xf0) << 8)];
+        dmg->read_page[k] = PAGE_BIAS(page, k);
+        dmg->write_page[k] = PAGE_BIAS(page, k);
     }
 
     // pages 0xfe and 0xff stay NULL for special handling
@@ -116,7 +127,7 @@ void dmg_update_rom_bank(struct dmg *dmg, int bank)
 
     bank_base = &dmg->rom->data[bank * 0x4000];
     for (k = 0x40; k <= 0x7f; k++) {
-        dmg->read_page[k] = &bank_base[(k - 0x40) << 8];
+        dmg->read_page[k] = PAGE_BIAS(&bank_base[(k - 0x40) << 8], k);
     }
 
     // Notify JIT of bank switch
@@ -130,9 +141,9 @@ void dmg_update_ram_bank(struct dmg *dmg, u8 *ram_base)
     int k;
     for (k = 0xa0; k <= 0xbf; k++) {
         if (ram_base) {
-            int offset = (k - 0xa0) << 8;
-            dmg->read_page[k] = &ram_base[offset];
-            dmg->write_page[k] = &ram_base[offset];
+            u8 *page = &ram_base[(k - 0xa0) << 8];
+            dmg->read_page[k] = PAGE_BIAS(page, k);
+            dmg->write_page[k] = PAGE_BIAS(page, k);
         } else {
             dmg->read_page[k] = NULL;
             dmg->write_page[k] = NULL;
@@ -148,10 +159,13 @@ static void dmg_request_interrupt(struct dmg *dmg, int nr)
 void dmg_set_button(struct dmg *dmg, int field, int button, int pressed)
 {
     u8 *mod;
+    int selected;
     if (field == FIELD_JOY) {
         mod = &dmg->joypad;
+        selected = dmg->joypad_selected;
     } else if (field == FIELD_ACTION) {
         mod = &dmg->action_buttons;
+        selected = dmg->action_selected;
     } else {
         printf("setting invalid button state\n");
         return;
@@ -159,6 +173,11 @@ void dmg_set_button(struct dmg *dmg, int field, int button, int pressed)
 
     if (pressed) {
         *mod &= ~button;
+        // high-to-low transition on a selected line raises the joypad
+        // interrupt (games that halt waiting for input need this)
+        if (selected) {
+            dmg_request_interrupt(dmg, INT_JOYPAD);
+        }
     } else {
         *mod |= button;
     }
@@ -166,14 +185,137 @@ void dmg_set_button(struct dmg *dmg, int field, int button, int pressed)
 
 static u8 get_button_state(struct dmg *dmg)
 {
-    u8 ret = 0xf0;
+    // each selected group pulls its pressed bits low. with neither group
+    // selected the low nibble reads 0xf (nothing pressed), not 0 - games
+    // park P1 at $30 between polls and a raw read there must not see
+    // phantom presses. bits 4-5 read back the select lines (0 = selected),
+    // 6-7 are unused and read 1
+    u8 ret = 0xcf;
+
     if (dmg->action_selected) {
-        ret |= dmg->action_buttons;
+        ret &= 0xf0 | dmg->action_buttons;
+    } else {
+        ret |= 0x20;
     }
+
     if (dmg->joypad_selected) {
-        ret |= dmg->joypad;
+        ret &= 0xf0 | dmg->joypad;
+    } else {
+        ret |= 0x10;
     }
+
     return ret;
+}
+
+// advance the lazy LY counter to the current beam position, including
+// in-flight JIT cycles, without dividing. returns LY; *line_pos gets the
+// cycle offset within the line if non-NULL
+static u8 dmg_current_ly(struct dmg *dmg, u32 *line_pos)
+{
+    u32 current = dmg->frame_cycles + jit_ctx.read_cycles;
+    if (current >= 70224) {
+        current -= 70224;
+    }
+
+    // handle frame wrap-around
+    if (current < dmg->ly_read_cycle) {
+        dmg->ly_read_cycle = 0;
+        dmg->lazy_ly = 0;
+    }
+
+    // advance through scanlines until we reach current cycle
+    while (dmg->ly_read_cycle + 456 <= current) {
+        dmg->lazy_ly++;
+        if (dmg->lazy_ly == 154) {
+            dmg->lazy_ly = 0;
+        }
+        dmg->ly_read_cycle += 456;
+    }
+
+    if (line_pos) {
+        *line_pos = current - dmg->ly_read_cycle;
+    }
+    return dmg->lazy_ly;
+}
+
+// earliest enabled STAT interrupt event at frame cycle >= from, where
+// from_line = from / 456. returns 0xffffffff if none left this frame and
+// stores the event's line in *line_out. events: LYC match at the start of
+// its line, hblank at line start + 252 (lines 0-143), OAM scan at line
+// start (lines 0-143), and vblank start
+static u32 stat_event_from(
+    struct dmg *dmg,
+    u32 from,
+    u32 from_line,
+    u32 *line_out
+) {
+    u8 stat = lcd_read(dmg->lcd, REG_STAT);
+    u32 best = 0xffffffff;
+    u32 best_line = 0;
+    u32 c, line;
+
+    if (!(lcd_read(dmg->lcd, REG_LCDC) & LCDC_ENABLE)) {
+        return best;
+    }
+
+    if (stat & STAT_INTR_SOURCE_HBLANK) {
+        line = from_line;
+        c = line * CYCLES_PER_LINE + 252;
+        if (c < from) {
+            line++;
+            c += CYCLES_PER_LINE;
+        }
+        if (line <= 143 && c < best) {
+            best = c;
+            best_line = line;
+        }
+    }
+
+    if (stat & STAT_INTR_SOURCE_MODE2) {
+        line = from_line;
+        c = line * CYCLES_PER_LINE;
+        if (c < from) {
+            line++;
+            c += CYCLES_PER_LINE;
+        }
+        if (line <= 143 && c < best) {
+            best = c;
+            best_line = line;
+        }
+    }
+
+    if (stat & STAT_INTR_SOURCE_VBLANK) {
+        if (CYCLES_LINE_144 >= from && CYCLES_LINE_144 < best) {
+            best = CYCLES_LINE_144;
+            best_line = 144;
+        }
+    }
+
+    if (stat & STAT_INTR_SOURCE_MATCH) {
+        line = lcd_read(dmg->lcd, REG_LYC);
+        c = line * CYCLES_PER_LINE;
+        if (line <= 153 && c >= from && c < best) {
+            best = c;
+            best_line = line;
+        }
+    }
+
+    if (line_out) {
+        *line_out = best_line;
+    }
+    return best;
+}
+
+// recompute the pending STAT event after STAT/LYC/LCDC writes, from the
+// current beam position including in-flight cycles
+static void dmg_update_stat_event(struct dmg *dmg)
+{
+    u32 pos, line;
+    u32 ly = dmg_current_ly(dmg, &pos);
+    u32 cur = ly * CYCLES_PER_LINE + pos;
+
+    dmg->stat_event_cycle = stat_event_from(dmg, cur, ly, &line);
+    dmg->stat_event_line = line;
 }
 
 u8 dmg_read_slow(struct dmg *dmg, u16 address)
@@ -182,34 +324,35 @@ u8 dmg_read_slow(struct dmg *dmg, u16 address)
         // the compiler detects "ldh a, [$44]; cp N; jr cc" which is the most
         // common case, and skips to that line, so this actually doesn't run
         // that much
-        u32 current = dmg->frame_cycles + jit_ctx.read_cycles;
-        if (current >= 70224) {
-            current -= 70224;
-        }
-
-        // handle frame wrap-around
-        if (current < dmg->ly_read_cycle) {
-            dmg->ly_read_cycle = 0;
-            dmg->lazy_ly = 0;
-        }
-
-        // advance through scanlines until we reach current cycle
-        while (dmg->ly_read_cycle + 456 <= current) {
-            dmg->lazy_ly++;
-            if (dmg->lazy_ly == 154) {
-                dmg->lazy_ly = 0;
-            }
-            dmg->ly_read_cycle += 456;
-        }
-
-        return dmg->lazy_ly;
+        return dmg_current_ly(dmg, NULL);
     }
 
     if (address == REG_STAT) {
-        // just cycle through the modes, the game gets the one it needs
+        // compute the real mode and match flag from the beam position
         u8 stat = lcd_read(dmg->lcd, REG_STAT);
-        stat = (stat & 0xfc) | (((stat & 3) + 1) & 3);
-        lcd_write(dmg->lcd, REG_STAT, stat);
+        u32 line_pos;
+        u8 ly = dmg_current_ly(dmg, &line_pos);
+        int mode;
+
+        if (ly >= 144) {
+            // vblank
+            mode = 1;
+        } else if (line_pos < 80) {
+            // OAM scan
+            mode = 2;
+        } else if (line_pos < 252) {
+            // active area, 160 visible pixels + 12 extra
+            // https://gbdev.io/pandocs/Rendering.html#first12
+            mode = 3;
+        } else {
+            // hblank
+            mode = 0;
+        }
+
+        stat = (stat & 0xf8) | mode;
+        if (ly == lcd_read(dmg->lcd, REG_LYC)) {
+            stat |= STAT_FLAG_MATCH;
+        }
         return stat;
     }
 
@@ -275,7 +418,8 @@ u8 dmg_read(void *_dmg, u16 address)
     struct dmg *dmg = (struct dmg *) _dmg;
     u8 *page = dmg->read_page[address >> 8];
     if (page) {
-        val = page[address & 0xff];
+        // entries are biased, index with the sign-extended address
+        val = page[(s16) address];
     } else {
         val = dmg_read_slow(dmg, address);
     }
@@ -288,6 +432,30 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
     if (address < 0x8000) {
         mbc_write(dmg->rom->mbc, dmg, address, data);
         return;
+    }
+
+    // pages holding compiled code have their fast write mapping removed,
+    // so writes that modify the code land here and can invalidate it
+    // (FF Legend rewrites its interrupt trampolines in WRAM)
+    if (address >= 0x8000) {
+        u8 pidx = (u8) ((address >> 8) - 0x80);
+        u8 *saved = dmg->saved_write_page[pidx];
+
+        if (cache_upper_range_hit(address)) {
+            // self-modifying code - drop this page's compiled blocks
+            cache_invalidate_upper_page((u8) (address >> 8));
+            if (saved) {
+                dmg->write_page[address >> 8] = saved;
+                dmg->saved_write_page[pidx] = NULL;
+                saved[(s16) address] = data;
+                return;
+            }
+            // no fast mapping to restore, handle the write normally below
+        } else if (saved) {
+            // slow only because compiled code lives elsewhere in the page
+            saved[(s16) address] = data;
+            return;
+        }
     }
 
     // external RAM not enabled, or RTC register selected
@@ -310,6 +478,13 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
     if (address == REG_BGP) {
         lcd_update_palette_lut(data);
         lcd_write(dmg->lcd, address, data);
+        return;
+    }
+
+    // STAT/LYC/LCDC writes change when the next STAT interrupt fires
+    if (address == REG_STAT || address == REG_LYC || address == REG_LCDC) {
+        lcd_write(dmg->lcd, address, data);
+        dmg_update_stat_event(dmg);
         return;
     }
 
@@ -370,7 +545,8 @@ void dmg_write(void *_dmg, u16 address, u8 data)
     struct dmg *dmg = (struct dmg *) _dmg;
     u8 *page = dmg->write_page[address >> 8];
     if (page) {
-        page[address & 0xff] = data;
+        // entries are biased, index with the sign-extended address
+        page[(s16) address] = data;
     } else {
         dmg_write_slow(dmg, address, data);
     }
@@ -427,19 +603,19 @@ void hdma_sync(struct dmg *dmg)
 static void lcd_sync(struct dmg *dmg)
 {
     int lcdc = lcd_read(dmg->lcd, REG_LCDC);
-    int lyc_cycles = lcd_read(dmg->lcd, REG_LYC) * CYCLES_PER_LINE;
 
     // Process HDMA transfers for any lines we've crossed
     hdma_sync(dmg);
 
-    if (dmg->frame_cycles >= lyc_cycles && !dmg->sent_ly_interrupt) {
-        lcd_set_bit(dmg->lcd, REG_STAT, STAT_FLAG_MATCH);
-        if (lcd_isset(dmg->lcd, REG_STAT, STAT_INTR_SOURCE_MATCH)) {
-            dmg_request_interrupt(dmg, INT_LCDSTAT);
-        }
-        dmg->sent_ly_interrupt = 1;
-    } else {
-        lcd_clear_bit(dmg->lcd, REG_STAT, STAT_FLAG_MATCH);
+    // fire any STAT interrupt events the beam has passed. several events
+    // crossed in one sync merge into a single IF bit, the same way real
+    // hardware merges them when the handler can't keep up
+    while (dmg->frame_cycles >= dmg->stat_event_cycle) {
+        u32 line;
+        dmg_request_interrupt(dmg, INT_LCDSTAT);
+        dmg->stat_event_cycle = stat_event_from(dmg,
+                dmg->stat_event_cycle + 1, dmg->stat_event_line, &line);
+        dmg->stat_event_line = line;
     }
 
     if (dmg->frame_cycles >= CYCLES_MIDDLE && !dmg->rendered_this_frame) {
@@ -473,13 +649,40 @@ static void lcd_sync(struct dmg *dmg)
     }
 
     if (dmg->frame_cycles >= CYCLES_LINE_144 && !dmg->sent_vblank_start) {
-        // fire VBLANK once per frame
+        // fire VBLANK once per frame. the STAT vblank source (bit 4) is
+        // handled by the event loop above
         dmg_request_interrupt(dmg, INT_VBLANK);
-        if (lcd_isset(dmg->lcd, REG_STAT, STAT_INTR_SOURCE_VBLANK)) {
-            dmg_request_interrupt(dmg, INT_LCDSTAT);
-        }
         dmg->sent_vblank_start = 1;
     }
+}
+
+// PPU cycles until the next STAT interrupt event should fire, or 0xffffffff
+// if nothing is armed. the JIT uses this to time dispatcher exits and cap
+// HALT/idle fast-forwards so handlers run on the line they expect
+// (FF Legend reads the joypad from its STAT handler)
+u32 dmg_cycles_to_stat_event(struct dmg *dmg)
+{
+    u32 first, line;
+
+    if (!(dmg->zero_page[0x7f] & INT_LCDSTAT)) {
+        return 0xffffffff;
+    }
+
+    if (dmg->stat_event_cycle != 0xffffffff) {
+        if (dmg->frame_cycles >= dmg->stat_event_cycle) {
+            // overdue; lcd_sync fires it at the very next sync, so ask
+            // for an exit as soon as possible
+            return 0;
+        }
+        return dmg->stat_event_cycle - dmg->frame_cycles;
+    }
+
+    // nothing left this frame - look at the next frame's first event
+    first = stat_event_from(dmg, 0, 0, &line);
+    if (first == 0xffffffff) {
+        return 0xffffffff;
+    }
+    return CYCLES_PER_FRAME + first - dmg->frame_cycles;
 }
 
 // TIMA timer
@@ -525,12 +728,14 @@ void dmg_sync_hw(struct dmg *dmg, int cycles)
     }
 
     if (dmg->frame_cycles >= CYCLES_PER_FRAME) {
+        u32 line;
         dmg->frame_cycles %= CYCLES_PER_FRAME;
         dmg->sent_vblank_start = 0;
-        dmg->sent_ly_interrupt = 0;
         dmg->rendered_this_frame = 0;
         dmg->lazy_ly = 0;
         dmg->ly_read_cycle = 0;
+        dmg->stat_event_cycle = stat_event_from(dmg, 0, 0, &line);
+        dmg->stat_event_line = line;
 
 		// Reset HDMA line tracking for new frame
         if (dmg->cgb) {

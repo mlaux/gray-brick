@@ -192,6 +192,11 @@ static void setup_runtime_stubs(void)
     m68k_write_memory_32(FRAME_CYCLES_ADDR, 0);
     // stop_func for STOP instruction (always halts in tests)
     m68k_write_memory_32(JIT_CTX_ADDR + JIT_CTX_STOP_FUNC, STUB_BASE + 0xa0);
+    // exit budget of 0 means backward loops always exit to the dispatcher,
+    // matching the old behavior of tests compiled with cycles_per_exit = 0
+    m68k_write_memory_32(JIT_CTX_ADDR + JIT_CTX_EXIT_BUDGET, 0);
+    // no armed LYC match by default, fast-forwards skip unclamped
+    m68k_write_memory_32(JIT_CTX_ADDR + JIT_CTX_WAKE_LIMIT, 0xffffffff);
 }
 
 // Initialize Musashi, copy code to memory, set up stack, run
@@ -335,14 +340,36 @@ uint32_t get_cycle_count(void)
     return m68k_get_reg(NULL, M68K_REG_D0 + REG_68K_D_CYCLE_COUNT);
 }
 
+// The next run_block_with_frame_cycles[_mem] call uses this wake limit
+// (consumed and reset to "none"). For fast-forward clamp tests.
+static uint32_t pending_wake_limit = 0xffffffff;
+
+void set_wake_limit(uint32_t limit)
+{
+    pending_wake_limit = limit;
+}
+
 // Run a single block with specified frame_cycles value
 // Used for testing HALT and LY wait patterns
-void run_block_with_frame_cycles(uint8_t *gb_rom, uint32_t frame_cycles)
-{
+// mem_addr/mem_val poke one byte before execution (for the HRAM idle wait
+// tests, which need a flag byte set up front); mem_addr 0 skips the poke
+void run_block_with_frame_cycles_mem(
+    uint8_t *gb_rom,
+    uint32_t frame_cycles,
+    uint32_t mem_addr,
+    uint8_t mem_val
+) {
     int k;
 
     memset(mem, 0, MEM_SIZE);
     setup_runtime_stubs();
+
+    m68k_write_memory_32(JIT_CTX_ADDR + JIT_CTX_WAKE_LIMIT, pending_wake_limit);
+    pending_wake_limit = 0xffffffff;
+
+    if (mem_addr) {
+        mem[mem_addr] = mem_val;
+    }
 
     // Set frame_cycles before execution
     m68k_write_memory_32(FRAME_CYCLES_ADDR, frame_cycles);
@@ -382,6 +409,116 @@ void run_block_with_frame_cycles(uint8_t *gb_rom, uint32_t frame_cycles)
     block_free(block);
 }
 
+void run_block_with_frame_cycles(uint8_t *gb_rom, uint32_t frame_cycles)
+{
+    run_block_with_frame_cycles_mem(gb_rom, frame_cycles, 0, 0);
+}
+
+// Run a single block with a specific dispatcher exit budget, for testing
+// the native backward-branch paths (budget > accumulated cycles) and the
+// early-exit paths (small nonzero budget)
+void run_block_with_budget(uint8_t *gb_rom, uint32_t budget)
+{
+    int k;
+
+    memset(mem, 0, MEM_SIZE);
+    setup_runtime_stubs();
+
+    m68k_write_memory_32(JIT_CTX_ADDR + JIT_CTX_EXIT_BUDGET, budget);
+
+    test_gb_rom = gb_rom;
+    struct code_block *block = compile_block(0, test_compile_ctx);
+
+    memcpy(mem + CODE_BASE, block->code, block->length);
+
+    m68k_write_memory_32(STACK_BASE - 4, 0);
+    m68k_write_memory_16(0, 0x60fe);  // bra.s *
+
+    m68k_pulse_reset();
+
+    m68k_set_reg(M68K_REG_SP, STACK_BASE - 4);
+    m68k_set_reg(M68K_REG_ISP, STACK_BASE);
+    m68k_set_reg(M68K_REG_PC, CODE_BASE);
+
+    for (k = 0; k < 8; k++) {
+        m68k_set_reg(M68K_REG_D0 + k, 0);
+    }
+    for (k = 0; k < 7; k++) {
+        m68k_set_reg(M68K_REG_A0 + k, 0);
+    }
+
+    m68k_set_reg(M68K_REG_A4, JIT_CTX_ADDR);
+
+    m68k_execute(10000);
+
+    block_free(block);
+}
+
+// ============================================================================
+// Page table fast path testing
+// ============================================================================
+
+#define PAGE_TABLE_READ  0x9000  // 256 entries * 4 bytes
+#define PAGE_TABLE_WRITE 0x9400
+
+// biased entry: entry + (s16)gb_address = host address (see PAGE_BIAS)
+#define TEST_PAGE_ENTRY(host, page) \
+    ((uint32_t)(host) - ((uint32_t)(page) << 8) + ((page) >= 0x80 ? 0x10000 : 0))
+
+static struct code_block *prepared_block;
+
+static void map_test_page(uint32_t table, int page, uint32_t host)
+{
+    m68k_write_memory_32(table + page * 4, TEST_PAGE_ENTRY(host, page));
+}
+
+void prepare_block_with_pages(uint8_t *gb_rom)
+{
+    memset(mem, 0, MEM_SIZE);
+    setup_runtime_stubs();
+
+    map_test_page(PAGE_TABLE_READ, 0x7f, PAGE_BUF_7F);
+    map_test_page(PAGE_TABLE_READ, 0x80, PAGE_BUF_80);
+    map_test_page(PAGE_TABLE_READ, 0xc0, PAGE_BUF_C0);
+    map_test_page(PAGE_TABLE_READ, 0xc1, PAGE_BUF_C1);
+    map_test_page(PAGE_TABLE_WRITE, 0x80, PAGE_BUF_80);
+    map_test_page(PAGE_TABLE_WRITE, 0xc0, PAGE_BUF_C0);
+    map_test_page(PAGE_TABLE_WRITE, 0xc1, PAGE_BUF_C1);
+
+    test_gb_rom = gb_rom;
+    prepared_block = compile_block(0, test_compile_ctx);
+    memcpy(mem + CODE_BASE, prepared_block->code, prepared_block->length);
+}
+
+void execute_prepared_block(void)
+{
+    int k;
+
+    m68k_write_memory_32(STACK_BASE - 4, 0);
+    m68k_write_memory_16(0, 0x60fe);  // bra.s *
+
+    m68k_pulse_reset();
+    m68k_set_reg(M68K_REG_SP, STACK_BASE - 4);
+    m68k_set_reg(M68K_REG_ISP, STACK_BASE);
+    m68k_set_reg(M68K_REG_PC, CODE_BASE);
+
+    for (k = 0; k < 8; k++) {
+        m68k_set_reg(M68K_REG_D0 + k, 0);
+    }
+    for (k = 0; k < 7; k++) {
+        m68k_set_reg(M68K_REG_A0 + k, 0);
+    }
+
+    m68k_set_reg(M68K_REG_A4, JIT_CTX_ADDR);
+    m68k_set_reg(M68K_REG_A5, PAGE_TABLE_READ);
+    m68k_set_reg(M68K_REG_A6, PAGE_TABLE_WRITE);
+
+    m68k_execute(1000);
+
+    block_free(prepared_block);
+    prepared_block = NULL;
+}
+
 int main(int argc, char *argv[])
 {
     (void)argc;
@@ -390,11 +527,28 @@ int main(int argc, char *argv[])
     printf("Initializing...\n");
     compiler_init();
     m68k_init();
-    m68k_set_cpu_type(M68K_CPU_TYPE_68000);
 
     // Initialize test compile context
     test_ctx.dmg = NULL;
     test_ctx.read = test_read;
+
+    // run the whole suite for both CPU variants: 68000 uses the shift-based
+    // page lookup, 68020 uses scaled index addressing
+    printf("\n======== 68000 ========\n");
+    m68k_set_cpu_type(M68K_CPU_TYPE_68000);
+    compiler_68020 = 0;
+
+    register_load_tests();
+    register_alu_tests();
+    register_branch_tests();
+    register_cb_tests();
+    register_stack_tests();
+    register_timing_tests();
+    register_cgb_tests();
+
+    printf("\n======== 68020 ========\n");
+    m68k_set_cpu_type(M68K_CPU_TYPE_68020);
+    compiler_68020 = 1;
 
     register_load_tests();
     register_alu_tests();

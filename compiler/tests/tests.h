@@ -101,4 +101,33 @@ uint32_t get_cycle_count(void);
 // Run a single block with specified frame_cycles value (for HALT/LY wait tests)
 void run_block_with_frame_cycles(uint8_t *gb_rom, uint32_t frame_cycles);
 
+// Same, but poke one byte of memory first (for HRAM idle wait tests)
+void run_block_with_frame_cycles_mem(
+    uint8_t *gb_rom,
+    uint32_t frame_cycles,
+    uint32_t mem_addr,
+    uint8_t mem_val
+);
+
+// Run a single block with a specific dispatcher exit budget (for testing
+// the native backward-branch and early-exit paths)
+void run_block_with_budget(uint8_t *gb_rom, uint32_t budget);
+
+// The next run_block_with_frame_cycles[_mem] call uses this wake limit
+// (consumed and reset to "none"). For fast-forward clamp tests.
+void set_wake_limit(uint32_t limit);
+
+// Page table fast path testing: real biased page tables in Musashi memory
+// (see PAGE_BIAS in src/dmg.h for the entry format). GB pages 0x7f, 0x80,
+// 0xc0, 0xc1 are mapped to these host buffers
+#define PAGE_BUF_7F 0x9800  // GB 0x7f00-0x7fff (read only)
+#define PAGE_BUF_80 0x9900  // GB 0x8000-0x80ff
+#define PAGE_BUF_C0 0x9a00  // GB 0xc000-0xc0ff
+#define PAGE_BUF_C1 0x9b00  // GB 0xc100-0xc1ff
+
+// set up tables/stubs and compile the block; poke memory with set_mem_byte
+// between these two calls
+void prepare_block_with_pages(uint8_t *gb_rom);
+void execute_prepared_block(void);
+
 #endif

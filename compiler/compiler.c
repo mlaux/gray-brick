@@ -17,6 +17,7 @@
 #define READ_BYTE(off) (ctx->read(ctx->dmg, src_address + (off)))
 
 int cycles_per_exit;
+int compiler_68020;
 
 void compiler_init(void)
 {
@@ -131,7 +132,7 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
     while (!done) {
         size_t before = block->length;
         // detect overflow of code block and chain to next block
-        // longest instruction is 178 bytes, exit sequence is 22 bytes
+        // longest instruction is 178 bytes, exit sequence is 20 bytes
         // also, a block of all NOPs (Link's Awakening DX has this) overflows
         // the m68k_offsets array, and i don't want to make it bigger, so
         // just chain to another block. worst case: 253 nops then a fused compare/branch
@@ -240,6 +241,7 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
         case 0x07: // rlca - rotate A left, old bit 7 to carry and bit 0
             emit_rol_b_imm(block, 1, REG_68K_D_A);
             emit_move_sr_dn(block, REG_68K_D_FLAGS);
+            emit_andi_b_dn(block, REG_68K_D_FLAGS, 0xfb); // Z always 0
             break;
 
         case 0x0b: // dec bc
@@ -254,6 +256,7 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
         case 0x0f: // rrca - rotate A right, old bit 0 to carry and bit 7
             emit_ror_b_imm(block, 1, REG_68K_D_A);
             emit_move_sr_dn(block, REG_68K_D_FLAGS);
+            emit_andi_b_dn(block, REG_68K_D_FLAGS, 0xfb); // Z always 0
             break;
 
         case 0x13: // inc de
@@ -461,6 +464,7 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
             emit_lsl_b_imm_dn(block, 1, REG_68K_D_A);
 
             emit_move_sr_dn(block, REG_68K_D_FLAGS);
+            emit_andi_b_dn(block, REG_68K_D_FLAGS, 0xfb); // Z always 0
 
             // OR old carry into bit 0
             emit_or_b_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_A);
@@ -479,6 +483,7 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
             emit_lsr_b_imm_dn(block, 1, REG_68K_D_A);
 
             emit_move_sr_dn(block, REG_68K_D_FLAGS);
+            emit_andi_b_dn(block, REG_68K_D_FLAGS, 0xfb); // Z always 0
 
             // OR old carry into bit 7
             emit_or_b_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_A);
@@ -563,6 +568,45 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
                             compile_ly_wait_reg(block, gb_reg, jr_op, next_pc);
                             src_ptr += 3;
                             done = 1;
+                            break;
+                        }
+                    }
+
+                    // check for and a / or a pattern, equivalent to cp 0:
+                    // jr nz waits for LY to wrap to 0 (Final Fantasy Legend),
+                    // jr z waits for LY to leave 0. no jr c variant since
+                    // and/or always clear C
+                    if (next0 == 0xa7 || next0 == 0xb7) {
+                        uint8_t jr_op = READ_BYTE(src_ptr + 1);
+                        int8_t offset = (int8_t) READ_BYTE(src_ptr + 2);
+
+                        if ((jr_op == 0x20 || jr_op == 0x28) && offset < 0) {
+                            uint16_t next_pc = src_address + src_ptr + 3;
+                            // Z from the LY the wait settles at, C clear
+                            emit_moveq_dn(block, REG_68K_D_FLAGS,
+                                    jr_op == 0x20 ? 0x04 : 0x00);
+                            compile_ly_wait(block, 0, jr_op, next_pc);
+                            src_ptr += 3;
+                            done = 1;
+                            break;
+                        }
+                    }
+                }
+
+                // check for HRAM flag polling loop, the usual way games
+                // without HALT wait for vblank:
+                //   ldh a, (nn); and a / or a; jr z/nz back to the ldh
+                if (addr >= 0x80) {
+                    uint8_t next0 = READ_BYTE(src_ptr);
+
+                    if (next0 == 0xa7 || next0 == 0xb7) {
+                        uint8_t jr_op = READ_BYTE(src_ptr + 1);
+                        int8_t offset = (int8_t) READ_BYTE(src_ptr + 2);
+
+                        if ((jr_op == 0x20 || jr_op == 0x28) && offset == -5) {
+                            uint16_t loop_pc = src_address + src_ptr - 2;
+                            compile_hram_idle_wait(block, addr, jr_op, loop_pc);
+                            src_ptr += 3;
                             break;
                         }
                     }
@@ -654,7 +698,8 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
         }
 
         size_t emitted = block->length - before;
-        if (emitted > 80) {
+        // the fused HRAM idle wait is the biggest expected sequence (82)
+        if (emitted > 96) {
             printf("warning: instruction %02x emitted %zu bytes\n", op, emitted);
         }
 

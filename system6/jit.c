@@ -1,5 +1,6 @@
 #include <Memory.h>
 #include <Timer.h>
+#include <Gestalt.h>
 
 #include <stdio.h>
 #include <string.h>
@@ -102,8 +103,14 @@ static int jit_handle_stop(struct dmg *dmg)
 // Initialize JIT state for a new emulation session
 void jit_init(struct dmg *dmg)
 {
+  long cpu_type;
+
   set_status_bar("Loading...");
   compiler_init();
+
+  // scaled index addressing needs a 68020 or better
+  compiler_68020 = Gestalt(gestaltProcessorType, &cpu_type) == noErr
+      && cpu_type >= gestalt68020;
 
   if (!arena_init()) {
     set_status_bar("Arena alloc fail");
@@ -144,6 +151,8 @@ void jit_init(struct dmg *dmg)
   jit_ctx.gb_sp = 0xfffe;  // initial SP (HRAM)
   jit_ctx.stack_in_ram = 1;   // fast mode - A3 points to native HRAM
   jit_ctx.effective_double_speed = 0;
+  jit_ctx.exit_budget = cycles_per_exit;
+  jit_ctx.wake_limit = 0xffffffff;
   sync_cache_pointers();
 
   jit_regs.d3 = 0x100; // initial PC
@@ -165,6 +174,9 @@ void jit_init(struct dmg *dmg)
 
 int jit_clear_all_blocks(void)
 {
+  struct dmg *dmg = compile_ctx.dmg;
+  int k;
+
   arena_reset();
   if (!cache_init()) {
     set_status_bar("Cache alloc fail");
@@ -172,7 +184,44 @@ int jit_clear_all_blocks(void)
     return 0;
   }
   sync_cache_pointers();
+
+  // every block is gone, so restore fast writes for pages that were
+  // unmapped because they held compiled code
+  for (k = 0; k < 0x80; k++) {
+    if (dmg->saved_write_page[k]) {
+      dmg->write_page[k + 0x80] = dmg->saved_write_page[k];
+      dmg->saved_write_page[k] = NULL;
+    }
+  }
+
   return 1;
+}
+
+// cycle budget for the next dispatch: normally cycles_per_exit, but clamped
+// so an exit lands right at the next armed STAT interrupt event. games chain
+// LYC raster interrupts and read LY from the handler expecting the matched
+// line, so the handler has to run within the ~456 cycle window of that line
+static void update_exit_budget(struct dmg *dmg)
+{
+  u32 budget = cycles_per_exit;
+  u32 dist = dmg_cycles_to_stat_event(dmg);
+
+  // HALT/idle fast-forwards cap their skip here so they can't jump over
+  // the match line (they compare before their own double-speed adjustment,
+  // so this stays in PPU cycles)
+  jit_ctx.wake_limit = dist;
+
+  if (dist != 0xffffffff) {
+    if (jit_ctx.effective_double_speed) {
+      // budget is compared against CPU cycles, dist is PPU cycles
+      dist <<= 1;
+    }
+    if (dist < budget) {
+      budget = dist;
+    }
+  }
+
+  jit_ctx.exit_budget = budget;
 }
 
 // i moved this out of dmg.c because it needs to mess with the JIT state
@@ -300,6 +349,27 @@ int jit_run(struct dmg *dmg)
       // recovered
     }
 
+    // upper region code can be rewritten by the game (RAM interrupt
+    // trampolines, HRAM routines). remember which bytes hold compiled
+    // code and unmap fast writes for those pages so dmg_write_slow can
+    // catch the modification and invalidate
+    if (jit_regs.d3 >= 0x8000) {
+      int p;
+      u32 last = block->end_address;
+      if (last <= jit_regs.d3) {
+        last = 0x10000; // block ran to the top of the address space
+      }
+      last--;
+
+      cache_mark_upper_range(jit_regs.d3, last);
+      for (p = (jit_regs.d3 >> 8); p <= (int) (last >> 8); p++) {
+        if (dmg->write_page[p] && !dmg->saved_write_page[p - 0x80]) {
+          dmg->saved_write_page[p - 0x80] = dmg->write_page[p];
+          dmg->write_page[p] = 0;
+        }
+      }
+    }
+
     if (TrapAvailable(_CacheFlush)) {
       // for 68040. 68030 needed a cache flush when blocks were patched, but
       // 040 needs it here too because the caches are copy-back, so the code that
@@ -316,6 +386,7 @@ int jit_run(struct dmg *dmg)
   if (jit_ctx.trace_enabled) {
     sprintf(buf, "$%02x:%04lx", jit_ctx.current_rom_bank, jit_regs.d3);
     set_status_bar(buf);
+    debug_log_block(code);
   }
 
   // Log PC and first opcode to ring buffer for crash debugging
@@ -342,6 +413,7 @@ int jit_run(struct dmg *dmg)
     check_interrupts(dmg);
   }
   jit_regs.d2 = 0;
+  update_exit_budget(dmg);
 
   t3 = TickCount();
   time_in_jit += t2 - t1;

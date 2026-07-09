@@ -5,7 +5,11 @@
 #include "compiler.h"
 #include "emitters.h"
 #include "interop.h"
+#include "flags.h"
 #include "timing.h"
+
+// size of the code emitted by emit_vblank_skip
+#define VBLANK_SKIP_BYTES 58
 
 // synthesize wait for LY to reach target value
 // detects ldh a, [$44]; cp N; jr cc, back
@@ -153,8 +157,13 @@ void compile_ly_wait_reg(
     emit_rts(block);
 }
 
-// only good for vblank interrupts for now...
-void compile_halt(struct code_block *block, int next_pc)
+// set D2 to fast-forward to the start of the next vblank, then exit to the
+// dispatcher at next_pc. shared by HALT and the HRAM idle loop wait.
+// the skip is capped at jit_ctx.wake_limit so an armed LYC match interrupt
+// gets delivered on its line instead of being jumped over; the caller's
+// next_pc re-enters the wait, which re-fuses with the match then spent.
+// emits exactly VBLANK_SKIP_BYTES bytes.
+static void emit_vblank_skip(struct code_block *block, int next_pc)
 {
     //   movea.l JIT_CTX_FRAME_CYCLES_PTR(a4), a0 ; 4 bytes
     //   move.l (a0), d0                          ; 2 bytes
@@ -162,10 +171,18 @@ void compile_halt(struct code_block *block, int next_pc)
     //   bcc.s _frame_end                         ; 2 bytes
     //   move.l #65664, d2                        ; 6 bytes
     //   sub.l d0, d2                             ; 2 bytes
-    //   bra.s _exit                              ; 2 bytes
+    //   bra.s _clamp                             ; 2 bytes
     // _frame_end
-    //   move.l #70224, d2                        ; 6 bytes
+    //   move.l #70224+65664, d2                  ; 6 bytes
     //   sub.l d0, d2                             ; 2 bytes
+    // _clamp
+    //   cmp.l JIT_CTX_WAKE_LIMIT(a4), d2         ; 4 bytes
+    //   bcs.s _dbl                               ; 2 bytes
+    //   move.l JIT_CTX_WAKE_LIMIT(a4), d2        ; 4 bytes
+    // _dbl
+    //   tst.b JIT_CTX_EFF_DOUBLE_SPEED(a4)       ; 4 bytes
+    //   beq.s _exit                              ; 2 bytes
+    //   add.l d2, d2                             ; 2 bytes
     // _exit
     //   move.l #next_pc, d3                      ; 6 bytes
     //   rts                                      ; 2 bytes
@@ -187,6 +204,11 @@ void compile_halt(struct code_block *block, int next_pc)
     emit_move_l_dn(block, REG_68K_D_CYCLE_COUNT, 70224 + 65664);
     emit_sub_l_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_CYCLE_COUNT);
 
+    // cap the skip at the wake limit (PPU cycles, so before the doubling)
+    emit_cmp_l_disp_an_dn(block, JIT_CTX_WAKE_LIMIT, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
+    emit_bcs_b(block, 4);
+    emit_move_l_disp_an_dn(block, JIT_CTX_WAKE_LIMIT, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
+
     // double D2 if effective double speed is active (CPU cycles = 2x PPU cycles)
     emit_tst_b_disp_an(block, JIT_CTX_EFF_DOUBLE_SPEED, REG_68K_A_CTX);
     emit_beq_b(block, 2);
@@ -195,4 +217,46 @@ void compile_halt(struct code_block *block, int next_pc)
     // exit to C
     emit_move_l_dn(block, REG_68K_D_NEXT_PC, next_pc);
     emit_rts(block);
+}
+
+// only good for vblank interrupts for now...
+void compile_halt(struct code_block *block, int next_pc)
+{
+    emit_vblank_skip(block, next_pc);
+}
+
+// synthesize wait for an interrupt handler to change a flag byte in HRAM
+// detects ldh a, [nn]; and a / or a; jr z/nz back to the ldh.
+// instead of spinning until the cycle limit forces an exit, check the flag
+// once, and if the loop would repeat, skip straight to the next vblank the
+// same way HALT does. the interrupt handler runs, sets the flag, and
+// control returns to loop_pc where the flag is checked again.
+void compile_hram_idle_wait(
+    struct code_block *block,
+    uint8_t addr_lo,
+    uint8_t jr_opcode,
+    uint16_t loop_pc
+) {
+    // cycles for the and + untaken jr (the ldh was already counted)
+    emit_add_cycles(block, 12);
+
+    // A = HRAM flag
+    emit_movea_l_ind_an_an(block, REG_68K_A_CTX, REG_68K_A_SCRATCH_1);
+    emit_move_b_disp_an_dn(block, addr_lo - 0x80, REG_68K_A_SCRATCH_1, REG_68K_D_A);
+
+    // and a / or a: Z from A, C=0
+    emit_tst_b_dn(block, REG_68K_D_A);
+    compile_set_zc_flags(block);
+
+    // if the loop would exit, skip over the vblank skip and continue
+    if (jr_opcode == 0x28) {
+        // jr z: loop repeats while A == 0
+        emit_bne_b(block, VBLANK_SKIP_BYTES);
+    } else {
+        // jr nz: loop repeats while A != 0
+        emit_beq_b(block, VBLANK_SKIP_BYTES);
+    }
+
+    emit_vblank_skip(block, loop_pc);
+    // fall through: loop exits, block continues at the next instruction
 }

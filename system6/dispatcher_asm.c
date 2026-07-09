@@ -1,12 +1,11 @@
 #include "cpu_cache.h"
 #include "dispatcher_asm.h"
-#include "settings.h"
 
 // Offset of the FlushCodeCache trap in patch_helper code
 #define CACHEFLUSH_OFFSET 102
 
 // compiled blocks JMP here instead of RTS. This routine:
-// 1. Checks if accumulated cycles in D2 >= cycles_per_exit, if so, RTS to C
+// 1. Checks if accumulated cycles in D2 >= jit_ctx.exit_budget, if so, RTS to C
 // 2. Determines which cache to use based on PC in D3
 // 3. Looks up block in appropriate cache, if found -> JMP to it
 // 4. Otherwise -> RTS to C to compile the block
@@ -17,7 +16,7 @@ static void dispatcher_code_asm(void)
         "\t"
         "tst.b 16(%%a4)\n\t" // check trace_enabled
         "bne.s .Ldisp_exit\n\t" // if set, always return to C
-        "cmp.l %[cycles], %%d2\n\t"
+        "cmp.l 80(%%a4), %%d2\n\t" // exit_budget, offset must match jit.h
         "bcc.s .Ldisp_exit\n\t"
 
         "cmpi.w #0x4000, %%d3\n\t"
@@ -72,9 +71,7 @@ static void dispatcher_code_asm(void)
     ".Ldisp_exit:\n\t"
         "rts\n\t"
 
-        : // no outputs
-        : [cycles] "m" (cycles_per_exit)
-        : "d0", "a0", "cc", "memory"
+        ::: "d0", "a0", "cc", "memory"
     );
 }
 
@@ -98,8 +95,11 @@ static void patch_helper_code_asm(void)
         "cmpi.w #0x4000, %%d3\n\t"
         "bcs.s .Lpatch_bank0\n\t"
 
+        // never patch direct jumps into upper region blocks: WRAM/HRAM
+        // code can be rewritten by the game and the block invalidated,
+        // and a patched JMP.L would keep running the stale code
         "cmpi.w #0x8000, %%d3\n\t"
-        "bcc.s .Lpatch_upper\n\t"
+        "bcc.s .Lpatch_no_patch\n\t"
 
         // .banked: - lookup banked_cache[current_bank][d3 - 0x4000]
 

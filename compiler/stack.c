@@ -28,15 +28,12 @@ void compile_ld_sp_imm16(
     } else if (ctx && ctx->wram_base && gb_sp >= 0xd000 && gb_sp <= 0xe000) {
         // Switchable WRAM ($D000-$DFFF): use page table for correct bank
         uint8_t page = gb_sp >> 8;
-        uint8_t offset = gb_sp & 0xff;
         // D0 = page * 4 (index into page table)
         emit_move_w_dn(block, REG_68K_D_SCRATCH_0, (int16_t)(page * 4));
-        // A3 = read_page[page]
+        // A3 = read_page[page] (biased entry, see PAGE_BIAS in dmg.h)
         emit_movea_l_idx_an_an(block, 0, REG_68K_A_READ_PAGE, REG_68K_D_SCRATCH_0, REG_68K_A_SP);
-        // A3 += offset within page
-        if (offset > 0) {
-            emit_lea_disp_an_an(block, offset, REG_68K_A_SP, REG_68K_A_SP);
-        }
+        // A3 += (s16)gb_sp to complete the biased address
+        emit_lea_disp_an_an(block, (int16_t) gb_sp, REG_68K_A_SP, REG_68K_A_SP);
         emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 1);
         emit_move_l_dn_disp_an(block, REG_68K_D_SCRATCH_1, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
     } else if (ctx && ctx->hram_base && gb_sp >= 0xff80 && gb_sp <= 0xfffe) {
@@ -410,21 +407,17 @@ int compile_stack_op(
                 emit_bcc_w(block, 0);  // branch if >= $20 (not WRAM)
 
                 // WRAM path: use page table for correct bank
-                // A3 = read_page[HL >> 8] + (HL & 0xFF)
+                // A3 = read_page[HL >> 8] + (s16)HL (entries are biased)
                 // This handles CGB switchable WRAM banks ($D000-$DFFF)
                 // correctly, since the page table is updated on bank switch
-                emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
                 emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
-                // D0 = HL >> 8 (page number), then * 4 for pointer index
+                // D0 = HL >> 8 (page number)
                 emit_move_w_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);
                 emit_lsr_w_imm_dn(block, 8, REG_68K_D_SCRATCH_0);
-                emit_lsl_w_imm_dn(block, 2, REG_68K_D_SCRATCH_0);
-                // A3 = read_page[page] (base pointer for this 256-byte page)
-                emit_movea_l_idx_an_an(block, 0, REG_68K_A_READ_PAGE, REG_68K_D_SCRATCH_0, REG_68K_A_SP);
-                // D1 = HL & 0xFF (offset within page)
-                emit_andi_w_dn(block, REG_68K_D_SCRATCH_1, 0x00ff);
-                // A3 += offset
-                emit_adda_l_dn_an(block, REG_68K_D_SCRATCH_1, REG_68K_A_SP);
+                // A3 = read_page[page] (biased entry, see PAGE_BIAS in dmg.h)
+                compile_page_lookup(block, REG_68K_A_READ_PAGE, REG_68K_D_SCRATCH_0, REG_68K_A_SP);
+                // A3 += (s16)HL to complete the biased address
+                emit_adda_w_dn_an(block, REG_68K_D_SCRATCH_1, REG_68K_A_SP);
                 emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 1);
                 emit_move_l_dn_disp_an(block, REG_68K_D_SCRATCH_1, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
                 done = block->length;

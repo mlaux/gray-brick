@@ -277,6 +277,112 @@ TEST(test_ldh_dec_preserves_value)
     ASSERT_EQ(get_mem_byte(0x4011), 0x04);
 }
 
+// ============================================================================
+// Page table fast path tests
+// prepare_block_with_pages sets up real biased page tables so these hit the
+// inline fast path instead of falling back to the C stubs
+// ============================================================================
+
+TEST(test_page_fast_read)
+{
+    uint8_t rom[] = {
+        0x21, 0x05, 0xc0, // ld hl, 0xc005
+        0x7e,             // ld a, (hl)
+        0x10              // stop
+    };
+    prepare_block_with_pages(rom);
+    set_mem_byte(PAGE_BUF_C0 + 5, 0x5a);
+    execute_prepared_block();
+    ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 0x5a);
+}
+
+TEST(test_page_fast_write)
+{
+    uint8_t rom[] = {
+        0x21, 0x05, 0xc0, // ld hl, 0xc005
+        0x3e, 0x77,       // ld a, 0x77
+        0x77,             // ld (hl), a
+        0x10              // stop
+    };
+    prepare_block_with_pages(rom);
+    execute_prepared_block();
+    ASSERT_EQ(get_mem_byte(PAGE_BUF_C0 + 5), 0x77);
+}
+
+TEST(test_page_fast_read_sign_boundary)
+{
+    // 0x7fff is positive as s16, 0x8000 is negative - the biased entries
+    // must land both in the right host page
+    uint8_t rom[] = {
+        0x21, 0xff, 0x7f, // ld hl, 0x7fff
+        0x46,             // ld b, (hl)
+        0x21, 0x00, 0x80, // ld hl, 0x8000
+        0x4e,             // ld c, (hl)
+        0x10              // stop
+    };
+    prepare_block_with_pages(rom);
+    set_mem_byte(PAGE_BUF_7F + 0xff, 0x11);
+    set_mem_byte(PAGE_BUF_80, 0x22);
+    execute_prepared_block();
+    ASSERT_EQ((get_dreg(REG_68K_D_BC) >> 16) & 0xff, 0x11);
+    ASSERT_EQ(get_dreg(REG_68K_D_BC) & 0xff, 0x22);
+}
+
+TEST(test_page_fast_pop_push)
+{
+    // pop goes through the read16 fast path (sp not in WRAM base page 0
+    // at compile time, so ld sp,imm16 leaves the stack in slow mode),
+    // push through the write16 fast path
+    uint8_t rom[] = {
+        0x31, 0x80, 0xc1, // ld sp, 0xc180
+        0xc1,             // pop bc
+        0x31, 0x40, 0xc1, // ld sp, 0xc140
+        0xc5,             // push bc
+        0x10              // stop
+    };
+    prepare_block_with_pages(rom);
+    set_mem_byte(PAGE_BUF_C1 + 0x80, 0x34);
+    set_mem_byte(PAGE_BUF_C1 + 0x81, 0x12);
+    execute_prepared_block();
+    // BC split format 0x00BB00CC
+    ASSERT_EQ(get_dreg(REG_68K_D_BC) & 0x00ff00ff, 0x00120034);
+    ASSERT_EQ(get_mem_byte(PAGE_BUF_C1 + 0x3e), 0x34);
+    ASSERT_EQ(get_mem_byte(PAGE_BUF_C1 + 0x3f), 0x12);
+}
+
+TEST(test_page_read16_cross_falls_back)
+{
+    // low byte at 0xc0ff, high byte at 0xc100 crosses the page boundary,
+    // so the fast path must fall back to the stub (which reads literal
+    // addresses in test memory)
+    uint8_t rom[] = {
+        0x31, 0xff, 0xc0, // ld sp, 0xc0ff
+        0xc1,             // pop bc
+        0x10              // stop
+    };
+    prepare_block_with_pages(rom);
+    set_mem_byte(0xc0ff, 0x78);
+    set_mem_byte(0xc100, 0x56);
+    execute_prepared_block();
+    ASSERT_EQ(get_dreg(REG_68K_D_BC) & 0x00ff00ff, 0x00560078);
+}
+
+TEST(test_page_write16_cross_falls_back)
+{
+    // push with sp = 0xc101 writes 0xc0ff/0xc100, crossing the page
+    // boundary - must fall back to the stub
+    uint8_t rom[] = {
+        0x01, 0x34, 0x12, // ld bc, 0x1234
+        0x31, 0x01, 0xc1, // ld sp, 0xc101
+        0xc5,             // push bc
+        0x10              // stop
+    };
+    prepare_block_with_pages(rom);
+    execute_prepared_block();
+    ASSERT_EQ(get_mem_byte(0xc0ff), 0x34);
+    ASSERT_EQ(get_mem_byte(0xc100), 0x12);
+}
+
 void register_load_tests(void)
 {
     printf("\n8-bit immediate loads:\n");
@@ -333,4 +439,12 @@ void register_load_tests(void)
     printf("\nLDH counter patterns:\n");
     RUN_TEST(test_ldh_dec_ldh_loop);
     RUN_TEST(test_ldh_dec_preserves_value);
+
+    printf("\nPage table fast paths:\n");
+    RUN_TEST(test_page_fast_read);
+    RUN_TEST(test_page_fast_write);
+    RUN_TEST(test_page_fast_read_sign_boundary);
+    RUN_TEST(test_page_fast_pop_push);
+    RUN_TEST(test_page_read16_cross_falls_back);
+    RUN_TEST(test_page_write16_cross_falls_back);
 }

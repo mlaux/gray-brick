@@ -669,14 +669,9 @@ void OnMenuAction(long action)
     } else if (item == EDIT_KEY_MAPPINGS) {
       ShowKeyMappingsDialog();
     } else if (item == EDIT_PREFERENCES) {
-      int old_cycles_per_exit = cycles_per_exit;
+      // compiled code reads the exit budget from jit_ctx at run time, so a
+      // changed cycles_per_exit takes effect without recompiling anything
       ShowPreferencesDialog();
-      if (cycles_per_exit != old_cycles_per_exit && g_wp) {
-        if (!jit_clear_all_blocks()) {
-          // no-op. failure here causes the JIT to stop with a
-          // status bar message, so no special error handling needed
-        }
-      }
     } else if (item == EDIT_GBC_MODE) {
       gbc_enabled = !gbc_enabled;
       CheckItem(GetMenuHandle(MENU_EDIT), EDIT_GBC_MODE, gbc_enabled);

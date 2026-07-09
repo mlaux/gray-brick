@@ -862,6 +862,21 @@ void emit_movea_l_idx_an_an(
     emit_word(block, (idx_dreg << 12) | ((uint8_t) disp));
 }
 
+// movea.l (An,Dm.w*4), Ad - load long from indexed address, scale 4
+// 68020+ only: 68000/68010 ignore the scale bits and compute the
+// wrong address
+void emit_movea_l_idx_scale4_an_an(
+    struct code_block *block,
+    uint8_t base_areg,
+    uint8_t idx_dreg,
+    uint8_t dest_areg
+) {
+    // movea.l ea, An: 00 10 aaa 001 110 bbb (mode 110 = An with index)
+    // extension word: D/A=0 | idx_reg | W/L=0 | scale=10 | 0 | disp8=0
+    emit_word(block, 0x2070 | (dest_areg << 9) | base_areg);
+    emit_word(block, (idx_dreg << 12) | 0x0400);
+}
+
 // move.b (An,Dm.w), Dd - load byte from indexed address
 void emit_move_b_idx_an_dn(
     struct code_block *block,
@@ -992,6 +1007,18 @@ void emit_move_w_disp_an_dn(
 ) {
     // 00 11 ddd 000 101 aaa
     emit_word(block, 0x3028 | (dreg << 9) | areg);
+    emit_word(block, disp);
+}
+
+// move.l d(An), Dn - load long from memory with displacement
+void emit_move_l_disp_an_dn(
+    struct code_block *block,
+    int16_t disp,
+    uint8_t areg,
+    uint8_t dreg
+) {
+    // 00 10 ddd 000 101 aaa
+    emit_word(block, 0x2028 | (dreg << 9) | areg);
     emit_word(block, disp);
 }
 
@@ -1184,6 +1211,18 @@ void emit_cmp_l_dn_dn(struct code_block *block, uint8_t src, uint8_t dest)
     emit_word(block, 0xb080 | (dest << 9) | src);
 }
 
+// cmp.l d16(An), Dn - compare memory long with data register
+void emit_cmp_l_disp_an_dn(
+    struct code_block *block,
+    int16_t disp,
+    uint8_t areg,
+    uint8_t dreg
+) {
+    // 1011 ddd 010 101 aaa
+    emit_word(block, 0xb0a8 | (dreg << 9) | areg);
+    emit_word(block, disp);
+}
+
 // emit_add_cycles - add GB cycles to context, picks optimal instruction
 void emit_add_cycles(struct code_block *block, int cycles)
 {
@@ -1201,14 +1240,14 @@ void emit_add_cycles(struct code_block *block, int cycles)
 
 // Emit inline mini-dispatcher with patchable exit
 // This sequence:
-// 1. Checks cycle count (exit if >= 456)
+// 1. Checks cycle count (exit if >= exit budget)
 // 2. Calls patch_helper via JSR (first execution)
 // 3. patch_helper will patch the movea.l+jsr into jmp.l <target> for future runs
-// 16 bytes total
+// 14 bytes total
 void emit_patchable_exit(struct code_block *block)
 {
-    // cmpi.l #cycles_per_exit, d2 (6 bytes)
-    emit_cmpi_l_imm_dn(block, cycles_per_exit, REG_68K_D_CYCLE_COUNT);
+    // cmp.l JIT_CTX_EXIT_BUDGET(a4), d2 (4 bytes)
+    emit_cmp_l_disp_an_dn(block, JIT_CTX_EXIT_BUDGET, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
 
     // bcc.s +6 = skip over movea.l + jsr to rts (2 bytes)
     emit_bcc_s(block, 6);

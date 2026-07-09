@@ -30,4 +30,13 @@ void compile_ly_wait_reg(
 
 void compile_halt(struct code_block *block, int next_pc);
 
+// synthesize wait for an interrupt handler to change a flag byte in HRAM
+// detects ldh a, [nn]; and a / or a; jr z/nz back to the ldh
+void compile_hram_idle_wait(
+    struct code_block *block,
+    uint8_t addr_lo,
+    uint8_t jr_opcode,
+    uint16_t loop_pc
+);
+
 #endif

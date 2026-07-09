@@ -247,9 +247,9 @@ void cgb_update_vram_bank(struct cgb_state *cgb, struct dmg *dmg)
     u8 *bank_base = &dmg->video_ram[cgb->vram_bank * 0x2000];
 
     for (k = 0x80; k <= 0x9f; k++) {
-        int offset = (k - 0x80) << 8;
-        dmg->read_page[k] = &bank_base[offset];
-        dmg->write_page[k] = &bank_base[offset];
+        u8 *page = &bank_base[(k - 0x80) << 8];
+        dmg->read_page[k] = PAGE_BIAS(page, k);
+        dmg->write_page[k] = PAGE_BIAS(page, k);
     }
 }
 
@@ -262,16 +262,16 @@ void cgb_update_wram_bank(struct cgb_state *cgb, struct dmg *dmg)
 
     // Update $D000-$DFFF (pages 0xd0-0xdf)
     for (k = 0xd0; k <= 0xdf; k++) {
-        int offset = (k - 0xd0) << 8;
-        dmg->read_page[k] = &bank_base[offset];
-        dmg->write_page[k] = &bank_base[offset];
+        u8 *page = &bank_base[(k - 0xd0) << 8];
+        dmg->read_page[k] = PAGE_BIAS(page, k);
+        dmg->write_page[k] = PAGE_BIAS(page, k);
     }
 
     // Update echo RAM $F000-$FDFF (pages 0xf0-0xfd)
     for (k = 0xf0; k <= 0xfd; k++) {
-        int offset = (k - 0xf0) << 8;
-        dmg->read_page[k] = &bank_base[offset];
-        dmg->write_page[k] = &bank_base[offset];
+        u8 *page = &bank_base[(k - 0xf0) << 8];
+        dmg->read_page[k] = PAGE_BIAS(page, k);
+        dmg->write_page[k] = PAGE_BIAS(page, k);
     }
 }
 

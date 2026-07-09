@@ -68,6 +68,8 @@
 #define JIT_CTX_EFF_DOUBLE_SPEED 68  // u8: 1 if double speed active AND not ignored
 #define JIT_CTX_GB_SP       72  // u16: GB stack pointer value
 #define JIT_CTX_STACK_IN_RAM 76  // non-zero if A3 points to native WRAM/HRAM
+#define JIT_CTX_EXIT_BUDGET 80  // u32: cycle budget for dispatcher exits
+#define JIT_CTX_WAKE_LIMIT  84  // u32: max PPU cycles a fast-forward may skip
 
 struct code_block {
     uint8_t code[1024];
@@ -120,5 +122,9 @@ void compile_join_bc(struct code_block *block, int dreg);
 void compile_join_de(struct code_block *block, int dreg);
 
 extern int cycles_per_exit;
+
+// non-zero when the host CPU is a 68020 or better, which allows scaled
+// index addressing in the emitted page table lookups
+extern int compiler_68020;
 
 #endif

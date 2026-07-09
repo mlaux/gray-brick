@@ -376,6 +376,309 @@ TEST(test_ly_wait_reg_past_target)
     ASSERT_EQ(get_cycle_count(), 70224 + 50 * 456 - 30000);
 }
 
+// ============================================================================
+// LY wait pattern tests with and a / or a
+// Pattern: ldh a, [$44]; and a / or a; jr nz/z, back
+// Equivalent to cp 0. Final Fantasy Legend waits for LY wrap this way.
+// ============================================================================
+
+TEST(test_ly_wait_and_a_jr_nz)
+{
+    // jr nz: loop while LY != 0, exit when LY == 0
+    // from frame_cycles=20000 that means the start of the next frame
+    uint8_t rom[] = {
+        0xf0, 0x44,       // ldh a, ($ff44)
+        0xa7,             // and a
+        0x20, 0xfb,       // jr nz, -5 (back to ldh)
+        0x10              // stop (not reached, pattern is fused)
+    };
+    run_block_with_frame_cycles(rom, 20000);
+    ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 0);
+    ASSERT_EQ(get_cycle_count(), 70224 - 20000);
+    // and a with A == 0: Z set, C clear
+    ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0x05, 0x04);
+}
+
+TEST(test_ly_wait_or_a_jr_nz)
+{
+    // same loop with or a
+    uint8_t rom[] = {
+        0xf0, 0x44,       // ldh a, ($ff44)
+        0xb7,             // or a
+        0x20, 0xfb,       // jr nz, -5
+        0x10              // stop
+    };
+    run_block_with_frame_cycles(rom, 0);
+    ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 0);
+    ASSERT_EQ(get_cycle_count(), 70224);
+}
+
+TEST(test_ly_wait_and_a_jr_z)
+{
+    // jr z: loop while LY == 0, exit when LY != 0 -> wait for LY 1
+    uint8_t rom[] = {
+        0xf0, 0x44,       // ldh a, ($ff44)
+        0xa7,             // and a
+        0x28, 0xfb,       // jr z, -5
+        0x10              // stop
+    };
+    run_block_with_frame_cycles(rom, 0);
+    ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 1);
+    ASSERT_EQ(get_cycle_count(), 456);
+    // and a with A == 1: Z clear, C clear
+    ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0x05, 0);
+}
+
+TEST(test_ly_wait_and_a_during_vblank)
+{
+    // already in vblank: LY 0 is 70224 - frame_cycles away
+    uint8_t rom[] = {
+        0xf0, 0x44,       // ldh a, ($ff44)
+        0xa7,             // and a
+        0x20, 0xfb,       // jr nz, -5
+        0x10              // stop
+    };
+    run_block_with_frame_cycles(rom, 68000);
+    ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 0);
+    ASSERT_EQ(get_cycle_count(), 70224 - 68000);
+}
+
+// ============================================================================
+// HRAM idle wait pattern tests
+// Pattern: ldh a, (nn); and a / or a; jr z/nz back to the ldh
+// The compiler checks the flag once and fast-forwards to vblank instead of
+// spinning. In the test context the fake dmg pointer is 0x4000, so HRAM
+// byte $ff90 lives at host address 0x4010.
+// ============================================================================
+
+#define TEST_HRAM_FLAG_HOST_ADDR 0x4010
+
+TEST(test_idle_wait_flag_clear_waits)
+{
+    // flag is 0, jr z: loop would repeat, so skip to vblank and exit to
+    // the dispatcher at the loop head
+    uint8_t rom[] = {
+        0xf0, 0x90,       // ldh a, ($ff90)
+        0xa7,             // and a
+        0x28, 0xfb,       // jr z, -5 (back to ldh)
+        0x10              // stop (not reached this pass)
+    };
+    run_block_with_frame_cycles(rom, 10000);
+    ASSERT_EQ(get_cycle_count(), 65664 - 10000);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 0);
+    ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 0);
+}
+
+TEST(test_idle_wait_flag_set_falls_through)
+{
+    // flag is nonzero: loop exits immediately, block continues to the stop
+    uint8_t rom[] = {
+        0xf0, 0x90,       // ldh a, ($ff90)
+        0xa7,             // and a
+        0x28, 0xfb,       // jr z, -5
+        0x10              // stop
+    };
+    run_block_with_frame_cycles_mem(rom, 10000, TEST_HRAM_FLAG_HOST_ADDR, 0x42);
+    ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 0x42);
+    // Z clear like and a would leave it
+    ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0x04, 0);
+    // reached the stop
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 0xffffffff);
+}
+
+TEST(test_idle_wait_jr_nz_waits_while_set)
+{
+    // jr nz: loop repeats while the flag is nonzero
+    uint8_t rom[] = {
+        0xf0, 0x90,       // ldh a, ($ff90)
+        0xa7,             // and a
+        0x20, 0xfb,       // jr nz, -5
+        0x10              // stop
+    };
+    run_block_with_frame_cycles_mem(rom, 20000, TEST_HRAM_FLAG_HOST_ADDR, 5);
+    ASSERT_EQ(get_cycle_count(), 65664 - 20000);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 0);
+    ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 5);
+}
+
+TEST(test_idle_wait_jr_nz_flag_zero_falls_through)
+{
+    uint8_t rom[] = {
+        0xf0, 0x90,       // ldh a, ($ff90)
+        0xa7,             // and a
+        0x20, 0xfb,       // jr nz, -5
+        0x10              // stop
+    };
+    run_block_with_frame_cycles(rom, 20000);
+    ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 0);
+    // Z set like and a would leave it
+    ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0x04, 0x04);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 0xffffffff);
+}
+
+TEST(test_idle_wait_or_a_variant)
+{
+    // same pattern with or a instead of and a
+    uint8_t rom[] = {
+        0xf0, 0x90,       // ldh a, ($ff90)
+        0xb7,             // or a
+        0x28, 0xfb,       // jr z, -5
+        0x10              // stop
+    };
+    run_block_with_frame_cycles(rom, 30000);
+    ASSERT_EQ(get_cycle_count(), 65664 - 30000);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 0);
+}
+
+TEST(test_idle_wait_during_vblank)
+{
+    // already past vblank start: wait for the next frame's vblank
+    uint8_t rom[] = {
+        0xf0, 0x90,       // ldh a, ($ff90)
+        0xa7,             // and a
+        0x28, 0xfb,       // jr z, -5
+        0x10              // stop
+    };
+    run_block_with_frame_cycles(rom, 68000);
+    ASSERT_EQ(get_cycle_count(), 70224 + 65664 - 68000);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 0);
+}
+
+TEST(test_idle_wait_mid_block)
+{
+    // pattern preceded by other instructions: exit PC must be the ldh,
+    // not the block start
+    uint8_t rom[] = {
+        0x06, 0x07,       // ld b, 7
+        0xf0, 0x90,       // ldh a, ($ff90)
+        0xa7,             // and a
+        0x28, 0xfb,       // jr z, -5
+        0x10              // stop
+    };
+    run_block_with_frame_cycles(rom, 0);
+    ASSERT_EQ(get_cycle_count(), 65664);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 2);
+    ASSERT_EQ((get_dreg(REG_68K_D_BC) >> 16) & 0xff, 7);
+}
+
+// ============================================================================
+// Fast-forward wake limit tests
+// HALT and the HRAM idle wait cap their skip at jit_ctx.wake_limit (PPU
+// cycles until an armed LYC match line) so the interrupt gets delivered on
+// its line instead of being jumped over.
+// ============================================================================
+
+TEST(test_halt_clamped_by_wake_limit)
+{
+    // HALT at frame_cycles=10000 would skip 55664 to vblank, but the
+    // wake limit stops it 5000 cycles in (an LYC match line)
+    uint8_t rom[] = {
+        0x76              // halt
+    };
+    set_wake_limit(5000);
+    run_block_with_frame_cycles(rom, 10000);
+    ASSERT_EQ(get_cycle_count(), 5000);
+}
+
+TEST(test_halt_wake_limit_beyond_vblank)
+{
+    // wake limit further away than vblank: no clamp
+    uint8_t rom[] = {
+        0x76              // halt
+    };
+    set_wake_limit(60000);
+    run_block_with_frame_cycles(rom, 10000);
+    ASSERT_EQ(get_cycle_count(), 65664 - 10000);
+}
+
+TEST(test_halt_wake_limit_zero)
+{
+    // overdue match: skip nothing so the next sync fires and delivers it
+    uint8_t rom[] = {
+        0x76              // halt
+    };
+    set_wake_limit(0);
+    run_block_with_frame_cycles(rom, 10000);
+    ASSERT_EQ(get_cycle_count(), 0);
+}
+
+TEST(test_idle_wait_clamped_by_wake_limit)
+{
+    // flag clear, loop would skip to vblank, but the wake limit caps the
+    // skip; exit PC is still the loop head so the wait re-fuses after
+    // the interrupt is serviced
+    uint8_t rom[] = {
+        0xf0, 0x90,       // ldh a, ($ff90)
+        0xa7,             // and a
+        0x28, 0xfb,       // jr z, -5
+        0x10              // stop
+    };
+    set_wake_limit(3000);
+    run_block_with_frame_cycles(rom, 10000);
+    ASSERT_EQ(get_cycle_count(), 3000);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 0);
+}
+
+// ============================================================================
+// Dispatcher exit budget tests
+// Backward branches compare D2 against jit_ctx.exit_budget at run time.
+// Large budget: loops run natively to completion. Small budget: the loop
+// exits to the dispatcher with D3 = loop target.
+// ============================================================================
+
+TEST(test_budget_cond_loop_runs_natively)
+{
+    // dec b / inc c makes the loop body > 3 bytes so the compiler emits
+    // the cycle-checked path instead of the tiny-loop path
+    uint8_t rom[] = {
+        0x06, 0x05,       // ld b, 5
+        0x0c,             // inc c
+        0x05,             // dec b
+        0x20, 0xfc,       // jr nz, -4 (back to dec b)
+        0x10              // stop
+    };
+    run_block_with_budget(rom, 100000);
+    // looped 5 times and fell through to the stop
+    ASSERT_EQ((get_dreg(REG_68K_D_BC) >> 16) & 0xff, 0);
+    ASSERT_EQ(get_dreg(REG_68K_D_BC) & 0xff, 5);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 0xffffffff);
+}
+
+TEST(test_budget_cond_loop_exits_early)
+{
+    uint8_t rom[] = {
+        0x06, 0x05,       // ld b, 5
+        0x0c,             // inc c
+        0x05,             // dec b
+        0x20, 0xfc,       // jr nz, -4
+        0x10              // stop
+    };
+    run_block_with_budget(rom, 1);
+    // one iteration, then the taken branch sees D2 >= budget and exits
+    // to the dispatcher at the loop head
+    ASSERT_EQ((get_dreg(REG_68K_D_BC) >> 16) & 0xff, 4);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 2);
+}
+
+TEST(test_budget_uncond_loop_exits)
+{
+    // unconditional backward jr can never fall through, so any budget
+    // makes it exit to the dispatcher once cycles accumulate
+    uint8_t rom[] = {
+        0x0c,             // inc c
+        0x0c,             // inc c
+        0x0c,             // inc c
+        0x18, 0xfb,       // jr -5 (back to start)
+        0x10              // stop (never reached)
+    };
+    run_block_with_budget(rom, 50);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 0);
+    // 24 cycles per pass (3 inc + taken jr) means the exit lands on the
+    // third pass regardless of where in the pass the check happens
+    ASSERT_EQ(get_dreg(REG_68K_D_BC) & 0xff, 9);
+    ASSERT_EQ(get_cycle_count() >= 50 && get_cycle_count() <= 74, 1);
+}
+
 void register_timing_tests(void)
 {
     printf("\nHALT instruction tests:\n");
@@ -407,4 +710,30 @@ void register_timing_tests(void)
     RUN_TEST(test_ly_wait_reg_jr_c);
     RUN_TEST(test_ly_wait_reg_mid_frame);
     RUN_TEST(test_ly_wait_reg_past_target);
+
+    printf("\nLY wait and/or pattern tests:\n");
+    RUN_TEST(test_ly_wait_and_a_jr_nz);
+    RUN_TEST(test_ly_wait_or_a_jr_nz);
+    RUN_TEST(test_ly_wait_and_a_jr_z);
+    RUN_TEST(test_ly_wait_and_a_during_vblank);
+
+    printf("\nFast-forward wake limit tests:\n");
+    RUN_TEST(test_halt_clamped_by_wake_limit);
+    RUN_TEST(test_halt_wake_limit_beyond_vblank);
+    RUN_TEST(test_halt_wake_limit_zero);
+    RUN_TEST(test_idle_wait_clamped_by_wake_limit);
+
+    printf("\nDispatcher exit budget tests:\n");
+    RUN_TEST(test_budget_cond_loop_runs_natively);
+    RUN_TEST(test_budget_cond_loop_exits_early);
+    RUN_TEST(test_budget_uncond_loop_exits);
+
+    printf("\nHRAM idle wait pattern tests:\n");
+    RUN_TEST(test_idle_wait_flag_clear_waits);
+    RUN_TEST(test_idle_wait_flag_set_falls_through);
+    RUN_TEST(test_idle_wait_jr_nz_waits_while_set);
+    RUN_TEST(test_idle_wait_jr_nz_flag_zero_falls_through);
+    RUN_TEST(test_idle_wait_or_a_variant);
+    RUN_TEST(test_idle_wait_during_vblank);
+    RUN_TEST(test_idle_wait_mid_block);
 }

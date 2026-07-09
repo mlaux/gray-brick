@@ -10,6 +10,11 @@ static void **bank0_cache;
 static void **upper_cache;
 static void ***banked_cache;
 
+// per-page source byte bounds of compiled upper code (pages 0x80-0xff);
+// lo > hi means the page holds no compiled code
+static u8 upper_page_lo[0x80];
+static u8 upper_page_hi[0x80];
+
 // Look up cached code pointer for given PC and bank
 void *cache_lookup(u16 pc, u8 bank)
 {
@@ -51,10 +56,44 @@ int cache_store(u16 pc, u8 bank, void *code)
     return 1;
 }
 
+void cache_mark_upper_range(u16 start, u16 end)
+{
+    int p;
+    for (p = (start >> 8); p <= (end >> 8); p++) {
+        int idx = p - 0x80;
+        u8 lo = (p == (start >> 8)) ? (start & 0xff) : 0;
+        u8 hi = (p == (end >> 8)) ? (end & 0xff) : 0xff;
+        if (lo < upper_page_lo[idx]) {
+            upper_page_lo[idx] = lo;
+        }
+        if (hi > upper_page_hi[idx]) {
+            upper_page_hi[idx] = hi;
+        }
+    }
+}
+
+int cache_upper_range_hit(u16 addr)
+{
+    int idx = (addr >> 8) - 0x80;
+    u8 off = addr & 0xff;
+    return off >= upper_page_lo[idx] && off <= upper_page_hi[idx];
+}
+
+void cache_invalidate_upper_page(u8 page)
+{
+    int idx = page - 0x80;
+    memset(&upper_cache[idx << 8], 0, 256 * sizeof(void *));
+    upper_page_lo[idx] = 0xff;
+    upper_page_hi[idx] = 0;
+}
+
 // Allocate and zero all cache arrays upfront
 // Returns 1 on success, 0 on failure
 int cache_init(void)
 {
+    memset(upper_page_lo, 0xff, sizeof upper_page_lo);
+    memset(upper_page_hi, 0, sizeof upper_page_hi);
+
     bank0_cache = arena_alloc(BANK0_CACHE_SIZE * sizeof(void *));
     if (!bank0_cache) {
         return 0;
