@@ -313,6 +313,25 @@ static void dmg_update_stat_event(struct dmg *dmg)
     u32 pos, line;
     u32 ly = dmg_current_ly(dmg, &pos);
     u32 cur = ly * CYCLES_PER_LINE + pos;
+    u32 unwrapped = dmg->frame_cycles + jit_ctx.read_cycles;
+
+    // if the beam already crossed the armed event, it fired before this
+    // write took effect; set IF now, because the recompute below would
+    // otherwise drop it before lcd_sync ever sees it. block boundaries
+    // make this deterministic, so a dropped event can starve a game of
+    // the same interrupt every single frame
+    if (unwrapped >= dmg->stat_event_cycle) {
+        dmg_request_interrupt(dmg, INT_LCDSTAT);
+    }
+
+    if (unwrapped >= CYCLES_PER_FRAME) {
+        // in-flight cycles ran past the end of the frame, so cur wrapped
+        // to a next-frame position. arming an event there would make
+        // lcd_sync fire it against this frame's larger cycle counter, so
+        // leave rearming to the recompute at the frame wrap instead
+        dmg->stat_event_cycle = 0xffffffff;
+        return;
+    }
 
     dmg->stat_event_cycle = stat_event_from(dmg, cur, ly, &line);
     dmg->stat_event_line = line;
