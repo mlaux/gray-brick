@@ -94,6 +94,7 @@ static int jit_handle_stop(struct dmg *dmg)
   if (dmg->cgb && cgb_speed_switch(dmg->cgb)) {
     // Speed switched successfully - update effective_double_speed
     jit_ctx.effective_double_speed = (dmg->cgb->double_speed && !ignore_double_speed) ? 1 : 0;
+    dmg_speed_changed(dmg);
     return 0;
   }
   // DMG mode or speed switch not armed - halt
@@ -152,7 +153,8 @@ void jit_init(struct dmg *dmg)
   jit_ctx.stack_in_ram = 1;   // fast mode - A3 points to native HRAM
   jit_ctx.effective_double_speed = 0;
   jit_ctx.exit_budget = cycles_per_exit;
-  jit_ctx.wake_limit = 0xffffffff;
+  // refined by update_exit_budget after the first dispatch
+  jit_ctx.wake_limit = CYCLES_PER_FRAME;
   sync_cache_pointers();
 
   jit_regs.d3 = 0x100; // initial PC
@@ -198,27 +200,24 @@ int jit_clear_all_blocks(void)
 }
 
 // cycle budget for the next dispatch: normally cycles_per_exit, but clamped
-// so an exit lands right at the next armed STAT interrupt event. games chain
+// so an exit lands right at the next armed hardware deadline. games chain
 // LYC raster interrupts and read LY from the handler expecting the matched
 // line, so the handler has to run within the ~456 cycle window of that line
 static void update_exit_budget(struct dmg *dmg)
 {
   u32 budget = cycles_per_exit;
-  u32 dist = dmg_cycles_to_stat_event(dmg);
+  u32 dist = dmg_cycles_to_next_event(dmg);
 
-  // HALT/idle fast-forwards cap their skip here so they can't jump over
-  // the match line (they compare before their own double-speed adjustment,
-  // so this stays in PPU cycles)
+  // HALT/idle fast-forwards skip exactly this far (they apply their own
+  // double-speed adjustment, so this stays in PPU cycles)
   jit_ctx.wake_limit = dist;
 
-  if (dist != 0xffffffff) {
-    if (jit_ctx.effective_double_speed) {
-      // budget is compared against CPU cycles, dist is PPU cycles
-      dist <<= 1;
-    }
-    if (dist < budget) {
-      budget = dist;
-    }
+  if (jit_ctx.effective_double_speed) {
+    // budget is compared against CPU cycles, dist is PPU cycles
+    dist <<= 1;
+  }
+  if (dist < budget) {
+    budget = dist;
   }
 
   jit_ctx.exit_budget = budget;

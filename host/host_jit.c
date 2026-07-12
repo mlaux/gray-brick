@@ -176,6 +176,7 @@ static int handle_stop(void)
             (dmg->cgb->double_speed && !ignore_double_speed) ? 1 : 0;
         // the block continues executing after STOP and reads this
         ctx_w8(JIT_CTX_EFF_DOUBLE_SPEED, jit_ctx.effective_double_speed);
+        dmg_speed_changed(dmg);
         return 0;
     }
     return 1;
@@ -347,17 +348,15 @@ static void execute_block(void *code)
 static void update_exit_budget(void)
 {
     u32 budget = cycles_per_exit;
-    u32 dist = dmg_cycles_to_stat_event(dmg);
+    u32 dist = dmg_cycles_to_next_event(dmg);
 
     jit_ctx.wake_limit = dist;
 
-    if (dist != 0xffffffff) {
-        if (jit_ctx.effective_double_speed) {
-            dist <<= 1;
-        }
-        if (dist < budget) {
-            budget = dist;
-        }
+    if (jit_ctx.effective_double_speed) {
+        dist <<= 1;
+    }
+    if (dist < budget) {
+        budget = dist;
     }
 
     jit_ctx.exit_budget = budget;
@@ -446,7 +445,8 @@ void host_jit_init(struct dmg *d)
     jit_ctx.stack_in_ram = 1;
     jit_ctx.effective_double_speed = 0;
     jit_ctx.exit_budget = cycles_per_exit;
-    jit_ctx.wake_limit = 0xffffffff;
+    // refined by update_exit_budget after the first dispatch
+    jit_ctx.wake_limit = CYCLES_PER_FRAME;
 
     // 68k-side jit_ctx
     // NOT opaque: emitted ldh fast paths dereference this and index

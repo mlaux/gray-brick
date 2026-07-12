@@ -2,7 +2,10 @@
 
 // ============================================================================
 // HALT instruction tests
-// HALT waits until vblank interrupt (LY 144, cycle 65664)
+// HALT fast-forwards D2 to jit_ctx.wake_limit, the dispatcher-computed
+// distance to the next armed deadline. the harness defaults it to what the
+// dispatcher sets with only vblank and the frame wrap armed: vblank start
+// (cycle 65664), or the wrap (70224) once vblank is past
 // ============================================================================
 
 TEST(test_halt_before_vblank)
@@ -37,35 +40,33 @@ TEST(test_halt_just_before_vblank)
 
 TEST(test_halt_at_vblank_start)
 {
-    // HALT at exactly cycle 65664 (vblank start) should wait until next frame
-    // cycles = (70224 + 65664) - 65664 = 70224
+    // HALT at exactly cycle 65664: vblank already fired, so the wake lands
+    // on the frame wrap and the dispatcher re-enters the HALT from there
     uint8_t rom[] = {
         0x76              // halt
     };
     run_block_with_frame_cycles(rom, 65664);
-    ASSERT_EQ(get_cycle_count(), 70224);
+    ASSERT_EQ(get_cycle_count(), 70224 - 65664);
 }
 
 TEST(test_halt_during_vblank)
 {
-    // HALT at frame_cycles=68000 (in vblank) should wait until next frame vblank
-    // cycles = (70224 + 65664) - 68000 = 135888 - 68000 = 67888
+    // HALT at frame_cycles=68000 (in vblank) wakes at the frame wrap
     uint8_t rom[] = {
         0x76              // halt
     };
     run_block_with_frame_cycles(rom, 68000);
-    ASSERT_EQ(get_cycle_count(), 135888 - 68000);
+    ASSERT_EQ(get_cycle_count(), 70224 - 68000);
 }
 
 TEST(test_halt_near_frame_end)
 {
-    // HALT at frame_cycles=70000 should wait until next frame vblank
-    // cycles = (70224 + 65664) - 70000 = 65888
+    // HALT at frame_cycles=70000 wakes at the frame wrap
     uint8_t rom[] = {
         0x76              // halt
     };
     run_block_with_frame_cycles(rom, 70000);
-    ASSERT_EQ(get_cycle_count(), 135888 - 70000);
+    ASSERT_EQ(get_cycle_count(), 70224 - 70000);
 }
 
 // ============================================================================
@@ -532,7 +533,7 @@ TEST(test_idle_wait_or_a_variant)
 
 TEST(test_idle_wait_during_vblank)
 {
-    // already past vblank start: wait for the next frame's vblank
+    // already past vblank start: wake at the frame wrap and re-enter
     uint8_t rom[] = {
         0xf0, 0x90,       // ldh a, ($ff90)
         0xa7,             // and a
@@ -540,7 +541,7 @@ TEST(test_idle_wait_during_vblank)
         0x10              // stop
     };
     run_block_with_frame_cycles(rom, 68000);
-    ASSERT_EQ(get_cycle_count(), 70224 + 65664 - 68000);
+    ASSERT_EQ(get_cycle_count(), 70224 - 68000);
     ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 0);
 }
 
@@ -563,9 +564,10 @@ TEST(test_idle_wait_mid_block)
 
 // ============================================================================
 // Fast-forward wake limit tests
-// HALT and the HRAM idle wait cap their skip at jit_ctx.wake_limit (PPU
-// cycles until an armed LYC match line) so the interrupt gets delivered on
-// its line instead of being jumped over.
+// HALT and the HRAM idle wait load jit_ctx.wake_limit verbatim; the C
+// dispatcher guarantees it is the distance to the earliest armed deadline
+// (LYC match lines, timer overflow, vblank, frame wrap), so the interrupt
+// gets delivered on the line it belongs to instead of being jumped over.
 // ============================================================================
 
 TEST(test_halt_clamped_by_wake_limit)
@@ -582,13 +584,14 @@ TEST(test_halt_clamped_by_wake_limit)
 
 TEST(test_halt_wake_limit_beyond_vblank)
 {
-    // wake limit further away than vblank: no clamp
+    // the emitted code trusts wake_limit verbatim, even past vblank (the
+    // dispatcher never sets it beyond the earliest armed deadline)
     uint8_t rom[] = {
         0x76              // halt
     };
     set_wake_limit(60000);
     run_block_with_frame_cycles(rom, 10000);
-    ASSERT_EQ(get_cycle_count(), 65664 - 10000);
+    ASSERT_EQ(get_cycle_count(), 60000);
 }
 
 TEST(test_halt_wake_limit_zero)

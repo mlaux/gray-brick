@@ -364,7 +364,14 @@ void run_block_with_frame_cycles_mem(
     memset(mem, 0, MEM_SIZE);
     setup_runtime_stubs();
 
-    m68k_write_memory_32(JIT_CTX_ADDR + JIT_CTX_WAKE_LIMIT, pending_wake_limit);
+    uint32_t wake = pending_wake_limit;
+    if (wake == 0xffffffff) {
+        // model the dispatcher: wake_limit is the distance to the next
+        // deadline - vblank start, or the frame wrap once vblank is past
+        wake = frame_cycles < 65664 ? 65664 - frame_cycles
+                                    : 70224 - frame_cycles;
+    }
+    m68k_write_memory_32(JIT_CTX_ADDR + JIT_CTX_WAKE_LIMIT, wake);
     pending_wake_limit = 0xffffffff;
 
     if (mem_addr) {

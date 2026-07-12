@@ -28,6 +28,27 @@ struct rom;
 struct lcd;
 struct audio;
 
+#define CYCLES_PER_FRAME 70224
+#define CYCLES_PER_LINE 456
+#define CYCLES_LINE_144 (CYCLES_PER_FRAME - (10 * CYCLES_PER_LINE))
+#define CYCLES_MIDDLE (CYCLES_LINE_144 / 2)
+
+// deadline table sources. event_deadline holds the frame-relative PPU cycle
+// of each source's next firing, EV_NONE when unarmed. EV_WRAP is always
+// armed so a minimum deadline always exists; it stays last so simultaneous
+// events resolve to the real source first
+enum {
+    EV_STAT,
+    EV_VBLANK,
+    EV_RENDER,
+    EV_TIMA,
+    EV_SERIAL,
+    EV_WRAP,
+    EV_COUNT
+};
+
+#define EV_NONE 0xffffffff
+
 // page table entries are biased so that entry + (s16)gb_address yields the
 // host pointer. the JIT indexes pages with (An,Dn.w) addressing, which sign
 // extends the full GB address, so pages >= 0x80 get 0x10000 added to cancel
@@ -60,7 +81,14 @@ struct dmg {
 
     u8 joypad;
     u8 action_buttons;
-    u16 timer_div;
+    // serial port: writing SC with bit 7 + internal clock arms EV_SERIAL
+    // 4096 CPU cycles out; completion reads back the no-partner value
+    u8 reg_sb;
+    u8 reg_sc;
+
+    // lazy TIMA: timer_count is the counter value as of tima_base_cycle
+    // (total_cycles clock); reads derive the live value the way DIV does,
+    // EV_TIMA fires the overflow. frozen while the timer is disabled
     u8 timer_count;
     u8 timer_mod;
     u8 timer_control;
@@ -71,16 +99,16 @@ struct dmg {
     u16 lazy_ly;
     u32 ly_read_cycle;
 
-    // next pending STAT interrupt event this frame (0xffffffff = none)
-    u32 stat_event_cycle;
+    // deadline table (see the EV_ enum)
+    u32 event_deadline[EV_COUNT];
     u16 stat_event_line;
 
     // for DIV evaluation from cycles
     u32 total_cycles;
     u32 div_reset_cycle;
 
-    // for TIMA timer
-    u32 timer_cycles;
+    // CPU cycle (total_cycles clock) at which timer_count was current
+    u32 tima_base_cycle;
 
     // current ROM bank (to avoid redundant page table updates)
     int current_rom_bank;
@@ -99,7 +127,11 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data);
 
 void dmg_sync_hw(struct dmg *dmg, int cycles);
 
-u32 dmg_cycles_to_stat_event(struct dmg *dmg);
+u32 dmg_cycles_to_next_event(struct dmg *dmg);
+
+// CGB speed switch changed the CPU<->PPU cycle ratio; rearm CPU-clock
+// deadlines
+void dmg_speed_changed(struct dmg *dmg);
 
 void hdma_sync(struct dmg *dmg);
 
