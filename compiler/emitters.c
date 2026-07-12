@@ -1246,8 +1246,8 @@ void emit_add_cycles(struct code_block *block, int cycles)
 // 14 bytes total
 void emit_patchable_exit(struct code_block *block)
 {
-    // cmp.l JIT_CTX_EXIT_BUDGET(a4), d2 (4 bytes)
-    emit_cmp_l_disp_an_dn(block, JIT_CTX_EXIT_BUDGET, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
+    // cmp.l JIT_CTX_WAKE_LIMIT(a4), d2 (4 bytes)
+    emit_cmp_l_disp_an_dn(block, JIT_CTX_WAKE_LIMIT, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
 
     // bcc.s +6 = skip over movea.l + jsr to rts (2 bytes)
     emit_bcc_s(block, 6);

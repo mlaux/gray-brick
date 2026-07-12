@@ -32,12 +32,9 @@ typedef struct {
     /* 48 */ u16 gb_sp; // GB stack pointer value (always valid)
     /* 4a */ u16 _pad3;
     /* 4c */ long stack_in_ram; // non-zero if A3 points to native WRAM/HRAM
-    /* 50 */ u32 exit_budget; // cycle budget for dispatcher exits, normally
-                              // cycles_per_exit but clamped to land exits at
-                              // armed LYC match lines
-    /* 54 */ u32 wake_limit;  // max PPU cycles a HALT/idle fast-forward may
-                              // skip; caps the skip at an armed LYC match
-                              // line, 0xffffffff when none
+    /* 50 */ u32 wake_limit;  // CPU cycles from the last sync to the
+                              // earliest deadline (doubled in double speed);
+                              // dispatcher exit budget and HALT/idle skip
 } jit_context;
 
 extern jit_context jit_ctx;

@@ -6,7 +6,7 @@
 // - gb_sp / stack_in_ram / read_cycles: 68k-side ctx is authoritative
 //   (emitted code maintains them); synced 68k -> host after execution,
 //   written back only when check_interrupts modifies gb_sp
-// - exit_budget / wake_limit / eff_double_speed / current_rom_bank /
+// - wake_limit / eff_double_speed / current_rom_bank /
 //   frame_cycles shadow: host is authoritative; synced host -> 68k before
 //   each entry
 // - page tables: host dmg->read_page/write_page are authoritative; the
@@ -35,6 +35,11 @@
 int host_chain;
 int host_trace;
 u32 host_dispatches;
+
+// per-vector interrupt delivery counts and which deadline bounded each
+// exit budget (--exit-stats)
+u32 host_int_delivered[5];
+u32 host_exit_cause[EV_COUNT];
 
 static struct dmg *dmg;
 static struct compile_ctx compile_ctx;
@@ -143,7 +148,6 @@ static void sync_ctx_to_68k(void)
 {
     ctx_w8(JIT_CTX_ROM_BANK, jit_ctx.current_rom_bank);
     ctx_w8(JIT_CTX_EFF_DOUBLE_SPEED, jit_ctx.effective_double_speed);
-    ctx_w32(JIT_CTX_EXIT_BUDGET, jit_ctx.exit_budget);
     ctx_w32(JIT_CTX_WAKE_LIMIT, jit_ctx.wake_limit);
     m68_w32(FRAME_SHADOW_ADDR, dmg->frame_cycles);
 }
@@ -156,12 +160,11 @@ static void sync_ctx_from_68k(void)
     jit_ctx.read_cycles = m68_r32(JIT_CTX_ADDR + JIT_CTX_READ_CYCLES);
 }
 
-// dmg_budget_touch tightens exit_budget/wake_limit mid-call (on the Mac
-// jit_ctx is the memory compiled code reads; here the 68k side needs the
-// copy refreshed so in-block loop-back checks and wake skips see it)
+// dmg_budget_touch tightens wake_limit mid-call (on the Mac jit_ctx is
+// the memory compiled code reads; here the 68k side needs the copy
+// refreshed so in-block loop-back checks and wake skips see it)
 static void sync_budget_to_68k(void)
 {
-    ctx_w32(JIT_CTX_EXIT_BUDGET, jit_ctx.exit_budget);
     ctx_w32(JIT_CTX_WAKE_LIMIT, jit_ctx.wake_limit);
 }
 
@@ -357,22 +360,45 @@ static void execute_block(void *code)
     }
 }
 
-// port of update_exit_budget
-static void update_exit_budget(void)
+// which IE-gated deadline is the current minimum; mirrors
+// dmg_cycles_to_next_event for the --exit-stats histogram
+static int exit_cause(void)
 {
-    u32 budget = cycles_per_exit;
+    u8 ie = dmg->zero_page[0x7f];
+    u32 best = dmg->event_deadline[EV_WRAP];
+    int cause = EV_WRAP;
+
+    if ((ie & 0x02) && dmg->event_deadline[EV_STAT] < best) {
+        best = dmg->event_deadline[EV_STAT];
+        cause = EV_STAT;
+    }
+    if ((ie & 0x04) && dmg->event_deadline[EV_TIMA] < best) {
+        best = dmg->event_deadline[EV_TIMA];
+        cause = EV_TIMA;
+    }
+    if ((ie & 0x08) && dmg->event_deadline[EV_SERIAL] < best) {
+        best = dmg->event_deadline[EV_SERIAL];
+        cause = EV_SERIAL;
+    }
+    if (dmg->event_deadline[EV_VBLANK] < best) {
+        best = dmg->event_deadline[EV_VBLANK];
+        cause = EV_VBLANK;
+    }
+    return cause;
+}
+
+// port of update_wake_limit
+static void update_wake_limit(void)
+{
     u32 dist = dmg_cycles_to_next_event(dmg);
 
-    jit_ctx.wake_limit = dist;
+    host_exit_cause[exit_cause()]++;
 
     if (jit_ctx.effective_double_speed) {
         dist <<= 1;
     }
-    if (dist < budget) {
-        budget = dist;
-    }
 
-    jit_ctx.exit_budget = budget;
+    jit_ctx.wake_limit = dist;
 }
 
 // port of check_interrupts; D3/A3 live in Musashi
@@ -388,8 +414,12 @@ static void check_interrupts(void)
 
     for (k = 0; k < 5; k++) {
         if (pending & (1 << k)) {
+            host_int_delivered[k]++;
             dmg->interrupt_request_mask &= ~(1 << k);
             dmg->interrupt_enable = 0;
+            if (k == 1) {
+                dmg_stat_delivered(dmg);
+            }
 
             jit_ctx.gb_sp -= 2;
             m68k_set_reg(M68K_REG_A3, m68k_get_reg(NULL, M68K_REG_A3) - 2);
@@ -457,8 +487,7 @@ void host_jit_init(struct dmg *d)
     jit_ctx.gb_sp = 0xfffe;
     jit_ctx.stack_in_ram = 1;
     jit_ctx.effective_double_speed = 0;
-    jit_ctx.exit_budget = cycles_per_exit;
-    // refined by update_exit_budget after the first dispatch
+    // refined by update_wake_limit after the first dispatch
     jit_ctx.wake_limit = CYCLES_PER_FRAME;
 
     // 68k-side jit_ctx
@@ -599,7 +628,7 @@ enter:
     // mimic the Mac's native chaining (dispatcher asm + patched exits):
     // follow cached successors without hardware sync until the budget
     // expires, a block misses, or the exit was a plain-rts fast-forward
-    if (host_chain && exit_chainable && d2 < jit_ctx.exit_budget) {
+    if (host_chain && exit_chainable && d2 < jit_ctx.wake_limit) {
         code = cache_lookup(d3, jit_ctx.current_rom_bank);
         if (code) {
             goto enter;
@@ -613,7 +642,7 @@ enter:
         check_interrupts();
     }
     m68k_set_reg(M68K_REG_D2, 0);
-    update_exit_budget();
+    update_wake_limit();
     sync_page_tables();
 
     host_dispatches++;

@@ -12,8 +12,7 @@
 #include "../system6/settings.h"
 #include "host.h"
 
-// settings normally loaded from Mac prefs (dialogs.c / emulator.c);
-// cycles_per_exit is defined in compiler/compiler.c as on the Mac build
+// settings normally loaded from Mac prefs (dialogs.c / emulator.c)
 int frame_skip;
 int video_mode;
 int screen_scale = 1;

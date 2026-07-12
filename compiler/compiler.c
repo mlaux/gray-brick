@@ -16,7 +16,6 @@
 // helper for reading GB memory during compilation
 #define READ_BYTE(off) (ctx->read(ctx->dmg, src_address + (off)))
 
-int cycles_per_exit;
 int compiler_68020;
 
 void compiler_init(void)

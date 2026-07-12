@@ -23,6 +23,13 @@
 // TAC clock select -> cycles per TIMA increment (all powers of two)
 static const u16 timer_divisors[] = { 1024, 16, 64, 256 };
 
+// a STAT handler silent (no slow-path write) for more than a full frame
+// of per-line deliveries gets hblank/mode2 events every STAT_IDLE_STEP
+// lines instead of every line. a handler that writes even once per frame
+// resets its streak before reaching the threshold and never throttles
+#define STAT_IDLE_THRESH 180
+#define STAT_IDLE_STEP 8
+
 static int dmg_double_speed(struct dmg *dmg)
 {
     return dmg->cgb && dmg->cgb->double_speed && !ignore_double_speed;
@@ -48,9 +55,9 @@ static u32 dmg_now_ppu(struct dmg *dmg)
 }
 
 // a write just moved a deadline, but the running dispatch snapshotted
-// exit_budget/wake_limit before it - and a handler arming its own next
-// event does this every single time, because at its dispatch the event it
-// is servicing was the armed one. chained blocks never re-enter the
+// wake_limit before it - and a handler arming its own next event does
+// this every single time, because at its dispatch the event it is
+// servicing was the armed one. chained blocks never re-enter the
 // dispatcher to see the table change, so tighten the snapshot in place;
 // emitted checks re-read it from jit_ctx. distances share D2's baseline
 // (the last sync point). a deliverable pending interrupt asks for an
@@ -65,14 +72,11 @@ static void dmg_budget_touch(struct dmg *dmg)
         dist = 0;
     }
 
-    if (dist < jit_ctx.wake_limit) {
-        jit_ctx.wake_limit = dist;
-    }
     if (dmg_double_speed(dmg)) {
         dist <<= 1;
     }
-    if (dist < jit_ctx.exit_budget) {
-        jit_ctx.exit_budget = dist;
+    if (dist < jit_ctx.wake_limit) {
+        jit_ctx.wake_limit = dist;
     }
 }
 
@@ -363,6 +367,7 @@ static u32 stat_event_from(
     u32 best = 0xffffffff;
     u32 best_line = 0;
     u32 c, line;
+    int idle = dmg->stat_idle_streak >= STAT_IDLE_THRESH;
 
     if (!(lcd_read(dmg->lcd, REG_LCDC) & LCDC_ENABLE)) {
         return best;
@@ -370,11 +375,13 @@ static u32 stat_event_from(
 
     if (stat & STAT_INTR_SOURCE_HBLANK) {
         line = from_line;
-        c = line * CYCLES_PER_LINE + 252;
-        if (c < from) {
+        if (line * CYCLES_PER_LINE + 252 < from) {
             line++;
-            c += CYCLES_PER_LINE;
         }
+        if (idle) {
+            line = (line + STAT_IDLE_STEP - 1) & ~(u32) (STAT_IDLE_STEP - 1);
+        }
+        c = line * CYCLES_PER_LINE + 252;
         if (line <= 143 && c < best) {
             best = c;
             best_line = line;
@@ -383,11 +390,13 @@ static u32 stat_event_from(
 
     if (stat & STAT_INTR_SOURCE_MODE2) {
         line = from_line;
-        c = line * CYCLES_PER_LINE;
-        if (c < from) {
+        if (line * CYCLES_PER_LINE < from) {
             line++;
-            c += CYCLES_PER_LINE;
         }
+        if (idle) {
+            line = (line + STAT_IDLE_STEP - 1) & ~(u32) (STAT_IDLE_STEP - 1);
+        }
+        c = line * CYCLES_PER_LINE;
         if (line <= 143 && c < best) {
             best = c;
             best_line = line;
@@ -649,6 +658,9 @@ u8 dmg_read(void *_dmg, u16 address)
 
 void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
 {
+    // feeds the STAT idle-handler watch
+    dmg->slow_writes++;
+
     // ROM region writes go to MBC for bank switching
     if (address < 0x8000) {
         mbc_write(dmg->rom->mbc, dmg, address, data);
@@ -747,6 +759,10 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
         if (address == REG_LCDC && !was_on && (data & LCDC_ENABLE)) {
             // LCD turning on starts a fresh frame for the replay log
             raster_frame_reset(dmg);
+        }
+        if (address == REG_STAT) {
+            // rearming sources is intent; resume per-line events
+            dmg->stat_idle_streak = 0;
         }
         dmg_stat_touch(dmg);
         if (address == REG_LCDC) {
@@ -1139,10 +1155,7 @@ u32 dmg_cycles_to_next_event(struct dmg *dmg)
     return best - dmg->frame_cycles;
 }
 
-// not accurate at all, but not going for accuracy. supports arbitrary
-// cycles_per_exit, currently user configurable between every line, every
-// 16 lines, and every 1 frame. note that the user configurable setting is
-// less relevant for games that use HALT, because HALT skips ahead
+// absorb a block's cycles and fire every deadline they crossed
 void dmg_sync_hw(struct dmg *dmg, int cycles)
 {
     int ppu_cycles;
@@ -1183,9 +1196,33 @@ void dmg_sync_hw(struct dmg *dmg, int cycles)
     }
 }
 
+void dmg_stat_delivered(struct dmg *dmg)
+{
+    dmg->stat_watching = 1;
+    dmg->stat_watch_mark = dmg->slow_writes;
+}
+
 void dmg_ei_di(void *_dmg, u16 enabled)
 {
     struct dmg *dmg = (struct dmg *) _dmg;
+
+    // the first ei/di/reti after a STAT delivery closes the idle watch:
+    // no slow-path write means the handler did nothing observable
+    if (dmg->stat_watching) {
+        dmg->stat_watching = 0;
+        if (dmg->slow_writes != dmg->stat_watch_mark) {
+            int was_idle = dmg->stat_idle_streak >= STAT_IDLE_THRESH;
+
+            dmg->stat_idle_streak = 0;
+            if (was_idle) {
+                // handler came alive; back to per-line events right away
+                dmg_stat_touch(dmg);
+            }
+        } else if (dmg->stat_idle_streak < 0xffff) {
+            dmg->stat_idle_streak++;
+        }
+    }
+
     dmg->interrupt_enable = enabled ? 1 : 0;
 
     // EI/RETI with an interrupt already pending must deliver promptly,

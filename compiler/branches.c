@@ -84,8 +84,8 @@ int compile_jr(
         }
 
         // Larger loop - check cycle count, exit to dispatcher if >= budget
-        // cmp.l JIT_CTX_EXIT_BUDGET(a4), d2
-        emit_cmp_l_disp_an_dn(block, JIT_CTX_EXIT_BUDGET, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
+        // cmp.l JIT_CTX_WAKE_LIMIT(a4), d2
+        emit_cmp_l_disp_an_dn(block, JIT_CTX_WAKE_LIMIT, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
 
         // bcs.w over exit sequence to bra.w (skip moveq(2) + move.w(4) + patchable_exit(14) = 20, plus 2 = 22)
         // bcs = branch if carry set = branch if cycles < exit budget
@@ -168,7 +168,7 @@ void compile_jr_cond(
         //   bne/beq .check_cycles        ; if condition met, check cycles
         //   bra.w .fall_through          ; condition not met, skip all
         // .check_cycles:
-        //   cmp.l JIT_CTX_EXIT_BUDGET(a4), d2
+        //   cmp.l JIT_CTX_WAKE_LIMIT(a4), d2
         //   bcs.w loop_target            ; cycles < exit budget, do native branch
         //   moveq #0, d0                 ; cycles >= exit budget, exit
         //   move.w #target, d0
@@ -192,7 +192,7 @@ void compile_jr_cond(
 
         // .check_cycles:
         emit_add_cycles(block, 4);  // extra cycles for taken branch
-        emit_cmp_l_disp_an_dn(block, JIT_CTX_EXIT_BUDGET, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
+        emit_cmp_l_disp_an_dn(block, JIT_CTX_WAKE_LIMIT, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
 
         // bcs.w to native loop target (cycles < exit budget)
         m68k_disp = (int16_t) target_m68k - (int16_t) (block->length + 2);
@@ -429,7 +429,7 @@ int compile_jr_cond_fused(
         //   bra.w .fall_through      ; condition not met
         // .check_cycles:
         //   addq.l #4, d2            ; extra cycles for taken branch
-        //   cmp.l JIT_CTX_EXIT_BUDGET(a4), d2
+        //   cmp.l JIT_CTX_WAKE_LIMIT(a4), d2
         //   bcs.w loop_target        ; cycles < exit budget
         //   <exit via patchable_exit>
         // .fall_through:
@@ -442,7 +442,7 @@ int compile_jr_cond_fused(
 
         // .check_cycles:
         emit_add_cycles(block, 4);  // extra cycles for taken branch
-        emit_cmp_l_disp_an_dn(block, JIT_CTX_EXIT_BUDGET, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
+        emit_cmp_l_disp_an_dn(block, JIT_CTX_WAKE_LIMIT, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
 
         // bcs.w to native loop target (cycles < exit budget)
         m68k_disp = (int16_t) target_m68k - (int16_t) (block->length + 2);

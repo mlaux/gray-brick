@@ -54,6 +54,7 @@ static int opt_hash_frames;
 static int opt_dump_state;
 static int opt_log_raster;
 static int opt_scx_stats;
+static int opt_exit_stats;
 
 // 160x144, gray (1 byte/px) for DMG or RGB (3 bytes/px) for CGB
 static u8 frame_out[160 * 144 * 3];
@@ -490,9 +491,9 @@ static void usage(void)
         "  --input FILE         scripted joypad input (\"frame:Start,A\" lines)\n"
         "  --log-raster         log raster-relevant register writes + summary\n"
         "  --scx-stats          row_scx uniformity summary to stderr\n"
+        "  --exit-stats         exit budget causes + interrupt deliveries\n"
         "  --chain              chain cached blocks like the Mac dispatcher\n"
         "  --cpu 68000|68020    codegen + emulated cpu (default 68020)\n"
-        "  --cycles-per-exit N  dispatcher exit budget (default 70224)\n"
         "  --trace              per-dispatch state line to stderr\n"
         "  --status             print status bar messages to stderr\n");
 }
@@ -508,7 +509,6 @@ int main(int argc, char *argv[])
     char title[17];
     int k;
 
-    cycles_per_exit = 70224;
     compiler_68020 = 1;
 
     for (k = 1; k < argc; k++) {
@@ -522,8 +522,6 @@ int main(int argc, char *argv[])
                 usage();
                 return 1;
             }
-        } else if (!strcmp(argv[k], "--cycles-per-exit") && k + 1 < argc) {
-            cycles_per_exit = atoi(argv[++k]);
         } else if (!strcmp(argv[k], "--frames") && k + 1 < argc) {
             max_frames = atol(argv[++k]);
         } else if (!strcmp(argv[k], "--until-serial") && k + 1 < argc) {
@@ -544,6 +542,8 @@ int main(int argc, char *argv[])
             opt_log_raster = 1;
         } else if (!strcmp(argv[k], "--scx-stats")) {
             opt_scx_stats = 1;
+        } else if (!strcmp(argv[k], "--exit-stats")) {
+            opt_exit_stats = 1;
         } else if (!strcmp(argv[k], "--chain")) {
             host_chain = 1;
         } else if (!strcmp(argv[k], "--trace")) {
@@ -622,10 +622,10 @@ int main(int argc, char *argv[])
 
     host_jit_init(dmg);
 
-    fprintf(stderr, "gb6run: \"%s\" mbc $%02x%s, %s%s, budget %d\n",
+    fprintf(stderr, "gb6run: \"%s\" mbc $%02x%s, %s%s\n",
             title, rom.data[0x147], dmg->cgb ? ", cgb mode" : "",
             compiler_68020 ? "68020" : "68000",
-            host_chain ? ", chain" : "", cycles_per_exit);
+            host_chain ? ", chain" : "");
 
     while (!jit_halted) {
         if (!host_jit_run()) {
@@ -661,6 +661,19 @@ int main(int argc, char *argv[])
     fprintf(stderr,
             "gb6run: ran %u frames, %u dispatches, %zu serial bytes\n",
             host_frames(), host_dispatches, serial_len);
+    if (opt_exit_stats) {
+        fprintf(stderr,
+                "exit-stats: budget bound by stat=%u vblank=%u tima=%u "
+                "serial=%u wrap=%u\n",
+                host_exit_cause[0], host_exit_cause[1], host_exit_cause[3],
+                host_exit_cause[4], host_exit_cause[5]);
+        fprintf(stderr,
+                "exit-stats: delivered vblank=%u stat=%u timer=%u "
+                "serial=%u joypad=%u\n",
+                host_int_delivered[0], host_int_delivered[1],
+                host_int_delivered[2], host_int_delivered[3],
+                host_int_delivered[4]);
+    }
 
     if (until_serial) {
         if (matched) {

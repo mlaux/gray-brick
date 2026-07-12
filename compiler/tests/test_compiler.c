@@ -192,11 +192,9 @@ static void setup_runtime_stubs(void)
     m68k_write_memory_32(FRAME_CYCLES_ADDR, 0);
     // stop_func for STOP instruction (always halts in tests)
     m68k_write_memory_32(JIT_CTX_ADDR + JIT_CTX_STOP_FUNC, STUB_BASE + 0xa0);
-    // exit budget of 0 means backward loops always exit to the dispatcher,
-    // matching the old behavior of tests compiled with cycles_per_exit = 0
-    m68k_write_memory_32(JIT_CTX_ADDR + JIT_CTX_EXIT_BUDGET, 0);
-    // no armed LYC match by default, fast-forwards skip unclamped
-    m68k_write_memory_32(JIT_CTX_ADDR + JIT_CTX_WAKE_LIMIT, 0xffffffff);
+    // wake_limit 0 means backward loops always exit to the dispatcher;
+    // run_block_with_frame_cycles sets a real distance for skip tests
+    m68k_write_memory_32(JIT_CTX_ADDR + JIT_CTX_WAKE_LIMIT, 0);
 }
 
 // Initialize Musashi, copy code to memory, set up stack, run
@@ -431,7 +429,7 @@ void run_block_with_budget(uint8_t *gb_rom, uint32_t budget)
     memset(mem, 0, MEM_SIZE);
     setup_runtime_stubs();
 
-    m68k_write_memory_32(JIT_CTX_ADDR + JIT_CTX_EXIT_BUDGET, budget);
+    m68k_write_memory_32(JIT_CTX_ADDR + JIT_CTX_WAKE_LIMIT, budget);
 
     test_gb_rom = gb_rom;
     struct code_block *block = compile_block(0, test_compile_ctx);

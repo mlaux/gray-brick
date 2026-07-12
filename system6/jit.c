@@ -152,8 +152,7 @@ void jit_init(struct dmg *dmg)
   jit_ctx.gb_sp = 0xfffe;  // initial SP (HRAM)
   jit_ctx.stack_in_ram = 1;   // fast mode - A3 points to native HRAM
   jit_ctx.effective_double_speed = 0;
-  jit_ctx.exit_budget = cycles_per_exit;
-  // refined by update_exit_budget after the first dispatch
+  // refined by update_wake_limit after the first dispatch
   jit_ctx.wake_limit = CYCLES_PER_FRAME;
   sync_cache_pointers();
 
@@ -199,28 +198,18 @@ int jit_clear_all_blocks(void)
   return 1;
 }
 
-// cycle budget for the next dispatch: normally cycles_per_exit, but clamped
-// so an exit lands right at the next armed hardware deadline. games chain
-// LYC raster interrupts and read LY from the handler expecting the matched
-// line, so the handler has to run within the ~456 cycle window of that line
-static void update_exit_budget(struct dmg *dmg)
+// CPU-cycle budget for the next dispatch: exits land right at the next
+// armed hardware deadline, and HALT/idle fast-forwards skip exactly there
+static void update_wake_limit(struct dmg *dmg)
 {
-  u32 budget = cycles_per_exit;
   u32 dist = dmg_cycles_to_next_event(dmg);
 
-  // HALT/idle fast-forwards skip exactly this far (they apply their own
-  // double-speed adjustment, so this stays in PPU cycles)
-  jit_ctx.wake_limit = dist;
-
   if (jit_ctx.effective_double_speed) {
-    // budget is compared against CPU cycles, dist is PPU cycles
+    // compared against D2, which counts CPU cycles; dist is PPU cycles
     dist <<= 1;
   }
-  if (dist < budget) {
-    budget = dist;
-  }
 
-  jit_ctx.exit_budget = budget;
+  jit_ctx.wake_limit = dist;
 }
 
 // i moved this out of dmg.c because it needs to mess with the JIT state
@@ -239,6 +228,9 @@ static void check_interrupts(struct dmg *dmg)
       // clear IF bit and disable IME
       dmg->interrupt_request_mask &= ~(1 << k);
       dmg->interrupt_enable = 0;
+      if (k == 1) {
+        dmg_stat_delivered(dmg);
+      }
 
       jit_ctx.gb_sp -= 2;
       jit_regs.a3 -= 2;
@@ -412,7 +404,7 @@ int jit_run(struct dmg *dmg)
     check_interrupts(dmg);
   }
   jit_regs.d2 = 0;
-  update_exit_budget(dmg);
+  update_wake_limit(dmg);
 
   t3 = TickCount();
   time_in_jit += t2 - t1;

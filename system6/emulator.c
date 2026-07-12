@@ -669,8 +669,6 @@ void OnMenuAction(long action)
     } else if (item == EDIT_KEY_MAPPINGS) {
       ShowKeyMappingsDialog();
     } else if (item == EDIT_PREFERENCES) {
-      // compiled code reads the exit budget from jit_ctx at run time, so a
-      // changed cycles_per_exit takes effect without recompiling anything
       ShowPreferencesDialog();
     } else if (item == EDIT_GBC_MODE) {
       gbc_enabled = !gbc_enabled;

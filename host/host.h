@@ -62,6 +62,8 @@ void host_dump_state(FILE *fp);
 extern int host_chain;
 extern int host_trace;
 extern u32 host_dispatches;
+extern u32 host_int_delivered[5];
+extern u32 host_exit_cause[];
 
 // gb6run.c - sink for captured serial bytes ($ff01/$ff02 writes)
 void host_serial_byte(u8 byte);

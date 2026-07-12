@@ -1,7 +1,6 @@
 #ifndef _SETTINGS_H
 #define _SETTINGS_H
 
-extern int cycles_per_exit;
 extern int frame_skip;
 extern int video_mode;
 extern int screen_scale;

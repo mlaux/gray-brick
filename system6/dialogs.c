@@ -17,14 +17,9 @@ static unsigned char defaultMappings[8] = { 0x0d, 0x01, 0x00, 0x02, 0x25, 0x28, 
 static short gSelectedSlot = -1;
 int keyMappings[8];
 
-// compiler needs this so it's defined in there...
-// int cycles_per_exit;
-
 int frame_skip;
 int video_mode;
 int screen_scale;
-
-static int cyclesValues[2] = { 70224, 7296 };
 
 const char *keyNames[128] = {
   "\pA",        // 0x00
@@ -324,7 +319,6 @@ void LoadPreferences(void)
   h = GetResource(RES_PREFS_TYPE, RES_PREFS_ID);
   if (h != nil && GetHandleSize(h) >= sizeof(int) * 9) {
     prefs = (int *) *h;
-    cycles_per_exit = prefs[0];
     frame_skip = prefs[1];
     video_mode = prefs[2];
     screen_scale = prefs[3];
@@ -337,7 +331,6 @@ void LoadPreferences(void)
     gbc_enabled = prefs[7];
     ignore_double_speed = prefs[8];
   } else {
-    cycles_per_exit = cyclesValues[0];
     frame_skip = 4;
     sound_enabled = 0;
     limit_fps = 0;
@@ -381,7 +374,7 @@ void SavePreferences(void)
   }
 
   prefs = (int *) *h;
-  prefs[0] = cycles_per_exit;
+  prefs[0] = 0;  // reserved (was cycles_per_exit)
   prefs[1] = frame_skip;
   prefs[2] = video_mode;
   prefs[3] = screen_scale;
@@ -540,21 +533,13 @@ void ShowPreferencesDialog(void)
 {
   DialogPtr dp;
   DialogItemIndex itemHit;
-  int cyclesItem, videoModeItem, frameSkipItem;
-  int k;
+  int videoModeItem, frameSkipItem;
 
   Rect rect;
   Handle handle;
   short type;
 
   // map current settings to dialog items
-  cyclesItem = 3;
-  for (k = 0; k < 2; k++) {
-    if (cycles_per_exit == cyclesValues[k]) {
-      cyclesItem = 3 + k;
-      break;
-    }
-  }
   videoModeItem = 5 + video_mode;
   frameSkipItem = 8 + frame_skip;
 
@@ -565,7 +550,6 @@ void ShowPreferencesDialog(void)
   SetDialogItem(dp, 18, type, (Handle) FrameSaveButton, &rect);
 
   // set initial radio button states
-  SetRadioGroup(dp, 3, 4, cyclesItem);
   SetRadioGroup(dp, 5, 7, videoModeItem);
   SetRadioGroup(dp, 8, 12, frameSkipItem);
 
@@ -584,10 +568,7 @@ void ShowPreferencesDialog(void)
   do {
     ModalDialog(NULL, &itemHit);
 
-    if (itemHit >= 3 && itemHit <= 4) {
-      cyclesItem = itemHit;
-      SetRadioGroup(dp, 3, 4, cyclesItem);
-    } else if (itemHit >= 5 && itemHit <= 7) {
+    if (itemHit >= 5 && itemHit <= 7) {
       videoModeItem = itemHit;
       SetRadioGroup(dp, 5, 7, videoModeItem);
     } else if (itemHit >= 8 && itemHit <= 12) {
@@ -597,7 +578,6 @@ void ShowPreferencesDialog(void)
   } while (itemHit != ok && itemHit != cancel);
 
   if (itemHit == ok) {
-    cycles_per_exit = cyclesValues[cyclesItem - 3];
     video_mode = videoModeItem - 5;
     frame_skip = frameSkipItem - 8;
     SavePreferences();

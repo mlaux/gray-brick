@@ -9,7 +9,7 @@
 #include "timing.h"
 
 // size of the code emitted by emit_wake_skip
-#define WAKE_SKIP_BYTES 20
+#define WAKE_SKIP_BYTES 12
 
 // synthesize wait for LY to reach target value
 // detects ldh a, [$44]; cp N; jr cc, back
@@ -157,33 +157,16 @@ void compile_ly_wait_reg(
     emit_rts(block);
 }
 
-// set D2 to fast-forward to the next armed hardware deadline, then exit to
-// the dispatcher at next_pc. shared by HALT and the HRAM idle loop wait.
-// jit_ctx.wake_limit is the PPU-cycle distance from the last sync point to
-// the earliest deadline that can wake the CPU (vblank start, IE-gated
-// STAT/timer/serial events, or the frame wrap), so the skip is a plain
-// load; like the old skip-to-vblank math it positions D2 absolutely,
-// absorbing cycles accumulated earlier in the block. the caller's next_pc
-// re-enters the wait, which re-checks and re-fuses until an interrupt is
-// actually delivered. emits exactly WAKE_SKIP_BYTES bytes.
+// fast-forward D2 to jit_ctx.wake_limit (CPU cycles to the next deadline)
+// and exit at next_pc so the wait re-checks. emits WAKE_SKIP_BYTES bytes
 static void emit_wake_skip(struct code_block *block, int next_pc)
 {
     //   move.l JIT_CTX_WAKE_LIMIT(a4), d2        ; 4 bytes
-    //   tst.b JIT_CTX_EFF_DOUBLE_SPEED(a4)       ; 4 bytes
-    //   beq.s _exit                              ; 2 bytes
-    //   add.l d2, d2                             ; 2 bytes
-    // _exit
     //   move.l #next_pc, d3                      ; 6 bytes
     //   rts                                      ; 2 bytes
 
     emit_move_l_disp_an_dn(block, JIT_CTX_WAKE_LIMIT, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
 
-    // double D2 if effective double speed is active (CPU cycles = 2x PPU cycles)
-    emit_tst_b_disp_an(block, JIT_CTX_EFF_DOUBLE_SPEED, REG_68K_A_CTX);
-    emit_beq_b(block, 2);
-    emit_add_l_dn_dn(block, REG_68K_D_CYCLE_COUNT, REG_68K_D_CYCLE_COUNT);
-
-    // exit to C
     emit_move_l_dn(block, REG_68K_D_NEXT_PC, next_pc);
     emit_rts(block);
 }

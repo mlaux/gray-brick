@@ -106,6 +106,16 @@ struct dmg {
     u32 event_deadline[EV_COUNT];
     u16 stat_event_line;
 
+    // per-line STAT throttle: hblank/mode2 sources fire every visible
+    // line, but a handler that keeps running without a single slow-path
+    // write (GSC's LCD handler idles 138 times/frame) gets those events
+    // coarsened until it writes again. slow_writes counts every
+    // dmg_write_slow; the watch spans delivery to the handler's ei/di/reti
+    u32 slow_writes;
+    u32 stat_watch_mark;
+    u16 stat_idle_streak;
+    u8 stat_watching;
+
     // for DIV evaluation from cycles
     u32 total_cycles;
     u32 div_reset_cycle;
@@ -127,6 +137,9 @@ void dmg_write16(void *_dmg, u16 address, u16 data);
 
 u8 dmg_read_slow(struct dmg *dmg, u16 address);
 void dmg_write_slow(struct dmg *dmg, u16 address, u8 data);
+
+// the dispatcher delivered a STAT interrupt; starts the idle-handler watch
+void dmg_stat_delivered(struct dmg *dmg);
 
 void dmg_sync_hw(struct dmg *dmg, int cycles);
 
