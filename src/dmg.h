@@ -78,6 +78,10 @@ struct dmg {
     u8 interrupt_enable;
     u8 interrupt_request_mask;
     void (*rom_bank_switch_hook)(int new_bank);
+    // observation hook for raster-relevant register writes, with the beam
+    // position they landed on. NULL outside the host harness
+    void (*raster_write_hook)(u16 address, u8 old_val, u8 new_val,
+            u32 ly, u32 line_pos);
 
     u8 joypad;
     u8 action_buttons;

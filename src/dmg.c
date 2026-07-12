@@ -47,6 +47,35 @@ static u32 dmg_now_ppu(struct dmg *dmg)
     return dmg->frame_cycles + in_flight;
 }
 
+// a write just moved a deadline, but the running dispatch snapshotted
+// exit_budget/wake_limit before it - and a handler arming its own next
+// event does this every single time, because at its dispatch the event it
+// is servicing was the armed one. chained blocks never re-enter the
+// dispatcher to see the table change, so tighten the snapshot in place;
+// emitted checks re-read it from jit_ctx. distances share D2's baseline
+// (the last sync point). a deliverable pending interrupt asks for an
+// immediate exit: the event already fired, its handler is what arms the
+// next deadline
+static void dmg_budget_touch(struct dmg *dmg)
+{
+    u32 dist = dmg_cycles_to_next_event(dmg);
+
+    if (dmg->interrupt_enable
+            && (dmg->interrupt_request_mask & dmg->zero_page[0x7f] & 0x1f)) {
+        dist = 0;
+    }
+
+    if (dist < jit_ctx.wake_limit) {
+        jit_ctx.wake_limit = dist;
+    }
+    if (dmg_double_speed(dmg)) {
+        dist <<= 1;
+    }
+    if (dist < jit_ctx.exit_budget) {
+        jit_ctx.exit_budget = dist;
+    }
+}
+
 void dmg_new(struct dmg *dmg, struct rom *rom, struct lcd *lcd)
 {
     dmg->rom = rom;
@@ -420,6 +449,7 @@ static void dmg_tima_recompute(struct dmg *dmg)
         dist >>= 1;
     }
     dmg->event_deadline[EV_TIMA] = dmg_now_ppu(dmg) + dist;
+    dmg_budget_touch(dmg);
 }
 
 // a timer register write moves the overflow deadline: fire-if-crossed,
@@ -605,6 +635,17 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
         return;
     }
 
+    // scroll/window/palette/LCDC/OAM DMA writes are what a band-splitting
+    // renderer would replay; report them with the exact beam position
+    if (dmg->raster_write_hook
+            && address >= REG_LCDC && address <= REG_WX
+            && ((0xfcd >> (address - REG_LCDC)) & 1)) {
+        u32 pos;
+        u8 ly = dmg_current_ly(dmg, &pos);
+        dmg->raster_write_hook(address, lcd_read(dmg->lcd, address),
+                data, ly, pos);
+    }
+
     // OAM DMA
     if (address == 0xff46) {
         u16 src = data << 8;
@@ -630,6 +671,7 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
         if (address == REG_LCDC) {
             dmg_update_frame_events(dmg);
         }
+        dmg_budget_touch(dmg);
         return;
     }
 
@@ -642,6 +684,10 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
     // high RAM
     if (address >= 0xff80) {
         dmg->zero_page[address - 0xff80] = data;
+        // IE gates which deadlines can exit/wake
+        if (address == 0xffff) {
+            dmg_budget_touch(dmg);
+        }
         return;
     }
 
@@ -685,6 +731,7 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
     }
     if (address == 0xff0f) {
         dmg->interrupt_request_mask = data;
+        dmg_budget_touch(dmg);
         return;
     }
     if (address == 0xff01) {
@@ -707,6 +754,7 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
         } else {
             dmg->event_deadline[EV_SERIAL] = EV_NONE;
         }
+        dmg_budget_touch(dmg);
         return;
     }
 
@@ -988,4 +1036,10 @@ void dmg_ei_di(void *_dmg, u16 enabled)
 {
     struct dmg *dmg = (struct dmg *) _dmg;
     dmg->interrupt_enable = enabled ? 1 : 0;
+
+    // EI/RETI with an interrupt already pending must deliver promptly,
+    // not when the chain's stale budget runs out
+    if (dmg->interrupt_enable) {
+        dmg_budget_touch(dmg);
+    }
 }

@@ -51,6 +51,7 @@ void host_serial_byte(u8 byte)
 static const char *opt_dump_dir;
 static int opt_hash_frames;
 static int opt_dump_state;
+static int opt_log_raster;
 
 // 160x144, gray (1 byte/px) for DMG or RGB (3 bytes/px) for CGB
 static u8 frame_out[160 * 144 * 3];
@@ -95,6 +96,21 @@ static void frame_hook(struct lcd *l)
 {
     size_t n = extract_frame(l);
 
+    // where in the frame the snapshot render actually fired, and the reg
+    // state it sampled (frame_cycles is the end-of-sync beam position, so
+    // in chain mode this shows how late the render ran)
+    if (opt_log_raster) {
+        u32 at = dmg->frame_cycles;
+        printf("render f=%u at=%u ly=%u.%u LCDC=%02x STAT=%02x SCY=%02x "
+               "SCX=%02x WY=%02x WX=%02x BGP=%02x IE=%02x IF=%02x IME=%d\n",
+               host_frames_drawn, at, at / 456, at % 456,
+               lcd_read(l, REG_LCDC), lcd_read(l, REG_STAT),
+               lcd_read(l, REG_SCY), lcd_read(l, REG_SCX),
+               lcd_read(l, REG_WY), lcd_read(l, REG_WX),
+               lcd_read(l, REG_BGP), dmg->zero_page[0x7f],
+               dmg->interrupt_request_mask, dmg->interrupt_enable);
+    }
+
     if (opt_hash_frames) {
         u64 h = 0xcbf29ce484222325ull;
         size_t k;
@@ -118,6 +134,130 @@ static void frame_hook(struct lcd *l)
         fprintf(fp, "P%c\n160 144\n255\n", n == 160 * 144 ? '5' : '6');
         fwrite(frame_out, 1, n, fp);
         fclose(fp);
+    }
+}
+
+// ---- raster write observation -------------------------------------------
+// --log-raster streams writes to the registers a band-splitting renderer
+// would replay (SCX/SCY/WX/WY, BGP/OBP0/OBP1, LCDC, OAM DMA), tagged with
+// the beam position, then prints a per-register summary at exit. this is
+// the PLAN.md phase 3 instrument: measure who would actually use mid-frame
+// bands before any replay code exists
+
+struct raster_stat {
+    u32 off;                // lcd disabled at write time
+    u32 vbl;                // ly >= 144
+    u32 vis_same;           // visible area, value unchanged
+    u32 vis_chg;            // visible area, value changed
+    u32 oam, draw, hbl;     // mode split of vis_chg
+    u8 line_min, line_max;  // ly range of vis_chg
+};
+static struct raster_stat raster_stats[12];
+static u32 raster_writes;
+
+// distinct changed lines per frame = the bands a replay would render.
+// DMA is kept out of this: replay uses an OAM snapshot, not bands
+static u32 rl_frame = 0xffffffff;
+static u8 rl_line_seen[144];
+static u32 rl_distinct;
+static u32 rl_frames_split, rl_bands_sum, rl_bands_max;
+
+static const char *const raster_names[12] = {
+    "LCDC", "?", "SCY", "SCX", "?", "?", "DMA", "BGP",
+    "OBP0", "OBP1", "WY", "WX"
+};
+
+static void raster_fold_frame(void)
+{
+    if (!rl_distinct) {
+        return;
+    }
+    rl_frames_split++;
+    rl_bands_sum += rl_distinct;
+    if (rl_distinct > rl_bands_max) {
+        rl_bands_max = rl_distinct;
+    }
+    memset(rl_line_seen, 0, sizeof rl_line_seen);
+    rl_distinct = 0;
+}
+
+static void raster_hook(u16 addr, u8 old, u8 val, u32 ly, u32 pos)
+{
+    struct raster_stat *st = &raster_stats[addr - REG_LCD_BASE];
+    u32 frame = host_frames();
+    int on = (addr == REG_LCDC ? old : lcd_read(&lcd, REG_LCDC))
+            & LCDC_ENABLE;
+    // rewriting the DMA source page still rewrites OAM, so always counts
+    // as a change
+    int changed = addr == REG_DMA || old != val;
+    const char *where;
+
+    if (frame != rl_frame) {
+        raster_fold_frame();
+        rl_frame = frame;
+    }
+    raster_writes++;
+
+    if (!on) {
+        st->off++;
+        where = "off";
+    } else if (ly >= 144) {
+        st->vbl++;
+        where = "vbl";
+    } else {
+        where = pos < 80 ? "oam" : pos < 252 ? "draw" : "hbl";
+        if (!changed) {
+            st->vis_same++;
+        } else {
+            if (!st->vis_chg || ly < st->line_min) {
+                st->line_min = ly;
+            }
+            if (!st->vis_chg || ly > st->line_max) {
+                st->line_max = ly;
+            }
+            st->vis_chg++;
+            if (pos < 80) st->oam++;
+            else if (pos < 252) st->draw++;
+            else st->hbl++;
+
+            if (addr != REG_DMA && !rl_line_seen[ly]) {
+                rl_line_seen[ly] = 1;
+                rl_distinct++;
+            }
+        }
+    }
+
+    printf("raster f=%u ly=%u %s %s %02x->%02x\n",
+           frame, (unsigned) ly, where,
+           raster_names[addr - REG_LCD_BASE], old, val);
+}
+
+static void raster_summary(FILE *fp)
+{
+    int k;
+
+    raster_fold_frame();
+    fprintf(fp, "raster: %u writes over %u frames\n",
+            raster_writes, host_frames());
+    fprintf(fp,
+            "raster: frames needing bands: %u (avg %.1f split lines, max %u)\n",
+            rl_frames_split,
+            rl_frames_split ? (double) rl_bands_sum / rl_frames_split : 0.0,
+            rl_bands_max);
+    fprintf(fp,
+            "raster: reg     off    vbl   vis=  vis!=   oam  draw   hbl  lines\n");
+    for (k = 0; k < 12; k++) {
+        struct raster_stat *st = &raster_stats[k];
+        if (!(st->off | st->vbl | st->vis_same | st->vis_chg)) {
+            continue;
+        }
+        fprintf(fp, "raster: %-5s %6u %6u %6u %6u %5u %5u %5u",
+                raster_names[k], st->off, st->vbl, st->vis_same,
+                st->vis_chg, st->oam, st->draw, st->hbl);
+        if (st->vis_chg) {
+            fprintf(fp, "  %u-%u", st->line_min, st->line_max);
+        }
+        fputc('\n', fp);
     }
 }
 
@@ -272,6 +412,7 @@ static void usage(void)
         "  --hash-frames        print a hash line per rendered frame\n"
         "  --dump-state         print final registers + hw state at exit\n"
         "  --input FILE         scripted joypad input (\"frame:Start,A\" lines)\n"
+        "  --log-raster         log raster-relevant register writes + summary\n"
         "  --chain              chain cached blocks like the Mac dispatcher\n"
         "  --cpu 68000|68020    codegen + emulated cpu (default 68020)\n"
         "  --cycles-per-exit N  dispatcher exit budget (default 70224)\n"
@@ -322,6 +463,8 @@ int main(int argc, char *argv[])
             if (!load_input_script(argv[++k])) {
                 return 1;
             }
+        } else if (!strcmp(argv[k], "--log-raster")) {
+            opt_log_raster = 1;
         } else if (!strcmp(argv[k], "--chain")) {
             host_chain = 1;
         } else if (!strcmp(argv[k], "--trace")) {
@@ -384,13 +527,17 @@ int main(int argc, char *argv[])
     audio_init(&audio);
     dmg->audio = &audio;
 
+    if (opt_log_raster) {
+        dmg->raster_write_hook = raster_hook;
+    }
+
     if (opt_dump_dir) {
         if (mkdir(opt_dump_dir, 0755) && errno != EEXIST) {
             fprintf(stderr, "gb6run: cannot create %s\n", opt_dump_dir);
             return 2;
         }
     }
-    if (opt_dump_dir || opt_hash_frames) {
+    if (opt_dump_dir || opt_hash_frames || opt_log_raster) {
         host_lcd_draw_hook = frame_hook;
     }
 
@@ -424,6 +571,9 @@ int main(int argc, char *argv[])
 
     if (opt_dump_state) {
         host_dump_state(stdout);
+    }
+    if (opt_log_raster) {
+        raster_summary(stderr);
     }
 
     fprintf(stderr,

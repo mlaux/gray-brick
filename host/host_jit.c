@@ -156,6 +156,15 @@ static void sync_ctx_from_68k(void)
     jit_ctx.read_cycles = m68_r32(JIT_CTX_ADDR + JIT_CTX_READ_CYCLES);
 }
 
+// dmg_budget_touch tightens exit_budget/wake_limit mid-call (on the Mac
+// jit_ctx is the memory compiled code reads; here the 68k side needs the
+// copy refreshed so in-block loop-back checks and wake skips see it)
+static void sync_budget_to_68k(void)
+{
+    ctx_w32(JIT_CTX_EXIT_BUDGET, jit_ctx.exit_budget);
+    ctx_w32(JIT_CTX_WAKE_LIMIT, jit_ctx.wake_limit);
+}
+
 // serial capture: SB write latches the byte, SC write with bit 7 set
 // sends it. dmg.c has no serial support, so this is the only observer
 static void gated_write(u16 addr, u8 data)
@@ -193,6 +202,7 @@ void host_gate(unsigned int index, unsigned int sp)
         jit_ctx.read_cycles = m68_r32(JIT_CTX_ADDR + JIT_CTX_READ_CYCLES);
         gated_write(m68_r16(sp + 8), m68k_mem[sp + 10]);
         sync_page_tables();
+        sync_budget_to_68k();
         break;
     case GATE_READ16:
         jit_ctx.read_cycles = m68_r32(JIT_CTX_ADDR + JIT_CTX_READ_CYCLES);
@@ -205,13 +215,16 @@ void host_gate(unsigned int index, unsigned int sp)
         gated_write(addr, data & 0xff);
         gated_write(addr + 1, data >> 8);
         sync_page_tables();
+        sync_budget_to_68k();
         break;
     }
     case GATE_EI_DI:
         dmg_ei_di(dmg, m68_r16(sp + 8));
+        sync_budget_to_68k();
         break;
     case GATE_STOP:
         m68k_set_reg(M68K_REG_D0, handle_stop());
+        sync_budget_to_68k();
         break;
     case GATE_RETURN:
         block_returned = 1;
