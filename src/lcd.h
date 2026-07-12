@@ -44,11 +44,48 @@
 #define OAM_ATTR_MIRROR_Y (1 << 6)
 #define OAM_ATTR_BEHIND_BG (1 << 7)
 
+// register state a band renders from: the live registers when nothing
+// changed mid-frame, or one step of the replayed write log
+struct raster_regs {
+    u8 lcdc;
+    u8 scx, scy;
+    u8 wy, wx;
+    u8 bgp;
+    u8 obp0, obp1;
+};
+
+// a mid-frame raster register change, recorded against the beam position
+// and replayed as a band boundary at render time
+struct raster_log_entry {
+    u8 line;   // first line the value applies to
+    u8 reg;    // address - REG_LCD_BASE
+    u8 value;
+};
+
+// max observed changed-writes/frame is ~18 (dmg-acid2); pokegold's
+// per-line SCY intro peaks at ~35. overflow falls back to a final-state
+// single-band render
+#define RASTER_LOG_SIZE 64
+
 struct lcd {
     u8 oam[0xa0];
     u8 regs[0x0c];
     u8 *pixels; // 168x144 packed buffer (42 bytes/row) for scroll offset handling
     u8 *attrs;  // CGB: attribute buffer (168 bytes/row) with per-pixel palette/priority
+
+    // raster write log: reg state at line 0 plus the mid-frame changes,
+    // replayed as bands at render time (empty log = one band)
+    struct raster_regs frame_regs;
+    struct raster_log_entry raster_log[RASTER_LOG_SIZE];
+    u8 raster_count;
+    u8 raster_overflow;
+
+    // scx&7 alignment each row of the packed buffer was rendered at; the
+    // blitters start row y's visible 160 pixels at row_scx[y].
+    // row_scx_uniform means every row matches row_scx[0], so a single
+    // whole-frame blit offset still works
+    u8 row_scx[144];
+    u8 row_scx_uniform;
 
     // CGB color palettes (64 bytes each = 8 palettes x 4 colors x 2 bytes RGB555)
     u8 bg_palette_ram[64];
@@ -111,13 +148,30 @@ int lcd_step(struct lcd *lcd);
 void lcd_draw(struct lcd *lcd);
 
 struct dmg;
-void lcd_render_background(struct dmg *dmg, int lcdc, int window_enabled);
-void lcd_render_objs(struct dmg *dmg);
+
+void lcd_render_band(
+    struct dmg *dmg,
+    int sy_start,
+    int sy_end,
+    const struct raster_regs *regs);
+void lcd_render_objs_band(
+    struct dmg *dmg,
+    int sy_start,
+    int sy_end,
+    const struct raster_regs *regs);
 
 // CGB-specific rendering (in lcd_cgb.c)
 void lcd_cgb_init_lut(void);
-void lcd_cgb_render_background(struct dmg *dmg, int lcdc, int window_enabled);
-void lcd_cgb_render_objs(struct dmg *dmg);
+void lcd_cgb_render_band(
+    struct dmg *dmg,
+    int sy_start,
+    int sy_end,
+    const struct raster_regs *regs);
+void lcd_cgb_render_objs_band(
+    struct dmg *dmg,
+    int sy_start,
+    int sy_end,
+    const struct raster_regs *regs);
 
 // Horizontal flip LUT (initialized by lcd_init_lut)
 extern u8 hflip_lut[256];

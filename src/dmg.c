@@ -76,6 +76,61 @@ static void dmg_budget_touch(struct dmg *dmg)
     }
 }
 
+// the raster registers as currently written - the single-band state when
+// nothing changed mid-frame
+static void raster_live_regs(struct lcd *lcd, struct raster_regs *regs)
+{
+    regs->lcdc = lcd_read(lcd, REG_LCDC);
+    regs->scx = lcd_read(lcd, REG_SCX);
+    regs->scy = lcd_read(lcd, REG_SCY);
+    regs->wy = lcd_read(lcd, REG_WY);
+    regs->wx = lcd_read(lcd, REG_WX);
+    regs->bgp = lcd_read(lcd, REG_BGP);
+    regs->obp0 = lcd_read(lcd, REG_OBP0);
+    regs->obp1 = lcd_read(lcd, REG_OBP1);
+}
+
+// start a new raster frame: the current regs become the line-0 state and
+// the write log empties. runs at the frame wrap and when the LCD turns on
+static void raster_frame_reset(struct dmg *dmg)
+{
+    raster_live_regs(dmg->lcd, &dmg->lcd->frame_regs);
+    dmg->lcd->raster_count = 0;
+    dmg->lcd->raster_overflow = 0;
+}
+
+// a raster register changed mid-frame: log it for the band replay at
+// render time. hblank writes take effect on the next line - the line the
+// game armed them for (most splits run off the hblank STAT interrupt)
+static void raster_record(
+    struct dmg *dmg,
+    u16 address,
+    u8 data,
+    u32 ly,
+    u32 pos)
+{
+    struct lcd *lcd = dmg->lcd;
+    u32 line = pos >= 252 ? ly + 1 : ly;
+    struct raster_log_entry *e;
+
+    if (!(lcd_read(lcd, REG_LCDC) & LCDC_ENABLE)) {
+        return;
+    }
+    if (line >= 144) {
+        // affects next frame only; its frame-start snapshot picks it up
+        return;
+    }
+    if (lcd->raster_count == RASTER_LOG_SIZE) {
+        lcd->raster_overflow = 1;
+        return;
+    }
+
+    e = &lcd->raster_log[lcd->raster_count++];
+    e->line = line;
+    e->reg = address - REG_LCD_BASE;
+    e->value = data;
+}
+
 void dmg_new(struct dmg *dmg, struct rom *rom, struct lcd *lcd)
 {
     dmg->rom = rom;
@@ -95,11 +150,12 @@ void dmg_new(struct dmg *dmg, struct rom *rom, struct lcd *lcd)
     // the per-frame events start armed; the frame wrap always is
     dmg->event_deadline[EV_STAT] = EV_NONE;
     dmg->event_deadline[EV_VBLANK] = CYCLES_LINE_144;
-    dmg->event_deadline[EV_RENDER] = CYCLES_MIDDLE;
+    dmg->event_deadline[EV_RENDER] = CYCLES_LINE_144;
     dmg->event_deadline[EV_TIMA] = EV_NONE;
     dmg->event_deadline[EV_SERIAL] = EV_NONE;
     dmg->event_deadline[EV_WRAP] = CYCLES_PER_FRAME;
 
+    raster_frame_reset(dmg);
     dmg_init_pages(dmg);
 }
 
@@ -266,7 +322,7 @@ static u8 get_button_state(struct dmg *dmg)
 // cycle offset within the line if non-NULL
 static u8 dmg_current_ly(struct dmg *dmg, u32 *line_pos)
 {
-    u32 current = dmg->frame_cycles + jit_ctx.read_cycles;
+    u32 current = dmg_now_ppu(dmg);
     if (current >= 70224) {
         current -= 70224;
     }
@@ -368,7 +424,7 @@ static void dmg_stat_recompute(struct dmg *dmg)
     u32 ly = dmg_current_ly(dmg, &pos);
     u32 cur = ly * CYCLES_PER_LINE + pos;
 
-    if (dmg->frame_cycles + jit_ctx.read_cycles >= CYCLES_PER_FRAME) {
+    if (dmg_now_ppu(dmg) >= CYCLES_PER_FRAME) {
         // in-flight cycles ran past the end of the frame, so cur wrapped
         // to a next-frame position. arming an event there would fire it
         // against this frame's larger cycle counter, so leave rearming
@@ -388,8 +444,7 @@ static void dmg_stat_recompute(struct dmg *dmg)
 // a game of the same interrupt every single frame
 static void dmg_stat_touch(struct dmg *dmg)
 {
-    if (dmg->frame_cycles + jit_ctx.read_cycles
-            >= dmg->event_deadline[EV_STAT]) {
+    if (dmg_now_ppu(dmg) >= dmg->event_deadline[EV_STAT]) {
         dmg_request_interrupt(dmg, INT_LCDSTAT);
     }
     dmg_stat_recompute(dmg);
@@ -404,7 +459,7 @@ static void dmg_update_frame_events(struct dmg *dmg)
     dmg->event_deadline[EV_VBLANK] =
         (on && !dmg->sent_vblank_start) ? CYCLES_LINE_144 : EV_NONE;
     dmg->event_deadline[EV_RENDER] =
-        (on && !dmg->rendered_this_frame) ? CYCLES_MIDDLE : EV_NONE;
+        (on && !dmg->rendered_this_frame) ? CYCLES_LINE_144 : EV_NONE;
 }
 
 static u32 tima_divisor(struct dmg *dmg)
@@ -635,15 +690,42 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
         return;
     }
 
-    // scroll/window/palette/LCDC/OAM DMA writes are what a band-splitting
-    // renderer would replay; report them with the exact beam position
-    if (dmg->raster_write_hook
-            && address >= REG_LCDC && address <= REG_WX
+    // scroll/window/palette/LCDC writes change how the rest of the frame
+    // renders: log value changes against the beam position for the band
+    // replay at render time. the harness observation hook also watches
+    // OAM DMA and the CGB palette ports
+    if (address >= REG_LCDC && address <= REG_WX
             && ((0xfcd >> (address - REG_LCDC)) & 1)) {
+        u8 old = lcd_read(dmg->lcd, address);
+
+        if (old != data || address == REG_DMA || dmg->raster_write_hook) {
+            u32 pos;
+            u8 ly = dmg_current_ly(dmg, &pos);
+
+            if (address != REG_DMA && old != data) {
+                raster_record(dmg, address, data, ly, pos);
+            }
+            if (dmg->raster_write_hook) {
+                dmg->raster_write_hook(address, old, data, ly, pos);
+            }
+        }
+    } else if (dmg->raster_write_hook
+            && address >= 0xff68 && address <= 0xff6b) {
+        struct lcd *lcd = dmg->lcd;
         u32 pos;
         u8 ly = dmg_current_ly(dmg, &pos);
-        dmg->raster_write_hook(address, lcd_read(dmg->lcd, address),
-                data, ly, pos);
+        u8 old;
+
+        if (address == 0xff68) {
+            old = lcd->bcps;
+        } else if (address == 0xff69) {
+            old = lcd->bg_palette_ram[lcd->bcps & 0x3f];
+        } else if (address == 0xff6a) {
+            old = lcd->ocps;
+        } else {
+            old = lcd->obj_palette_ram[lcd->ocps & 0x3f];
+        }
+        dmg->raster_write_hook(address, old, data, ly, pos);
     }
 
     // OAM DMA
@@ -656,17 +738,16 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
         return;
     }
 
-    // BGP write - update the palette LUT
-    if (address == REG_BGP) {
-        lcd_update_palette_lut(data);
-        lcd_write(dmg->lcd, address, data);
-        return;
-    }
-
     // STAT/LYC/LCDC writes change when the next STAT interrupt fires;
     // LCDC also gates the per-frame events
     if (address == REG_STAT || address == REG_LYC || address == REG_LCDC) {
+        u8 was_on = lcd_read(dmg->lcd, REG_LCDC) & LCDC_ENABLE;
+
         lcd_write(dmg->lcd, address, data);
+        if (address == REG_LCDC && !was_on && (data & LCDC_ENABLE)) {
+            // LCD turning on starts a fresh frame for the replay log
+            raster_frame_reset(dmg);
+        }
         dmg_stat_touch(dmg);
         if (address == REG_LCDC) {
             dmg_update_frame_events(dmg);
@@ -826,35 +907,104 @@ void hdma_sync(struct dmg *dmg)
     }
 }
 
-// MAYBE todo: render per-tile-row? might be a good compromise - when
-// drawing so inaccurately, there is no "best" choice for where to do
-// this, so just do it in the middle of the screen. this could maybe avoid
-// games turning off sprites for text boxes, messing with the scroll for
-// status bars, etc
+// step one replayed write forward through the band register state
+static void raster_apply(struct raster_regs *regs, u8 reg, u8 value)
+{
+    switch (reg + REG_LCD_BASE) {
+    case REG_LCDC: regs->lcdc = value; break;
+    case REG_SCY: regs->scy = value; break;
+    case REG_SCX: regs->scx = value; break;
+    case REG_BGP: regs->bgp = value; break;
+    case REG_OBP0: regs->obp0 = value; break;
+    case REG_OBP1: regs->obp1 = value; break;
+    case REG_WY: regs->wy = value; break;
+    case REG_WX: regs->wx = value; break;
+    }
+}
+
+// render one band of the frame from one register state: background and
+// window, then sprites clipped to the band. rows pack at the band's
+// scx&7, and row_scx tells the blitters where each row's visible area
+// starts
+static void render_band_pass(
+    struct dmg *dmg,
+    int sy_start,
+    int sy_end,
+    const struct raster_regs *regs)
+{
+    int cgb = dmg->cgb && dmg->cgb->mode;
+
+    memset(&dmg->lcd->row_scx[sy_start], regs->scx & 7, sy_end - sy_start);
+
+    if (regs->lcdc & LCDC_ENABLE_BG) {
+        if (cgb) {
+            lcd_cgb_render_band(dmg, sy_start, sy_end, regs);
+        } else {
+            lcd_update_palette_lut(regs->bgp);
+            lcd_render_band(dmg, sy_start, sy_end, regs);
+        }
+    }
+    if (regs->lcdc & LCDC_ENABLE_OBJ) {
+        if (cgb) {
+            lcd_cgb_render_objs_band(dmg, sy_start, sy_end, regs);
+        } else {
+            lcd_render_objs_band(dmg, sy_start, sy_end, regs);
+        }
+    }
+}
+
+// one render per frame, fired at vblank start: every visible line has
+// been "scanned" by then, and the game's vblank handler hasn't run yet
+// (EV_RENDER and EV_VBLANK fire in the same sync, and handlers only run
+// after it), so OAM holds the frame's final state. mid-frame register
+// writes were logged as the beam crossed lines; replaying them as bands
+// reproduces the frame the game composed. an empty log is one band from
+// the live regs - games that never write mid-frame pay nothing
 static void render_frame(struct dmg *dmg)
 {
-    int lcdc = lcd_read(dmg->lcd, REG_LCDC);
+    struct lcd *lcd = dmg->lcd;
+    struct raster_regs regs;
+    int replay, start, uniform;
+    int k;
 
     // frame skip setting is 0-4
-    if (dmg->frames_rendered % (frame_skip + 1) == 0) {
-        if (lcdc & LCDC_ENABLE_BG) {
-            if (dmg->cgb && dmg->cgb->mode) {
-                lcd_cgb_render_background(dmg, lcdc, lcdc & LCDC_ENABLE_WINDOW);
-            } else {
-                lcd_render_background(dmg, lcdc, lcdc & LCDC_ENABLE_WINDOW);
-            }
-        }
-        if (lcdc & LCDC_ENABLE_OBJ) {
-            if (dmg->cgb && dmg->cgb->mode) {
-                lcd_cgb_render_objs(dmg);
-            } else {
-                lcd_render_objs(dmg);
-            }
-        }
-        lcd_draw(dmg->lcd);
+    if (dmg->frames_rendered++ % (frame_skip + 1) != 0) {
+        return;
     }
 
-    dmg->frames_rendered++;
+    replay = lcd->raster_count && !lcd->raster_overflow;
+    if (replay) {
+        regs = lcd->frame_regs;
+    } else {
+        // nothing changed mid-frame (or the log overflowed): a single
+        // band from the final register state, the old snapshot render
+        raster_live_regs(lcd, &regs);
+    }
+
+    start = 0;
+    for (k = 0; replay && k < lcd->raster_count; k++) {
+        const struct raster_log_entry *e = &lcd->raster_log[k];
+
+        if (e->line > start) {
+            render_band_pass(dmg, start, e->line, &regs);
+            start = e->line;
+        }
+        raster_apply(&regs, e->reg, e->value);
+    }
+    render_band_pass(dmg, start, 144, &regs);
+
+    // a single blit offset serves the whole frame only when every band
+    // packed its rows at the same scx&7
+    uniform = 1;
+    for (k = 1; replay && k < 144; k++) {
+        if (lcd->row_scx[k] != lcd->row_scx[0]) {
+            uniform = 0;
+            break;
+        }
+    }
+    lcd->row_scx_uniform = uniform;
+
+    lcd_draw(lcd);
 }
 
 static void dmg_event_fire(struct dmg *dmg, int ev)
@@ -919,6 +1069,7 @@ static void dmg_event_fire(struct dmg *dmg, int ev)
         dmg->rendered_this_frame = 0;
         dmg->lazy_ly = 0;
         dmg->ly_read_cycle = 0;
+        raster_frame_reset(dmg);
 
         dmg->event_deadline[EV_STAT] = stat_event_from(dmg, 0, 0, &line);
         dmg->stat_event_line = line;

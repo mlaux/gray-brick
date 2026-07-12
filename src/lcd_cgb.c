@@ -62,16 +62,24 @@ static inline void render_tile_row_cgb(u8 *p, u8 *a, u8 data1, u8 data2, u8 attr
     a[7] = attr_val;
 }
 
-void lcd_cgb_render_background(struct dmg *dmg, int lcdc, int window_enabled)
+// render scanlines [sy_start, sy_end) of the background and window from
+// one register state, like lcd_render_band
+void lcd_cgb_render_band(
+    struct dmg *dmg,
+    int sy_start,
+    int sy_end,
+    const struct raster_regs *regs)
 {
     u8 *vram = dmg->video_ram;
     u8 *out = dmg->lcd->pixels;
     u8 *out_attr = dmg->lcd->attrs;
 
-    int scx = lcd_read(dmg->lcd, REG_SCX);
-    int scy = lcd_read(dmg->lcd, REG_SCY);
-    int wx = lcd_read(dmg->lcd, REG_WX) - 7;
-    int wy = lcd_read(dmg->lcd, REG_WY);
+    int lcdc = regs->lcdc;
+    int scx = regs->scx;
+    int scy = regs->scy;
+    int wx = regs->wx - 7;
+    int wy = regs->wy;
+    int window_enabled = lcdc & LCDC_ENABLE_WINDOW;
 
     int bg_map_off = (lcdc & LCDC_BG_TILE_MAP) ? 0x1c00 : 0x1800;
     int win_map_off = (lcdc & LCDC_WINDOW_TILE_MAP) ? 0x1c00 : 0x1800;
@@ -81,7 +89,7 @@ void lcd_cgb_render_background(struct dmg *dmg, int lcdc, int window_enabled)
     int scx_offset = scx & 7;
 
     int sy;
-    for (sy = 0; sy < 144; sy++) {
+    for (sy = sy_start; sy < sy_end; sy++) {
         u8 *row = out + sy * 42;
         u8 *row_attr = out_attr + sy * 168;
         int window_active = window_enabled && sy >= wy && wx < 160;
@@ -189,7 +197,11 @@ void lcd_cgb_render_background(struct dmg *dmg, int lcdc, int window_enabled)
     }
 }
 
-void lcd_cgb_render_objs(struct dmg *dmg)
+void lcd_cgb_render_objs_band(
+    struct dmg *dmg,
+    int sy_start,
+    int sy_end,
+    const struct raster_regs *regs)
 {
     struct oam_entry {
         u8 pos_y;
@@ -199,13 +211,13 @@ void lcd_cgb_render_objs(struct dmg *dmg)
     };
 
     struct oam_entry *oam = &((struct oam_entry *) dmg->lcd->oam)[39];
-    int tall = lcd_isset(dmg->lcd, REG_LCDC, LCDC_OBJ_SIZE);
+    int tall = regs->lcdc & LCDC_OBJ_SIZE;
     u8 *vram = dmg->video_ram;
     u8 *pixels = dmg->lcd->pixels;
     u8 *attrs_buf = dmg->lcd->attrs;
-    int bg_enabled = lcd_isset(dmg->lcd, REG_LCDC, LCDC_ENABLE_BG);
+    int bg_enabled = regs->lcdc & LCDC_ENABLE_BG;
 
-    int scx_offset = lcd_read(dmg->lcd, REG_SCX) & 7;
+    int scx_offset = regs->scx & 7;
 
     int k;
     for (k = 39; k >= 0; k--, oam--) {
@@ -231,7 +243,7 @@ void lcd_cgb_render_objs(struct dmg *dmg)
         int b;
         for (b = 0; b < tile_bytes; b += 2) {
             int row_y = lcd_y + (b >> 1);
-            if (row_y < 0 || row_y >= 144) {
+            if (row_y < sy_start || row_y >= sy_end) {
                 continue;
             }
 

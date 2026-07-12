@@ -31,7 +31,6 @@ struct audio;
 #define CYCLES_PER_FRAME 70224
 #define CYCLES_PER_LINE 456
 #define CYCLES_LINE_144 (CYCLES_PER_FRAME - (10 * CYCLES_PER_LINE))
-#define CYCLES_MIDDLE (CYCLES_LINE_144 / 2)
 
 // deadline table sources. event_deadline holds the frame-relative PPU cycle
 // of each source's next firing, EV_NONE when unarmed. EV_WRAP is always

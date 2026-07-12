@@ -45,13 +45,15 @@ void host_serial_byte(u8 byte)
 }
 
 // ---- frame capture ----------------------------------------------------
-// lcd.c renders into a 168-wide packed 2bpp buffer (42 bytes/row); the
-// visible 160 pixels start at SCX & 7, exactly as the Mac blitters read it
+// lcd.c renders into a 168-wide packed 2bpp buffer (42 bytes/row); each
+// row's visible 160 pixels start at row_scx[y], exactly as the Mac
+// blitters read it
 
 static const char *opt_dump_dir;
 static int opt_hash_frames;
 static int opt_dump_state;
 static int opt_log_raster;
+static int opt_scx_stats;
 
 // 160x144, gray (1 byte/px) for DMG or RGB (3 bytes/px) for CGB
 static u8 frame_out[160 * 144 * 3];
@@ -59,12 +61,12 @@ static u8 frame_out[160 * 144 * 3];
 static size_t extract_frame(struct lcd *l)
 {
     int cgb_mode = dmg->cgb && dmg->cgb->mode;
-    int scx_off = lcd_read(l, REG_SCX) & 7;
     size_t n = 0;
     int x, y;
 
     for (y = 0; y < 144; y++) {
         const u8 *row = l->pixels + y * 42;
+        int scx_off = l->row_scx[y];
         for (x = 0; x < 160; x++) {
             int px = x + scx_off;
             int shade = (row[px >> 2] >> (6 - 2 * (px & 3))) & 3;
@@ -92,9 +94,72 @@ static size_t extract_frame(struct lcd *l)
     return n;
 }
 
+// row_scx uniformity statistics (--scx-stats): how often the single-blit
+// fast path applies, and the shape of the frames that miss it
+static u32 scx_stat_frames;
+static u32 scx_stat_uniform;
+static u32 scx_stat_one_row;
+static u32 scx_stat_runs_hist[8];
+
+static void scx_stats_frame(struct lcd *l)
+{
+    int counts[8] = { 0 };
+    int runs = 1;
+    int most = 0;
+    int k;
+
+    counts[l->row_scx[0] & 7]++;
+    for (k = 1; k < 144; k++) {
+        if (l->row_scx[k] != l->row_scx[k - 1]) {
+            runs++;
+        }
+        counts[l->row_scx[k] & 7]++;
+    }
+
+    scx_stat_frames++;
+    if (l->row_scx_uniform) {
+        scx_stat_uniform++;
+    }
+
+    for (k = 1; k < 8; k++) {
+        if (counts[k] > counts[most]) {
+            most = k;
+        }
+    }
+    if (counts[most] == 143) {
+        scx_stat_one_row++;
+    }
+
+    scx_stat_runs_hist[runs < 8 ? runs : 7]++;
+}
+
+static void scx_stats_summary(FILE *out)
+{
+    int k;
+
+    fprintf(out, "scx-stats: %u frames, %u uniform (%.1f%%), "
+            "%u with a single odd row\n",
+            scx_stat_frames, scx_stat_uniform,
+            scx_stat_frames
+                ? 100.0 * scx_stat_uniform / scx_stat_frames : 0.0,
+            scx_stat_one_row);
+    fprintf(out, "scx-stats: offset runs/frame:");
+    for (k = 1; k < 8; k++) {
+        if (scx_stat_runs_hist[k]) {
+            fprintf(out, " %d%s:%u", k, k == 7 ? "+" : "",
+                    scx_stat_runs_hist[k]);
+        }
+    }
+    fprintf(out, "\n");
+}
+
 static void frame_hook(struct lcd *l)
 {
     size_t n = extract_frame(l);
+
+    if (opt_scx_stats) {
+        scx_stats_frame(l);
+    }
 
     // where in the frame the snapshot render actually fired, and the reg
     // state it sampled (frame_cycles is the end-of-sync beam position, so
@@ -152,7 +217,7 @@ struct raster_stat {
     u32 oam, draw, hbl;     // mode split of vis_chg
     u8 line_min, line_max;  // ly range of vis_chg
 };
-static struct raster_stat raster_stats[12];
+static struct raster_stat raster_stats[16];
 static u32 raster_writes;
 
 // distinct changed lines per frame = the bands a replay would render.
@@ -162,10 +227,19 @@ static u8 rl_line_seen[144];
 static u32 rl_distinct;
 static u32 rl_frames_split, rl_bands_sum, rl_bands_max;
 
-static const char *const raster_names[12] = {
+static const char *const raster_names[16] = {
     "LCDC", "?", "SCY", "SCX", "?", "?", "DMA", "BGP",
-    "OBP0", "OBP1", "WY", "WX"
+    "OBP0", "OBP1", "WY", "WX", "BCPS", "BCPD", "OCPS", "OCPD"
 };
+
+// $ff40-$ff4b map to 0-11, CGB $ff68-$ff6b to 12-15
+static int raster_reg_index(u16 addr)
+{
+    if (addr <= REG_WX) {
+        return addr - REG_LCD_BASE;
+    }
+    return 12 + (addr - 0xff68);
+}
 
 static void raster_fold_frame(void)
 {
@@ -183,7 +257,8 @@ static void raster_fold_frame(void)
 
 static void raster_hook(u16 addr, u8 old, u8 val, u32 ly, u32 pos)
 {
-    struct raster_stat *st = &raster_stats[addr - REG_LCD_BASE];
+    int reg = raster_reg_index(addr);
+    struct raster_stat *st = &raster_stats[reg];
     u32 frame = host_frames();
     int on = (addr == REG_LCDC ? old : lcd_read(&lcd, REG_LCDC))
             & LCDC_ENABLE;
@@ -220,7 +295,9 @@ static void raster_hook(u16 addr, u8 old, u8 val, u32 ly, u32 pos)
             else if (pos < 252) st->draw++;
             else st->hbl++;
 
-            if (addr != REG_DMA && !rl_line_seen[ly]) {
+            // index-only writes (DMA source, BCPS/OCPS) are not bands
+            if (addr != REG_DMA && addr != 0xff68 && addr != 0xff6a
+                    && !rl_line_seen[ly]) {
                 rl_line_seen[ly] = 1;
                 rl_distinct++;
             }
@@ -228,8 +305,7 @@ static void raster_hook(u16 addr, u8 old, u8 val, u32 ly, u32 pos)
     }
 
     printf("raster f=%u ly=%u %s %s %02x->%02x\n",
-           frame, (unsigned) ly, where,
-           raster_names[addr - REG_LCD_BASE], old, val);
+           frame, (unsigned) ly, where, raster_names[reg], old, val);
 }
 
 static void raster_summary(FILE *fp)
@@ -246,7 +322,7 @@ static void raster_summary(FILE *fp)
             rl_bands_max);
     fprintf(fp,
             "raster: reg     off    vbl   vis=  vis!=   oam  draw   hbl  lines\n");
-    for (k = 0; k < 12; k++) {
+    for (k = 0; k < 16; k++) {
         struct raster_stat *st = &raster_stats[k];
         if (!(st->off | st->vbl | st->vis_same | st->vis_chg)) {
             continue;
@@ -413,6 +489,7 @@ static void usage(void)
         "  --dump-state         print final registers + hw state at exit\n"
         "  --input FILE         scripted joypad input (\"frame:Start,A\" lines)\n"
         "  --log-raster         log raster-relevant register writes + summary\n"
+        "  --scx-stats          row_scx uniformity summary to stderr\n"
         "  --chain              chain cached blocks like the Mac dispatcher\n"
         "  --cpu 68000|68020    codegen + emulated cpu (default 68020)\n"
         "  --cycles-per-exit N  dispatcher exit budget (default 70224)\n"
@@ -465,6 +542,8 @@ int main(int argc, char *argv[])
             }
         } else if (!strcmp(argv[k], "--log-raster")) {
             opt_log_raster = 1;
+        } else if (!strcmp(argv[k], "--scx-stats")) {
+            opt_scx_stats = 1;
         } else if (!strcmp(argv[k], "--chain")) {
             host_chain = 1;
         } else if (!strcmp(argv[k], "--trace")) {
@@ -537,7 +616,7 @@ int main(int argc, char *argv[])
             return 2;
         }
     }
-    if (opt_dump_dir || opt_hash_frames || opt_log_raster) {
+    if (opt_dump_dir || opt_hash_frames || opt_log_raster || opt_scx_stats) {
         host_lcd_draw_hook = frame_hook;
     }
 
@@ -574,6 +653,9 @@ int main(int argc, char *argv[])
     }
     if (opt_log_raster) {
         raster_summary(stderr);
+    }
+    if (opt_scx_stats) {
+        scx_stats_summary(stderr);
     }
 
     fprintf(stderr,

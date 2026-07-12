@@ -59,10 +59,19 @@ void lcd_init_lut(void)
     }
 }
 
+// palette the packed-pixel LUT currently encodes; band replay switches
+// BGP mid-frame, so rebuilds dedup on value
+static int lut_palette = -1;
+
 void lcd_update_palette_lut(u8 palette)
 {
     u8 pal[4];
     int k;
+
+    if (palette == lut_palette) {
+        return;
+    }
+    lut_palette = palette;
 
     pal[0] = palette & 3;
     pal[1] = (palette >> 2) & 3;
@@ -90,6 +99,7 @@ void lcd_new(struct lcd *lcd)
     // todo < 8 bpp
     lcd->pixels = pixels;
     lcd->attrs = attr_buffer;
+    lcd->row_scx_uniform = 1;
     // Initialize CGB palette dirty flags to all-dirty so first frame updates everything
     lcd->bg_palette_dirty = 0xFFFFFFFF;
     lcd->obj_palette_dirty = 0xFFFFFFFF;
@@ -162,15 +172,24 @@ static inline void render_partial_start(
     }
 }
 
-void lcd_render_background(struct dmg *dmg, int lcdc, int window_enabled)
+// render scanlines [sy_start, sy_end) of the background and window from
+// one register state. a band is as wide as the game allows: the whole
+// frame when nothing was written mid-frame
+void lcd_render_band(
+    struct dmg *dmg,
+    int sy_start,
+    int sy_end,
+    const struct raster_regs *regs)
 {
     u8 *vram = dmg->video_ram;
     u8 *out = dmg->lcd->pixels;
 
-    int scx = lcd_read(dmg->lcd, REG_SCX);
-    int scy = lcd_read(dmg->lcd, REG_SCY);
-    int wx = lcd_read(dmg->lcd, REG_WX) - 7;
-    int wy = lcd_read(dmg->lcd, REG_WY);
+    int lcdc = regs->lcdc;
+    int scx = regs->scx;
+    int scy = regs->scy;
+    int wx = regs->wx - 7;
+    int wy = regs->wy;
+    int window_enabled = lcdc & LCDC_ENABLE_WINDOW;
 
     int bg_map_off = (lcdc & LCDC_BG_TILE_MAP) ? 0x1c00 : 0x1800;
     int win_map_off = (lcdc & LCDC_WINDOW_TILE_MAP) ? 0x1c00 : 0x1800;
@@ -191,11 +210,16 @@ void lcd_render_background(struct dmg *dmg, int lcdc, int window_enabled)
         if (bg_tile_limit < 0) bg_tile_limit = 0;
     }
 
-    int sy_limit = window_on_screen ? wy : 144;
+    int sy_limit = sy_end;
+    if (window_on_screen) {
+        sy_limit = wy;
+        if (sy_limit < sy_start) sy_limit = sy_start;
+        if (sy_limit > sy_end) sy_limit = sy_end;
+    }
     int sy;
 
     // before window: render all 21 BG tiles, no window overlay
-    for (sy = 0; sy < sy_limit; sy++) {
+    for (sy = sy_start; sy < sy_limit; sy++) {
         u8 *row = out + sy * 42;
         int bg_y = (sy + scy) & 0xff;
         int tile_row = bg_y >> 3;
@@ -219,7 +243,7 @@ void lcd_render_background(struct dmg *dmg, int lcdc, int window_enabled)
     }
 
     // lines with window: render only visible BG tiles, then window overlay
-    for (sy = sy_limit; sy < 144; sy++) {
+    for (sy = sy_limit; sy < sy_end; sy++) {
         u8 *row = out + sy * 42;
         int bg_y = (sy + scy) & 0xff;
         int tile_row = bg_y >> 3;
@@ -297,16 +321,21 @@ void lcd_render_background(struct dmg *dmg, int lcdc, int window_enabled)
     }
 }
 
-// TODO: only ten per scanline, priority, attributes
-void lcd_render_objs(struct dmg *dmg)
+// render sprites whose rows land in [sy_start, sy_end) from one register
+// state. TODO: only ten per scanline, priority, attributes
+void lcd_render_objs_band(
+    struct dmg *dmg,
+    int sy_start,
+    int sy_end,
+    const struct raster_regs *regs)
 {
     struct oam_entry *oam = &((struct oam_entry *) dmg->lcd->oam)[39];
-    int tall = lcd_isset(dmg->lcd, REG_LCDC, LCDC_OBJ_SIZE);
+    int tall = regs->lcdc & LCDC_OBJ_SIZE;
     u8 *vram = dmg->video_ram;
     u8 *pixels = dmg->lcd->pixels;
 
     // sprites are rendered at screen position + scx offset within the wider buffer
-    int scx_offset = lcd_read(dmg->lcd, REG_SCX) & 7;
+    int scx_offset = regs->scx & 7;
 
     int k;
     for (k = 39; k >= 0; k--, oam--) {
@@ -319,8 +348,8 @@ void lcd_render_objs(struct dmg *dmg)
 
         int tile_off = 16 * oam->tile;
         u8 palette = oam->attrs & OAM_ATTR_PALETTE
-            ? lcd_read(dmg->lcd, REG_OBP1)
-            : lcd_read(dmg->lcd, REG_OBP0);
+            ? regs->obp1
+            : regs->obp0;
         u8 pal[4] = {
             palette & 3,
             (palette >> 2) & 3,
@@ -337,7 +366,7 @@ void lcd_render_objs(struct dmg *dmg)
         int b;
         for (b = 0; b < tile_bytes; b += 2) {
             int row_y = lcd_y + (b >> 1);
-            if (row_y < 0 || row_y >= 144) {
+            if (row_y < sy_start || row_y >= sy_end) {
                 continue;
             }
 

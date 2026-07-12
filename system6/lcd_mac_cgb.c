@@ -87,9 +87,6 @@ static void lcd_draw_1x_cgb(struct lcd *lcd_ptr)
     unsigned char *src = lcd_ptr->pixels;
     unsigned char *attrs = lcd_ptr->attrs;
     unsigned long *dst = (unsigned long *) offscreen_color_buf;
-    CGrafPtr port;
-    int scx_offset = lcd_read(lcd_ptr, REG_SCX) & 7;
-    Rect srcRect;
 
     if (screen_depth == 1) {
         return;
@@ -98,9 +95,12 @@ static void lcd_draw_1x_cgb(struct lcd *lcd_ptr)
     // Update palette cache from CGB palette RAM
     update_cgb_palette_cache(lcd_ptr);
 
+    // convert all 168 buffer pixels per row; per-band scroll offsets are
+    // handled by the band blit's source rects
     for (gy = 0; gy < 144; gy++) {
-        int gx;
         unsigned char *row_attr = attrs + gy * 168;
+        int gx;
+
         for (gx = 0; gx < 42; gx++) {
             // packed byte: p0 p1 p2 p3 (2 bits each)
             unsigned char packed = src[gx];
@@ -132,25 +132,14 @@ static void lcd_draw_1x_cgb(struct lcd *lcd_ptr)
             c2 = cgb_color_lut[lut2][p2];
             c3 = cgb_color_lut[lut3][p3];
 
-            *dst++ = ((unsigned long)c0 << 24) | ((unsigned long)c1 << 16) |
-                     ((unsigned long)c2 << 8) | c3;
+            dst[gx] = ((unsigned long)c0 << 24) | ((unsigned long)c1 << 16) |
+                      ((unsigned long)c2 << 8) | c3;
         }
         src += 42;
+        dst += 42;
     }
 
-    // source rect is offset by scroll amount, destination is full window
-    srcRect.top = 0;
-    srcRect.left = scx_offset;
-    srcRect.bottom = 144;
-    srcRect.right = scx_offset + 160;
-
-    SetPort(g_wp);
-    port = (CGrafPtr) g_wp;
-    CopyBits(
-        (BitMap *) &offscreen_pixmap,
-        (BitMap *) *port->portPixMap,
-        &srcRect, &offscreen_rect, srcCopy, NULL
-    );
+    lcd_blit_color_bands(lcd_ptr, 1);
 }
 
 // CGB 2x indexed rendering
@@ -160,9 +149,6 @@ static void lcd_draw_2x_cgb(struct lcd *lcd_ptr)
     unsigned char *src = lcd_ptr->pixels;
     unsigned char *attrs = lcd_ptr->attrs;
     unsigned long *dst = (unsigned long *) offscreen_color_buf;
-    CGrafPtr port;
-    int scx_offset = lcd_read(lcd_ptr, REG_SCX) & 7;
-    Rect srcRect;
 
     if (screen_depth == 1) {
         return;
@@ -171,6 +157,8 @@ static void lcd_draw_2x_cgb(struct lcd *lcd_ptr)
     // Update palette cache from CGB palette RAM
     update_cgb_palette_cache(lcd_ptr);
 
+    // convert all 168 buffer pixels per row; per-band scroll offsets are
+    // handled by the band blit's source rects
     for (gy = 0; gy < 144; gy++) {
         // row stride in longs: 336 bytes / 4 = 84 longs
         unsigned long *row0 = dst;
@@ -224,19 +212,7 @@ static void lcd_draw_2x_cgb(struct lcd *lcd_ptr)
         dst += 168;  // 2 rows * 84 longs per row
     }
 
-    // source rect is offset by scroll amount, destination is full window
-    srcRect.top = 0;
-    srcRect.left = scx_offset * 2;
-    srcRect.bottom = 288;
-    srcRect.right = scx_offset * 2 + 320;
-
-    SetPort(g_wp);
-    port = (CGrafPtr) g_wp;
-    CopyBits(
-        (BitMap *) &offscreen_pixmap,
-        (BitMap *) *port->portPixMap,
-        &srcRect, &offscreen_rect, srcCopy, NULL
-    );
+    lcd_blit_color_bands(lcd_ptr, 2);
 }
 
 // Main CGB draw function - called from lcd_mac.c
