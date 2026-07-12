@@ -492,6 +492,7 @@ static void usage(void)
         "  --log-raster         log raster-relevant register writes + summary\n"
         "  --scx-stats          row_scx uniformity summary to stderr\n"
         "  --exit-stats         exit budget causes + interrupt deliveries\n"
+        "  --no-stat-ints       drop STAT events from the scheduler (Mac menu toggle)\n"
         "  --chain              chain cached blocks like the Mac dispatcher\n"
         "  --cpu 68000|68020    codegen + emulated cpu (default 68020)\n"
         "  --trace              per-dispatch state line to stderr\n"
@@ -544,6 +545,8 @@ int main(int argc, char *argv[])
             opt_scx_stats = 1;
         } else if (!strcmp(argv[k], "--exit-stats")) {
             opt_exit_stats = 1;
+        } else if (!strcmp(argv[k], "--no-stat-ints")) {
+            stat_ints_enabled = 0;
         } else if (!strcmp(argv[k], "--chain")) {
             host_chain = 1;
         } else if (!strcmp(argv[k], "--trace")) {

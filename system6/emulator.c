@@ -68,6 +68,7 @@ unsigned char sound_enabled;
 unsigned char limit_fps;
 unsigned char gbc_enabled = 1;  // default: GBC support enabled
 unsigned char ignore_double_speed = 0;  // default: emulate double-speed accurately
+unsigned char stat_ints_enabled = 1;  // default: fire STAT interrupt events
 int screen_depth;
 
 static u32 last_frame_count;
@@ -410,6 +411,7 @@ static void UpdateMenuItems(void)
   CheckItem(menu, EDIT_SCALE_1X, screen_scale == 1);
   CheckItem(menu, EDIT_SCALE_2X, screen_scale == 2);
   CheckItem(menu, EDIT_IGNORE_DOUBLE_SPEED, ignore_double_speed);
+  CheckItem(menu, EDIT_STAT_INTS, stat_ints_enabled);
   if (g_wp) {
     int supports_cgb = rom.cgb_flag == 0x80 || rom.cgb_flag == 0xC0;
     if (!supports_cgb) {
@@ -677,6 +679,11 @@ void OnMenuAction(long action)
     } else if (item == EDIT_IGNORE_DOUBLE_SPEED) {
       ignore_double_speed = !ignore_double_speed;
       CheckItem(GetMenuHandle(MENU_EDIT), EDIT_IGNORE_DOUBLE_SPEED, ignore_double_speed);
+      SavePreferences();
+    } else if (item == EDIT_STAT_INTS) {
+      // takes effect at the next frame wrap, which rearms EV_STAT
+      stat_ints_enabled = !stat_ints_enabled;
+      CheckItem(GetMenuHandle(MENU_EDIT), EDIT_STAT_INTS, stat_ints_enabled);
       SavePreferences();
     }
   }

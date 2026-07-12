@@ -317,7 +317,7 @@ void LoadPreferences(void)
   int incompatibleDirect, incompatibleIndexed;
 
   h = GetResource(RES_PREFS_TYPE, RES_PREFS_ID);
-  if (h != nil && GetHandleSize(h) >= sizeof(int) * 9) {
+  if (h != nil && GetHandleSize(h) >= sizeof(int) * 10) {
     prefs = (int *) *h;
     frame_skip = prefs[1];
     video_mode = prefs[2];
@@ -330,6 +330,7 @@ void LoadPreferences(void)
     }
     gbc_enabled = prefs[7];
     ignore_double_speed = prefs[8];
+    stat_ints_enabled = prefs[9];
   } else {
     frame_skip = 4;
     sound_enabled = 0;
@@ -337,6 +338,7 @@ void LoadPreferences(void)
     current_palette = 0;
     gbc_enabled = 1;
     ignore_double_speed = 0;
+    stat_ints_enabled = 1;
     if (screen_depth >= 8) {
       video_mode = VIDEO_INDEXED;
       screen_scale = 1;
@@ -360,7 +362,7 @@ void SavePreferences(void)
 {
   Handle h;
   int *prefs;
-  Size needed = sizeof(int) * 9;
+  Size needed = sizeof(int) * 10;
 
   h = GetResource(RES_PREFS_TYPE, RES_PREFS_ID);
   if (h == nil) {
@@ -383,6 +385,7 @@ void SavePreferences(void)
   prefs[6] = current_palette;
   prefs[7] = gbc_enabled;
   prefs[8] = ignore_double_speed;
+  prefs[9] = stat_ints_enabled;
   ChangedResource(h);
   WriteResource(h);
 }

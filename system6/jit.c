@@ -228,9 +228,6 @@ static void check_interrupts(struct dmg *dmg)
       // clear IF bit and disable IME
       dmg->interrupt_request_mask &= ~(1 << k);
       dmg->interrupt_enable = 0;
-      if (k == 1) {
-        dmg_stat_delivered(dmg);
-      }
 
       jit_ctx.gb_sp -= 2;
       jit_regs.a3 -= 2;

@@ -20,6 +20,7 @@ unsigned char sound_enabled;
 unsigned char limit_fps;
 unsigned char gbc_enabled = 1;
 unsigned char ignore_double_speed;
+unsigned char stat_ints_enabled = 1;
 
 // normally defined in system6/jit.c
 jit_context jit_ctx;

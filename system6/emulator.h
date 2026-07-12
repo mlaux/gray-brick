@@ -63,8 +63,9 @@ extern PixMap offscreen_pixmap;
 #define EDIT_SCALE_2X 6
 #define EDIT_GBC_MODE 8
 #define EDIT_IGNORE_DOUBLE_SPEED 9
-#define EDIT_PREFERENCES 11
-#define EDIT_KEY_MAPPINGS 12
+#define EDIT_STAT_INTS 10
+#define EDIT_PREFERENCES 12
+#define EDIT_KEY_MAPPINGS 13
 
 #define RES_MDEF_ID 128
 

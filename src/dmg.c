@@ -23,13 +23,6 @@
 // TAC clock select -> cycles per TIMA increment (all powers of two)
 static const u16 timer_divisors[] = { 1024, 16, 64, 256 };
 
-// a STAT handler silent (no slow-path write) for more than a full frame
-// of per-line deliveries gets hblank/mode2 events every STAT_IDLE_STEP
-// lines instead of every line. a handler that writes even once per frame
-// resets its streak before reaching the threshold and never throttles
-#define STAT_IDLE_THRESH 180
-#define STAT_IDLE_STEP 8
-
 static int dmg_double_speed(struct dmg *dmg)
 {
     return dmg->cgb && dmg->cgb->double_speed && !ignore_double_speed;
@@ -367,21 +360,21 @@ static u32 stat_event_from(
     u32 best = 0xffffffff;
     u32 best_line = 0;
     u32 c, line;
-    int idle = dmg->stat_idle_streak >= STAT_IDLE_THRESH;
 
-    if (!(lcd_read(dmg->lcd, REG_LCDC) & LCDC_ENABLE)) {
+    // per-line STAT interrupts cost a dispatch each; the user can turn
+    // them off for games (GSC) that arm them but rarely use them
+    if (!stat_ints_enabled
+            || !(lcd_read(dmg->lcd, REG_LCDC) & LCDC_ENABLE)) {
         return best;
     }
 
     if (stat & STAT_INTR_SOURCE_HBLANK) {
         line = from_line;
-        if (line * CYCLES_PER_LINE + 252 < from) {
-            line++;
-        }
-        if (idle) {
-            line = (line + STAT_IDLE_STEP - 1) & ~(u32) (STAT_IDLE_STEP - 1);
-        }
         c = line * CYCLES_PER_LINE + 252;
+        if (c < from) {
+            line++;
+            c += CYCLES_PER_LINE;
+        }
         if (line <= 143 && c < best) {
             best = c;
             best_line = line;
@@ -390,13 +383,11 @@ static u32 stat_event_from(
 
     if (stat & STAT_INTR_SOURCE_MODE2) {
         line = from_line;
-        if (line * CYCLES_PER_LINE < from) {
-            line++;
-        }
-        if (idle) {
-            line = (line + STAT_IDLE_STEP - 1) & ~(u32) (STAT_IDLE_STEP - 1);
-        }
         c = line * CYCLES_PER_LINE;
+        if (c < from) {
+            line++;
+            c += CYCLES_PER_LINE;
+        }
         if (line <= 143 && c < best) {
             best = c;
             best_line = line;
@@ -658,9 +649,6 @@ u8 dmg_read(void *_dmg, u16 address)
 
 void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
 {
-    // feeds the STAT idle-handler watch
-    dmg->slow_writes++;
-
     // ROM region writes go to MBC for bank switching
     if (address < 0x8000) {
         mbc_write(dmg->rom->mbc, dmg, address, data);
@@ -759,10 +747,6 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
         if (address == REG_LCDC && !was_on && (data & LCDC_ENABLE)) {
             // LCD turning on starts a fresh frame for the replay log
             raster_frame_reset(dmg);
-        }
-        if (address == REG_STAT) {
-            // rearming sources is intent; resume per-line events
-            dmg->stat_idle_streak = 0;
         }
         dmg_stat_touch(dmg);
         if (address == REG_LCDC) {
@@ -1196,33 +1180,9 @@ void dmg_sync_hw(struct dmg *dmg, int cycles)
     }
 }
 
-void dmg_stat_delivered(struct dmg *dmg)
-{
-    dmg->stat_watching = 1;
-    dmg->stat_watch_mark = dmg->slow_writes;
-}
-
 void dmg_ei_di(void *_dmg, u16 enabled)
 {
     struct dmg *dmg = (struct dmg *) _dmg;
-
-    // the first ei/di/reti after a STAT delivery closes the idle watch:
-    // no slow-path write means the handler did nothing observable
-    if (dmg->stat_watching) {
-        dmg->stat_watching = 0;
-        if (dmg->slow_writes != dmg->stat_watch_mark) {
-            int was_idle = dmg->stat_idle_streak >= STAT_IDLE_THRESH;
-
-            dmg->stat_idle_streak = 0;
-            if (was_idle) {
-                // handler came alive; back to per-line events right away
-                dmg_stat_touch(dmg);
-            }
-        } else if (dmg->stat_idle_streak < 0xffff) {
-            dmg->stat_idle_streak++;
-        }
-    }
-
     dmg->interrupt_enable = enabled ? 1 : 0;
 
     // EI/RETI with an interrupt already pending must deliver promptly,

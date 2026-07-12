@@ -417,9 +417,6 @@ static void check_interrupts(void)
             host_int_delivered[k]++;
             dmg->interrupt_request_mask &= ~(1 << k);
             dmg->interrupt_enable = 0;
-            if (k == 1) {
-                dmg_stat_delivered(dmg);
-            }
 
             jit_ctx.gb_sp -= 2;
             m68k_set_reg(M68K_REG_A3, m68k_get_reg(NULL, M68K_REG_A3) - 2);
