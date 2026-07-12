@@ -577,7 +577,12 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
         u8 pidx = (u8) ((address >> 8) - 0x80);
         u8 *saved = dmg->saved_write_page[pidx];
 
-        if (cache_upper_range_hit(address)) {
+        // a write that leaves the byte unchanged can't invalidate anything
+        // the compiler derived from it. FFL's engine passes arguments by
+        // rewriting its RAM stubs' instruction operands before every call,
+        // and a third of those writes store the value already there
+        if (cache_upper_range_hit(address)
+                && (!saved || saved[(s16) address] != data)) {
             // self-modifying code - drop this page's compiled blocks
             cache_invalidate_upper_page((u8) (address >> 8));
             if (saved) {

@@ -51,4 +51,4 @@
 [chain] game/dw3 hashes=
 [chain] game/ffl hashes=ae497ac72fdb2c09
 [chain] input/tetris-start hashes=35c1e459bb6f3f46,6f54f274dff62200
-[chain] input/ffl-start hashes=2e3b923c18563625,32a6a88a6703c467,610157ada74a3688,85c6d31aa2ef216e,c93c9c7649def3eb,f37e1af806c48d9c
+[chain] input/ffl-start hashes=2e3b923c18563625,32a6a88a6703c467,610157ada74a3688,85c6d31aa2ef216e,a85f9114d00cb1b0,c93c9c7649def3eb,f37e1af806c48d9c
