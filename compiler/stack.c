@@ -18,16 +18,25 @@ void compile_ld_sp_imm16(
     emit_move_w_dn(block, REG_68K_D_SCRATCH_1, gb_sp);
     emit_move_w_dn_disp_an(block, REG_68K_D_SCRATCH_1, JIT_CTX_GB_SP, REG_68K_A_CTX);
 
-    // compile-time WRAM/HRAM detection
-    if (ctx && ctx->wram_base && gb_sp >= 0xc000 && gb_sp < 0xd000) {
+    // compile-time WRAM/HRAM detection. stacks at the exact bottom of a
+    // region ($c000, $ff80) stay in slow mode: the first push writes
+    // below the region, and a native A3 would walk out of the buffer
+    if (ctx && ctx->wram_base && gb_sp > 0xc000 && gb_sp < 0xd000) {
         // WRAM bank 0 ($C000-$CFFF): always fixed, use compile-time address
         uint32_t addr = (uint32_t) ctx->wram_base + (gb_sp - 0xc000);
         emit_movea_l_imm32(block, REG_68K_A_SP, addr);
         emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 1);
         emit_move_l_dn_disp_an(block, REG_68K_D_SCRATCH_1, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
     } else if (ctx && ctx->wram_base && gb_sp >= 0xd000 && gb_sp <= 0xe000) {
-        // Switchable WRAM ($D000-$DFFF): use page table for correct bank
-        uint8_t page = gb_sp >> 8;
+        // Switchable WRAM ($D000-$DFFF): use page table for correct bank.
+        // resolve through the page of SP-1, the first byte a push writes:
+        // the stack descends, so SP itself may sit one past the region.
+        // SP = $e000 (top-of-WRAM stack) then resolves through page $df -
+        // resolving page $e0 (echo, aliases down to $c000) would place A3
+        // at the bottom of WRAM and the first push would corrupt whatever
+        // sits below the buffer. biased entries are linear, so this makes
+        // no difference for any SP inside the region
+        uint8_t page = (gb_sp - 1) >> 8;
         // D0 = page * 4 (index into page table)
         emit_move_w_dn(block, REG_68K_D_SCRATCH_0, (int16_t)(page * 4));
         // A3 = read_page[page] (biased entry, see PAGE_BIAS in dmg.h)

@@ -700,7 +700,7 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
         size_t emitted = block->length - before;
         // the fused HRAM idle wait is the biggest expected sequence (82)
         if (emitted > 96) {
-            printf("warning: instruction %02x emitted %zu bytes\n", op, emitted);
+            fprintf(stderr, "warning: instruction %02x emitted %zu bytes\n", op, emitted);
         }
 
         if (ctx->single_instruction && !done) {

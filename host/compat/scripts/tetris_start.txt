@@ -1,0 +1,5 @@
+# press Start on the Tetris title screen (appears ~frame 753);
+# advances to the game type / music type screen. proves scripted
+# input works end to end
+800:Start
+806:

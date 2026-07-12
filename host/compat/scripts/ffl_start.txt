@@ -1,0 +1,7 @@
+# FF Legend input repro (PLAN.md backlog): title is up by ~frame 62,
+# Start held for 60 frames should leave the title screen but the game
+# never reacts - the baseline pins the unresponsive title hash, so any
+# change to input/interrupt delivery that fixes (or moves) this shows
+# up in the scoreboard diff
+300:Start
+360:
