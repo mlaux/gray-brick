@@ -10,6 +10,10 @@ int arena_init(void);
 // bump-allocate from the arena, returns NULL if no space
 void *arena_alloc(size_t size);
 
+// shrink the most recent allocation to new_size, no-op if anything was
+// allocated after it
+void arena_shrink(void *ptr, size_t old_size, size_t new_size);
+
 // reset arena pointer to base for instant "free all"
 void arena_reset(void);
 

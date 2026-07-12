@@ -51,6 +51,23 @@ void *arena_alloc(size_t size)
     return p;
 }
 
+// give back the tail of the most recent allocation. no-op if something
+// else was allocated after it (e.g. a bank cache page mid-compile)
+void arena_shrink(void *ptr, size_t old_size, size_t new_size)
+{
+    old_size = (old_size + 3) & ~3;
+    new_size = (new_size + 3) & ~3;
+
+    if ((unsigned char *) ptr + old_size != arena_ptr) {
+        return;
+    }
+    if (new_size >= old_size) {
+        return;
+    }
+
+    arena_ptr = (unsigned char *) ptr + new_size;
+}
+
 void arena_reset(void)
 {
     arena_ptr = arena_base;

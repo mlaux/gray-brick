@@ -85,7 +85,7 @@ struct code_block {
     uint16_t failed_opcode;
     uint16_t failed_address;
     // at the end so arena can only be bumped by actual code size
-    uint8_t code[1024];
+    uint8_t code[2048];
 };
 
 extern uint16_t m68k_offsets[256];
@@ -100,13 +100,13 @@ typedef void *(*alloc_fn)(size_t size);
 
 // compile-time context
 struct compile_ctx {
-    void *dmg;              // dmg pointer for memory reads
-    dmg_read_fn read;       // read function
-    int single_instruction; // if set, compile only one instruction then dispatch
-    cache_store_fn cache_store;  // NULL in tests, registers mid-block entries
-    alloc_fn alloc;              // NULL uses malloc, otherwise arena_alloc
-    uint8_t current_bank;        // current ROM bank for cache_store calls
-    void *wram_base;        // dmg->main_ram for compile-time WRAM SP detection
+    void *dmg;                  // for memory reads
+    dmg_read_fn read;
+    int single_instruction;     // if set, compile only one instruction then dispatch
+    cache_store_fn cache_store; // NULL in tests, registers mid-block entries
+    alloc_fn alloc;             // NULL uses malloc, otherwise arena_alloc
+    uint8_t current_bank;       // current ROM bank for cache_store calls
+    void *wram_base;            // dmg->main_ram for compile-time WRAM SP detection
     void *hram_base;
 };
 

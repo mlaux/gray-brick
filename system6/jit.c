@@ -309,6 +309,9 @@ int jit_run(struct dmg *dmg)
       }
     }
 
+    arena_shrink(block, sizeof *block,
+        offsetof(struct code_block, code) + block->length);
+
     if (block->error) {
       sprintf(buf, "Error pc=%02x:%04x op=%02x", jit_ctx.current_rom_bank, 
                 block->failed_address, block->failed_opcode);
