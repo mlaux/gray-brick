@@ -66,7 +66,7 @@ int compile_jr(
     if (target_gb_offset >= 0 && target_gb_offset < (int16_t) (*src_ptr - 2)) {
         // Backward jump within block
         target_gb_pc = src_address + target_gb_offset;
-        target_m68k = block->m68k_offsets[target_gb_offset];
+        target_m68k = m68k_offsets[target_gb_offset];
         m68k_disp = (int16_t) target_m68k - (int16_t) (block->length + 2);
 
         // Register mid-block entry point for this branch target
@@ -139,7 +139,7 @@ void compile_jr_cond(
     if (target_gb_offset >= 0 && target_gb_offset < (int16_t) (*src_ptr - 2)) {
         // Backward jump - check condition, then maybe interrupt flag
         target_gb_pc = src_address + target_gb_offset;
-        target_m68k = block->m68k_offsets[target_gb_offset];
+        target_m68k = m68k_offsets[target_gb_offset];
         m68k_disp = (int16_t) target_m68k - (int16_t) (block->length + 2);
 
         // Register mid-block entry point for this branch target
@@ -405,7 +405,7 @@ int compile_jr_cond_fused(
     // Check if this is a backward jump within block
     if (target_gb_offset >= 0 && target_gb_offset < (int16_t) (*src_ptr - 2)) {
         target_gb_pc = src_address + target_gb_offset;
-        target_m68k = block->m68k_offsets[target_gb_offset];
+        target_m68k = m68k_offsets[target_gb_offset];
 
         // Register mid-block entry point for this branch target
         if (ctx->cache_store) {

@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "compiler.h"
 #include "emitters.h"
@@ -17,6 +18,7 @@
 #define READ_BYTE(off) (ctx->read(ctx->dmg, src_address + (off)))
 
 int compiler_68020;
+uint16_t m68k_offsets[256];
 
 void compiler_init(void)
 {
@@ -98,7 +100,7 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
     uint16_t src_ptr = 0;
     uint8_t op;
     int done = 0;
-    int k;
+    size_t k;
 
 #ifdef DEBUG_COMPILE
     printf("compile_block: src_address=0x%04x\n", src_address);
@@ -121,6 +123,7 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
     block->error = 0;
     block->failed_opcode = 0;
     block->failed_address = 0;
+    memset(m68k_offsets, 0, sizeof m68k_offsets);
 
     // set everything to illegal instruction so it's easy to catch weird branches
     for (k = 0; k < sizeof block->code; k += 2) {
@@ -132,9 +135,7 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
         size_t before = block->length;
         // detect overflow of code block and chain to next block
         // longest instruction is 178 bytes, exit sequence is 20 bytes
-        // also, a block of all NOPs (Link's Awakening DX has this) overflows
-        // the m68k_offsets array, and i don't want to make it bigger, so
-        // just chain to another block. worst case: 253 nops then a fused compare/branch
+        // worst case: 253 nops then a fused compare/branch
         if (block->length > sizeof(block->code) - 200 || src_ptr >= 256) {
             emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
             emit_move_w_dn(block, REG_68K_D_NEXT_PC, src_address + src_ptr);
@@ -142,7 +143,7 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
             break;
         }
 
-        block->m68k_offsets[src_ptr] = block->length;
+        m68k_offsets[src_ptr] = block->length;
         block->count++;
         op = READ_BYTE(src_ptr);
         src_ptr++;

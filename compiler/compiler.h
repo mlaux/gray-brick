@@ -73,8 +73,6 @@
                                 // HALT/idle fast-forward target
 
 struct code_block {
-    uint8_t code[1024];
-    uint16_t m68k_offsets[256];
     // number of bytes populated in code[]
     size_t length;
     // number of GB instructions
@@ -83,10 +81,14 @@ struct code_block {
     uint16_t end_address; // address after last instruction
 
     // set when compilation hits unknown opcode
-    uint8_t error;
+    uint16_t error;
     uint16_t failed_opcode;
     uint16_t failed_address;
+    // at the end so arena can only be bumped by actual code size
+    uint8_t code[1024];
 };
+
+extern uint16_t m68k_offsets[256];
 
 typedef uint8_t (*dmg_read_fn)(void *dmg, uint16_t address);
 

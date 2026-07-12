@@ -28,7 +28,7 @@ static int try_fuse_branch(
         return 0;
 
     // Record m68k offset for branch instruction and consume opcode
-    block->m68k_offsets[*src_ptr] = block->length;
+    m68k_offsets[*src_ptr] = block->length;
     (*src_ptr)++;
 
     // Emit fused branch based on opcode type
