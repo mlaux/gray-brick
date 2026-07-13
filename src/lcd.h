@@ -67,6 +67,10 @@ struct raster_log_entry {
 // single-band render
 #define RASTER_LOG_SIZE 64
 
+// row_dirty flags from lcd_diff_rows
+#define ROW_DIRTY_CONTENT 1  // packed pixel bytes changed
+#define ROW_DIRTY_OFFSET 2   // row_scx changed
+
 struct lcd {
     u8 oam[0xa0];
     u8 regs[0x0c];
@@ -86,6 +90,11 @@ struct lcd {
     // whole-frame blit offset still works
     u8 row_scx[144];
     u8 row_scx_uniform;
+
+    // what changed since the previous rendered frame (lcd_diff_rows),
+    // so blitters can skip clean rows. frame_dirty ORs all rows
+    u8 row_dirty[144];
+    u8 frame_dirty;
 
     // CGB color palettes (64 bytes each = 8 palettes x 4 colors x 2 bytes RGB555)
     u8 bg_palette_ram[64];
@@ -143,6 +152,10 @@ static inline void lcd_set_mode(struct lcd *lcd, int mode)
 }
 
 int lcd_step(struct lcd *lcd);
+
+// fill row_dirty/frame_dirty by comparing the packed buffer and row_scx
+// against the previous rendered frame
+void lcd_diff_rows(struct lcd *lcd);
 
 // output the pixels to the screen
 void lcd_draw(struct lcd *lcd);

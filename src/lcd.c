@@ -21,8 +21,16 @@ static u8 pixels[42 * 144];
 // CGB attribute buffer: 1 byte per pixel, stores palette/priority
 static u8 attr_buffer[168 * 144];
 
+// previous rendered frame for lcd_diff_rows
+static u8 prev_pixels[42 * 144];
+static u8 prev_row_scx[144];
+static int diff_valid;
+
 // LUT for horizontal flip: reverses bit order in a byte
 u8 hflip_lut[256];
+
+// expands an 8-bit opacity mask to packed 2bpp: bit k -> bits 2k+1,2k
+static u16 mask_expand[256];
 
 // Shift amounts for packed pixel access (avoids 6 - idx * 2 multiply)
 static const u8 pixel_shift[4] = { 6, 4, 2, 0 };
@@ -57,21 +65,23 @@ void lcd_init_lut(void)
         r |= (v & 0x01) << 7;
         hflip_lut[k] = r;
     }
+
+    for (k = 0; k < 256; k++) {
+        u16 m = 0;
+        int b;
+        for (b = 0; b < 8; b++) {
+            if (k & (1 << b)) {
+                m |= 3 << (b * 2);
+            }
+        }
+        mask_expand[k] = m;
+    }
 }
 
-// palette the packed-pixel LUT currently encodes; band replay switches
-// BGP mid-frame, so rebuilds dedup on value
-static int lut_palette = -1;
-
-void lcd_update_palette_lut(u8 palette)
+static void build_packed_lut(u8 *out, u8 palette)
 {
     u8 pal[4];
     int k;
-
-    if (palette == lut_palette) {
-        return;
-    }
-    lut_palette = palette;
 
     pal[0] = palette & 3;
     pal[1] = (palette >> 2) & 3;
@@ -83,8 +93,32 @@ void lcd_update_palette_lut(u8 palette)
         u8 p1 = pal[tile_decode_base[k][1]];
         u8 p2 = pal[tile_decode_base[k][2]];
         u8 p3 = pal[tile_decode_base[k][3]];
-        tile_decode_packed[k] = (p0 << 6) | (p1 << 4) | (p2 << 2) | p3;
+        out[k] = (p0 << 6) | (p1 << 4) | (p2 << 2) | p3;
     }
+}
+
+static int lut_palette = -1;
+
+void lcd_update_palette_lut(u8 palette)
+{
+    if (palette == lut_palette) {
+        return;
+    }
+    lut_palette = palette;
+    build_packed_lut(tile_decode_packed, palette);
+}
+
+// same encoding as tile_decode_packed
+static u8 obj_decode_packed[2][256];
+static int obj_lut_palette[2] = { -1, -1 };
+
+static const u8 *obj_palette_lut(int sel, u8 palette)
+{
+    if (obj_lut_palette[sel] != palette) {
+        obj_lut_palette[sel] = palette;
+        build_packed_lut(obj_decode_packed[sel], palette);
+    }
+    return obj_decode_packed[sel];
 }
 
 struct oam_entry {
@@ -100,6 +134,9 @@ void lcd_new(struct lcd *lcd)
     lcd->pixels = pixels;
     lcd->attrs = attr_buffer;
     lcd->row_scx_uniform = 1;
+    memset(lcd->row_dirty, ROW_DIRTY_CONTENT | ROW_DIRTY_OFFSET, 144);
+    lcd->frame_dirty = ROW_DIRTY_CONTENT | ROW_DIRTY_OFFSET;
+    diff_valid = 0;
     // Initialize CGB palette dirty flags to all-dirty so first frame updates everything
     lcd->bg_palette_dirty = 0xFFFFFFFF;
     lcd->obj_palette_dirty = 0xFFFFFFFF;
@@ -117,6 +154,45 @@ int lcd_step(struct lcd *lcd)
     lcd_write(lcd, REG_LY, next_scanline);
 
     return next_scanline;
+}
+
+// reject scrolling frames fast, static rows have to compare the whole
+// row but that's still faster than drawing
+void lcd_diff_rows(struct lcd *lcd)
+{
+    u8 dirty_all = 0;
+    int y;
+
+    if (!diff_valid) {
+        diff_valid = 1;
+        memcpy(prev_pixels, lcd->pixels, 42 * 144);
+        memcpy(prev_row_scx, lcd->row_scx, 144);
+        memset(lcd->row_dirty, ROW_DIRTY_CONTENT | ROW_DIRTY_OFFSET, 144);
+        lcd->frame_dirty = ROW_DIRTY_CONTENT | ROW_DIRTY_OFFSET;
+        return;
+    }
+
+    for (y = 0; y < 144; y++) {
+        const u16 *row = (const u16 *) (lcd->pixels + y * 42);
+        u16 *prev = (u16 *) (prev_pixels + y * 42);
+        u8 dirty = 0;
+        int k;
+
+        for (k = 0; k < 21; k++) {
+            if (row[k] != prev[k]) {
+                dirty = ROW_DIRTY_CONTENT;
+                memcpy(prev, row, 42);
+                break;
+            }
+        }
+        if (lcd->row_scx[y] != prev_row_scx[y]) {
+            dirty |= ROW_DIRTY_OFFSET;
+            prev_row_scx[y] = lcd->row_scx[y];
+        }
+        lcd->row_dirty[y] = dirty;
+        dirty_all |= dirty;
+    }
+    lcd->frame_dirty = dirty_all;
 }
 
 // render 8 aligned pixels (full tile row) to packed output
@@ -347,21 +423,24 @@ void lcd_render_objs_band(
         }
 
         int tile_off = 16 * oam->tile;
-        u8 palette = oam->attrs & OAM_ATTR_PALETTE
-            ? regs->obp1
-            : regs->obp0;
-        u8 pal[4] = {
-            palette & 3,
-            (palette >> 2) & 3,
-            (palette >> 4) & 3,
-            (palette >> 6) & 3
-        };
+        const u8 *lut = obj_palette_lut(
+            !!(oam->attrs & OAM_ATTR_PALETTE),
+            oam->attrs & OAM_ATTR_PALETTE ? regs->obp1 : regs->obp0);
 
         int lcd_x = oam->pos_x - 8;
         int lcd_y = oam->pos_y - 16;
         int tile_bytes = tall ? 32 : 16;
         int mirror_x = oam->attrs & OAM_ATTR_MIRROR_X;
         int mirror_y = oam->attrs & OAM_ATTR_MIRROR_Y;
+
+        // screen-edge clip as an opacity mask, pixel 0 in the msb
+        int clip = 0xff;
+        if (lcd_x < 0) {
+            clip &= 0xff >> -lcd_x;
+        }
+        if (lcd_x > 152) {
+            clip &= (0xff << (lcd_x - 152)) & 0xff;
+        }
 
         int b;
         for (b = 0; b < tile_bytes; b += 2) {
@@ -374,42 +453,47 @@ void lcd_render_objs_band(
             u8 data1 = vram[tile_off + use_b];
             u8 data2 = vram[tile_off + use_b + 1];
 
-            // calculate visible x range for this row
-            int x_start = lcd_x < 0 ? -lcd_x : 0;
-            int x_end = lcd_x + 8 > 160 ? 160 - lcd_x : 8;
-
-            u8 *row = pixels + row_y * 42;
-            int x;
             if (mirror_x) {
-                // mirrored: read bits from LSB to MSB
-                data1 >>= x_start;
-                data2 >>= x_start;
-                for (x = x_start; x < x_end; x++) {
-                    int col_index = (data1 & 1) | ((data2 & 1) << 1);
-                    data1 >>= 1;
-                    data2 >>= 1;
-                    if (col_index) {
-                        int px = lcd_x + x + scx_offset;
-                        int byte_idx = px >> 2;
-                        int bit_idx = px & 3;
-                        row[byte_idx] = packed_set_pixel(row[byte_idx], bit_idx, pal[col_index]);
-                    }
-                }
-            } else {
-                // normal: read bits from MSB to LSB
-                data1 <<= x_start;
-                data2 <<= x_start;
-                for (x = x_start; x < x_end; x++) {
-                    int col_index = ((data1 >> 7) & 1) | (((data2 >> 7) & 1) << 1);
-                    data1 <<= 1;
-                    data2 <<= 1;
-                    if (col_index) {
-                        int px = lcd_x + x + scx_offset;
-                        int byte_idx = px >> 2;
-                        int bit_idx = px & 3;
-                        row[byte_idx] = packed_set_pixel(row[byte_idx], bit_idx, pal[col_index]);
-                    }
-                }
+                data1 = hflip_lut[data1];
+                data2 = hflip_lut[data2];
+            }
+
+            int mask8 = (data1 | data2) & clip;
+            if (!mask8) {
+                continue;
+            }
+
+            // whole row at once: 16 packed color bits and the opacity
+            // mask, merged into at most 3 buffer bytes
+            int idx_hi = (data1 & 0xf0) | (data2 >> 4);
+            int idx_lo = ((data1 & 0x0f) << 4) | (data2 & 0x0f);
+            u32 bits = (lut[idx_hi] << 8) | lut[idx_lo];
+            u32 mask = mask_expand[mask8];
+
+            int pos = lcd_x + scx_offset;
+            if (pos < 0) {
+                bits <<= -pos * 2;
+                mask <<= -pos * 2;
+                pos = 0;
+            }
+
+            u8 *p = pixels + row_y * 42 + (pos >> 2);
+            int sh = 8 - (pos & 3) * 2;
+            u32 wbits = bits << sh;
+            u32 wmask = mask << sh;
+            u8 m;
+
+            m = (u8) (wmask >> 16);
+            if (m) {
+                p[0] = (p[0] & ~m) | ((u8) (wbits >> 16) & m);
+            }
+            m = (u8) (wmask >> 8);
+            if (m) {
+                p[1] = (p[1] & ~m) | ((u8) (wbits >> 8) & m);
+            }
+            m = (u8) wmask;
+            if (m) {
+                p[2] = (p[2] & ~m) | ((u8) wbits & m);
             }
         }
     }

@@ -501,6 +501,7 @@ void SetScreenScale(int scale)
     }
   }
 
+  lcd_mac_invalidate();
   UpdateMenuItems();
   SavePreferences();
 }
@@ -640,6 +641,7 @@ void OnMenuAction(long action)
           DisposePalette(pal);
         }
         init_indexed_lut(g_wp);
+        lcd_mac_invalidate();
       }
       SavePreferences();
     }
@@ -741,6 +743,9 @@ static int ProcessEvents(void)
       case updateEvt:
         BeginUpdate((WindowPtr) evt.message);
         EndUpdate((WindowPtr) evt.message);
+        if ((WindowPtr) evt.message == g_wp) {
+          lcd_mac_invalidate();
+        }
         break;
       case keyDown:
       case autoKey:

@@ -54,6 +54,7 @@ static int opt_hash_frames;
 static int opt_dump_state;
 static int opt_log_raster;
 static int opt_scx_stats;
+static int opt_dirty_stats;
 static int opt_exit_stats;
 
 // 160x144, gray (1 byte/px) for DMG or RGB (3 bytes/px) for CGB
@@ -154,12 +155,68 @@ static void scx_stats_summary(FILE *out)
     fprintf(out, "\n");
 }
 
+// dirty-row statistics (--dirty-stats): how much work row-skipping
+// blitters save, plus an assertion that rows marked clean really did
+// produce identical output to the previous frame
+static u32 dr_frames, dr_clean_frames, dr_rows_sum, dr_content_sum;
+static u32 dr_mismatches;
+static u8 dr_prev_frame[160 * 144 * 3];
+static int dr_prev_valid;
+
+static void dirty_stats_frame(struct lcd *l, size_t n)
+{
+    size_t row_bytes = n / 144;
+    int dirty_rows = 0, content_rows = 0;
+    int y;
+
+    for (y = 0; y < 144; y++) {
+        if (l->row_dirty[y]) {
+            dirty_rows++;
+        }
+        if (l->row_dirty[y] & ROW_DIRTY_CONTENT) {
+            content_rows++;
+        }
+        if (dr_prev_valid && !l->row_dirty[y]
+                && memcmp(frame_out + y * row_bytes,
+                          dr_prev_frame + y * row_bytes, row_bytes)) {
+            fprintf(stderr, "dirty-stats: MISMATCH frame %u row %d\n",
+                    host_frames_drawn, y);
+            dr_mismatches++;
+        }
+    }
+
+    dr_frames++;
+    if (!dirty_rows) {
+        dr_clean_frames++;
+    }
+    dr_rows_sum += dirty_rows;
+    dr_content_sum += content_rows;
+
+    memcpy(dr_prev_frame, frame_out, n);
+    dr_prev_valid = 1;
+}
+
+static void dirty_stats_summary(FILE *out)
+{
+    fprintf(out, "dirty-stats: %u frames, %u clean (%.1f%%), "
+            "avg dirty rows %.1f, avg content rows %.1f, mismatches %u\n",
+            dr_frames, dr_clean_frames,
+            dr_frames ? 100.0 * dr_clean_frames / dr_frames : 0.0,
+            dr_frames ? (double) dr_rows_sum / dr_frames : 0.0,
+            dr_frames ? (double) dr_content_sum / dr_frames : 0.0,
+            dr_mismatches);
+}
+
 static void frame_hook(struct lcd *l)
 {
     size_t n = extract_frame(l);
 
     if (opt_scx_stats) {
         scx_stats_frame(l);
+    }
+
+    if (opt_dirty_stats) {
+        dirty_stats_frame(l, n);
     }
 
     // where in the frame the snapshot render actually fired, and the reg
@@ -491,6 +548,7 @@ static void usage(void)
         "  --input FILE         scripted joypad input (\"frame:Start,A\" lines)\n"
         "  --log-raster         log raster-relevant register writes + summary\n"
         "  --scx-stats          row_scx uniformity summary to stderr\n"
+        "  --dirty-stats        row-diff savings summary + clean-row assertion\n"
         "  --exit-stats         exit budget causes + interrupt deliveries\n"
         "  --no-stat-ints       drop STAT events from the scheduler (Mac menu toggle)\n"
         "  --chain              chain cached blocks like the Mac dispatcher\n"
@@ -543,6 +601,8 @@ int main(int argc, char *argv[])
             opt_log_raster = 1;
         } else if (!strcmp(argv[k], "--scx-stats")) {
             opt_scx_stats = 1;
+        } else if (!strcmp(argv[k], "--dirty-stats")) {
+            opt_dirty_stats = 1;
         } else if (!strcmp(argv[k], "--exit-stats")) {
             opt_exit_stats = 1;
         } else if (!strcmp(argv[k], "--no-stat-ints")) {
@@ -619,7 +679,8 @@ int main(int argc, char *argv[])
             return 2;
         }
     }
-    if (opt_dump_dir || opt_hash_frames || opt_log_raster || opt_scx_stats) {
+    if (opt_dump_dir || opt_hash_frames || opt_log_raster || opt_scx_stats
+            || opt_dirty_stats) {
         host_lcd_draw_hook = frame_hook;
     }
 
@@ -659,6 +720,9 @@ int main(int argc, char *argv[])
     }
     if (opt_scx_stats) {
         scx_stats_summary(stderr);
+    }
+    if (opt_dirty_stats) {
+        dirty_stats_summary(stderr);
     }
 
     fprintf(stderr,

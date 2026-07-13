@@ -15,6 +15,14 @@
 #include "gb_palettes.h"
 int current_palette = 0;
 
+// set for window updates, palette/scale/mode etc
+static int force_all = 1;
+
+void lcd_mac_invalidate(void)
+{
+  force_all = 1;
+}
+
 // packed byte bits:  [7-6]  [5-4]  [3-2]  [1-0]
 // GB pixel:           p0     p1     p2     p3
 
@@ -107,10 +115,8 @@ void init_indexed_lut(WindowPtr wp)
   }
 }
 
-// blit the converted 8bpp offscreen buffer: one CopyBits per contiguous
-// run of rows sharing a scroll offset. a uniform frame is a single blit
-// exactly as before; split frames cost one extra CopyBits per band
-void lcd_blit_color_bands(struct lcd *lcd_ptr, int scale)
+// one CopyBits per contiguous run of rows sharing a scroll offset and dirty status
+void lcd_blit_color_bands(struct lcd *lcd_ptr, int scale, int all)
 {
   CGrafPtr port;
   Rect src_rect, dst_rect;
@@ -121,27 +127,68 @@ void lcd_blit_color_bands(struct lcd *lcd_ptr, int scale)
 
   while (y0 < 144) {
     int off = lcd_ptr->row_scx[y0];
+    int dirty = all || lcd_ptr->row_dirty[y0] != 0;
     int y1 = y0 + 1;
 
-    while (y1 < 144 && lcd_ptr->row_scx[y1] == off) {
+    while (y1 < 144 && lcd_ptr->row_scx[y1] == off
+           && (all || (lcd_ptr->row_dirty[y1] != 0) == dirty)) {
       y1++;
     }
 
-    src_rect.top = y0 * scale;
-    src_rect.bottom = y1 * scale;
-    src_rect.left = off * scale;
-    src_rect.right = (off + 160) * scale;
+    if (dirty) {
+      src_rect.top = y0 * scale;
+      src_rect.bottom = y1 * scale;
+      src_rect.left = off * scale;
+      src_rect.right = (off + 160) * scale;
 
-    dst_rect.top = y0 * scale;
-    dst_rect.bottom = y1 * scale;
-    dst_rect.left = 0;
-    dst_rect.right = 160 * scale;
+      dst_rect.top = y0 * scale;
+      dst_rect.bottom = y1 * scale;
+      dst_rect.left = 0;
+      dst_rect.right = 160 * scale;
 
-    CopyBits(
-        (BitMap *) &offscreen_pixmap,
-        (BitMap *) *port->portPixMap,
-        &src_rect, &dst_rect, srcCopy, NULL
-    );
+      CopyBits(
+          (BitMap *) &offscreen_pixmap,
+          (BitMap *) *port->portPixMap,
+          &src_rect, &dst_rect, srcCopy, NULL
+      );
+    }
+
+    y0 = y1;
+  }
+}
+
+// same but for BW
+static void lcd_blit_bw_bands(struct lcd *lcd_ptr, int scale, int all)
+{
+  Rect src_rect, dst_rect;
+  int y0 = 0;
+
+  SetPort(g_wp);
+
+  while (y0 < 144) {
+    int off = lcd_ptr->row_scx[y0];
+    int dirty = all || lcd_ptr->row_dirty[y0] != 0;
+    int y1 = y0 + 1;
+
+    while (y1 < 144 && lcd_ptr->row_scx[y1] == off
+           && (all || (lcd_ptr->row_dirty[y1] != 0) == dirty)) {
+      y1++;
+    }
+
+    if (dirty) {
+      src_rect.top = y0 * scale;
+      src_rect.bottom = y1 * scale;
+      src_rect.left = off * scale;
+      src_rect.right = (off + 160) * scale;
+
+      dst_rect.top = y0 * scale;
+      dst_rect.bottom = y1 * scale;
+      dst_rect.left = 0;
+      dst_rect.right = 160 * scale;
+
+      CopyBits(&offscreen_bmp, &g_wp->portBits,
+               &src_rect, &dst_rect, srcCopy, NULL);
+    }
 
     y0 = y1;
   }
@@ -153,98 +200,30 @@ static void lcd_draw_1x_copybits(struct lcd *lcd_ptr)
   int gy;
   unsigned char *src = lcd_ptr->pixels;
   unsigned char *dst = (unsigned char *) offscreen_buf;
-  Rect srcRect;
 
-  if (lcd_ptr->row_scx_uniform) {
-    for (gy = 0; gy < 144; gy++) {
-      int gx;
-      for (gx = 0; gx < 42; gx += 2) {
-        // 2 packed bytes = 8 pixels -> 1 output byte
-        *dst++ = thresh_hi[src[0]] | thresh_lo[src[1]];
-        src += 2;
-      }
-    }
-    srcRect.left = lcd_ptr->row_scx[0];
-  } else {
-    // bands rendered at different scroll offsets: shift each row into
-    // place and blit from column 0
-    for (gy = 0; gy < 144; gy++) {
-      int bit_offset = lcd_ptr->row_scx[gy];
-      int gx;
-
-      if (bit_offset == 0) {
-        for (gx = 0; gx < 20; gx++) {
-          dst[gx] = thresh_hi[src[gx * 2]] | thresh_lo[src[gx * 2 + 1]];
-        }
-      } else {
-        unsigned char prev = thresh_hi[src[0]] | thresh_lo[src[1]];
-        for (gx = 0; gx < 20; gx++) {
-          unsigned char next = thresh_hi[src[(gx + 1) * 2]] | thresh_lo[src[(gx + 1) * 2 + 1]];
-          dst[gx] = (prev << bit_offset) | (next >> (8 - bit_offset));
-          prev = next;
-        }
-      }
-      src += 42;
-      dst += 21;
-    }
-    srcRect.left = 0;
+  if (!force_all && !lcd_ptr->frame_dirty) {
+    return;
   }
 
-  // source rect is offset by scroll amount, destination is full window
-  srcRect.top = 0;
-  srcRect.bottom = 144;
-  srcRect.right = srcRect.left + 160;
+  for (gy = 0; gy < 144; gy++) {
+    // not ROW_DIRTY_OFFSET bc the actual pixels are the same for that
+    if (force_all || (lcd_ptr->row_dirty[gy] & ROW_DIRTY_CONTENT)) {
+      int gx;
+      for (gx = 0; gx < 21; gx++) {
+        // 2 packed bytes = 8 pixels -> 1 output byte
+        dst[gx] = thresh_hi[src[gx * 2]] | thresh_lo[src[gx * 2 + 1]];
+      }
+    }
+    src += 42;
+    dst += 21;
+  }
 
-  SetPort(g_wp);
-  CopyBits(&offscreen_bmp, &g_wp->portBits, &srcRect, &offscreen_rect, srcCopy, NULL);
+  lcd_blit_bw_bands(lcd_ptr, 1, force_all);
 }
 
 static void lcd_draw_1x_direct(struct lcd *lcd_ptr)
 {
-  int gy;
-  unsigned char *src = lcd_ptr->pixels;
-  unsigned char *dst;
-  int screen_rb;
-  Point topLeft;
-
-  SetPort(g_wp);
-  topLeft.h = 0;
-  topLeft.v = 0;
-  LocalToGlobal(&topLeft);
-
-  screen_rb = qd.screenBits.rowBytes;
-  dst = (unsigned char *) qd.screenBits.baseAddr
-      + (topLeft.v * screen_rb)
-      + (topLeft.h >> 3);
-
-  // each row's scroll offset is 0-7 pixels
-  // each output byte = thresh_hi[src[2n]] | thresh_lo[src[2n+1]]
-  // with bit_offset, we need to combine bits across thresholded byte boundaries
-
-  for (gy = 0; gy < 144; gy++) {
-    unsigned char *row = dst;
-    int bit_offset = lcd_ptr->row_scx[gy];
-    int gx;
-
-    if (bit_offset == 0) {
-      // no shift needed, direct threshold
-      for (gx = 0; gx < 20; gx++) {
-        row[gx] = thresh_hi[src[gx * 2]] | thresh_lo[src[gx * 2 + 1]];
-      }
-    } else {
-      // need to shift - compute 21 thresholded bytes, combine with offset
-      // inline the threshold computation to avoid temp buffer
-      unsigned char prev = thresh_hi[src[0]] | thresh_lo[src[1]];
-      for (gx = 0; gx < 20; gx++) {
-        unsigned char next = thresh_hi[src[(gx + 1) * 2]] | thresh_lo[src[(gx + 1) * 2 + 1]];
-        row[gx] = (prev << bit_offset) | (next >> (8 - bit_offset));
-        prev = next;
-      }
-    }
-
-    src += 42;
-    dst += screen_rb;
-  }
+  // TODO REMOVE
 }
 
 static void lcd_draw_1x_indexed(struct lcd *lcd_ptr)
@@ -256,137 +235,65 @@ static void lcd_draw_1x_indexed(struct lcd *lcd_ptr)
   if (screen_depth == 1) {
     return;
   }
-
-  // convert all 168 buffer pixels per row; per-band scroll offsets are
-  // handled by the band blit's source rects
-  for (gy = 0; gy < 144; gy++) {
-    int gx;
-    for (gx = 0; gx < 42; gx++) {
-      // LUT maps packed byte directly to 4 color pixels
-      *dst++ = color_lut_1x[*src++];
-    }
+  if (!force_all && !lcd_ptr->frame_dirty) {
+    return;
   }
 
-  lcd_blit_color_bands(lcd_ptr, 1);
+  for (gy = 0; gy < 144; gy++) {
+    // not ROW_DIRTY_OFFSET bc the actual pixels are the same for that
+    if (force_all || (lcd_ptr->row_dirty[gy] & ROW_DIRTY_CONTENT)) {
+      int gx;
+      for (gx = 0; gx < 42; gx++) {
+        // LUT maps packed byte directly to 4 color pixels
+        dst[gx] = color_lut_1x[src[gx]];
+      }
+    }
+    src += 42;
+    dst += 42;
+  }
+
+  lcd_blit_color_bands(lcd_ptr, 1, force_all);
 }
 
-// might work better for color Macs with more advanced video hardware.
-// direct rendering was slower than CopyBits on my IIfx
 static void lcd_draw_2x_copybits(struct lcd *lcd_ptr)
 {
   int gy;
   unsigned char *src = lcd_ptr->pixels;
   unsigned char *dst = (unsigned char *) offscreen_buf;
-  Rect srcRect;
 
-  if (lcd_ptr->row_scx_uniform) {
-    for (gy = 0; gy < 144; gy++) {
-      unsigned char *row0 = dst;
-      unsigned char *row1 = dst + 42;
-      int gx;
-
-      for (gx = 0; gx < 42; gx++) {
-        // packed byte is already the LUT index
-        unsigned char idx = *src++;
-        *row0++ = dither_row0[idx];
-        *row1++ = dither_row1[idx];
-      }
-
-      // advance 2 screen rows at a time
-      dst += 84;
-    }
-    srcRect.left = lcd_ptr->row_scx[0] * 2;
-  } else {
-    // bands rendered at different scroll offsets: shift each row into
-    // place and blit from column 0
-    for (gy = 0; gy < 144; gy++) {
-      unsigned char *row0 = dst;
-      unsigned char *row1 = dst + 42;
-      int px_offset = lcd_ptr->row_scx[gy] * 2;
-      int byte_offset = px_offset >> 3;
-      int bit_offset = px_offset & 7;
-      int gx;
-
-      if (bit_offset == 0) {
-        for (gx = 0; gx < 40; gx++) {
-          unsigned char idx = src[byte_offset + gx];
-          row0[gx] = dither_row0[idx];
-          row1[gx] = dither_row1[idx];
-        }
-      } else {
-        for (gx = 0; gx < 40; gx++) {
-          unsigned char idx0 = src[byte_offset + gx];
-          unsigned char idx1 = src[byte_offset + gx + 1];
-          row0[gx] = (dither_row0[idx0] << bit_offset) |
-                     (dither_row0[idx1] >> (8 - bit_offset));
-          row1[gx] = (dither_row1[idx0] << bit_offset) |
-                     (dither_row1[idx1] >> (8 - bit_offset));
-        }
-      }
-      src += 42;
-      dst += 84;
-    }
-    srcRect.left = 0;
+  if (!force_all && !lcd_ptr->frame_dirty) {
+    return;
   }
-
-  // source rect is offset by scroll amount, destination is full window
-  srcRect.top = 0;
-  srcRect.bottom = 288;
-  srcRect.right = srcRect.left + 320;
-
-  SetPort(g_wp);
-  CopyBits(&offscreen_bmp, &g_wp->portBits, &srcRect, &offscreen_rect, srcCopy, NULL);
-}
-
-static void lcd_draw_2x_direct(struct lcd *lcd_ptr)
-{
-  int gy;
-  unsigned char *src = lcd_ptr->pixels;
-  unsigned char *dst;
-  int screen_rb;
-  Point topLeft;
-
-  // get window's screen position
-  SetPort(g_wp);
-  topLeft.h = 0;
-  topLeft.v = 0;
-  LocalToGlobal(&topLeft);
-
-  // calculate screen destination, assumes byte-aligned X
-  // TODO prevent dragging window offscreen and snap to 8px when dropping
-  screen_rb = qd.screenBits.rowBytes;
-  dst = (unsigned char *) qd.screenBits.baseAddr
-      + (topLeft.v * screen_rb)
-      + (topLeft.h >> 3);
 
   for (gy = 0; gy < 144; gy++) {
     unsigned char *row0 = dst;
-    unsigned char *row1 = dst + screen_rb;
-    int px_offset = lcd_ptr->row_scx[gy] * 2;
-    int byte_offset = px_offset >> 3;
-    int bit_offset = px_offset & 7;
+    unsigned char *row1 = dst + 42;
     int gx;
 
-    if (bit_offset == 0) {
-      for (gx = 0; gx < 40; gx++) {
-        unsigned char idx = src[byte_offset + gx];
-        row0[gx] = dither_row0[idx];
-        row1[gx] = dither_row1[idx];
-      }
-    } else {
-      for (gx = 0; gx < 40; gx++) {
-        unsigned char idx0 = src[byte_offset + gx];
-        unsigned char idx1 = src[byte_offset + gx + 1];
-        row0[gx] = (dither_row0[idx0] << bit_offset) |
-                   (dither_row0[idx1] >> (8 - bit_offset));
-        row1[gx] = (dither_row1[idx0] << bit_offset) |
-                   (dither_row1[idx1] >> (8 - bit_offset));
-      }
+    if (!force_all && !(lcd_ptr->row_dirty[gy] & ROW_DIRTY_CONTENT)) {
+      src += 42;
+      dst += 84;
+      continue;
     }
 
-    src += 42;
-    dst += screen_rb * 2;
+    for (gx = 0; gx < 42; gx++) {
+      // packed byte is already the LUT index
+      unsigned char idx = *src++;
+      *row0++ = dither_row0[idx];
+      *row1++ = dither_row1[idx];
+    }
+
+    // advance 2 screen rows at a time
+    dst += 84;
   }
+
+  lcd_blit_bw_bands(lcd_ptr, 2, force_all);
+}
+
+// faster on plus/SE etc
+static void lcd_draw_2x_direct(struct lcd *lcd_ptr)
+{
+  // TODO REMOVE
 }
 
 static void lcd_draw_2x_indexed(struct lcd *lcd_ptr)
@@ -398,14 +305,24 @@ static void lcd_draw_2x_indexed(struct lcd *lcd_ptr)
   if (screen_depth == 1) {
     return;
   }
+  if (!force_all && !lcd_ptr->frame_dirty) {
+    return;
+  }
 
   // convert all 168 buffer pixels per row; per-band scroll offsets are
-  // handled by the band blit's source rects
+  // handled by the band blit's source rects, so offset-only rows keep
+  // their converted bytes
   for (gy = 0; gy < 144; gy++) {
     // row stride in longs: 336 bytes / 4 = 84 longs
     unsigned long *row0 = dst;
     unsigned long *row1 = dst + 84;
     int gx;
+
+    if (!force_all && !(lcd_ptr->row_dirty[gy] & ROW_DIRTY_CONTENT)) {
+      src += 42;
+      dst += 168;
+      continue;
+    }
 
     for (gx = 0; gx < 42; gx++) {
       // LUT maps packed byte to 8 doubled pixels (two 32-bit values)
@@ -425,7 +342,7 @@ static void lcd_draw_2x_indexed(struct lcd *lcd_ptr)
     dst += 168;  // 2 rows * 84 longs per row
   }
 
-  lcd_blit_color_bands(lcd_ptr, 2);
+  lcd_blit_color_bands(lcd_ptr, 2, force_all);
 }
 
 void (*draw_funcs[2][3])(struct lcd *) = {
@@ -433,18 +350,19 @@ void (*draw_funcs[2][3])(struct lcd *) = {
   { lcd_draw_2x_copybits, lcd_draw_2x_direct, lcd_draw_2x_indexed },
 };
 
-// External CGB draw function (in lcd_mac_cgb.c)
+// lcd_mac_cgb.c
 void lcd_draw_cgb(struct lcd *lcd_ptr);
 
 // called by dmg_step at vblank
 void lcd_draw(struct lcd *lcd_ptr)
 {
-  // Check if CGB mode - if so, use CGB-specific rendering
   if (dmg.cgb && dmg.cgb->mode && screen_depth > 1) {
     lcd_draw_cgb(lcd_ptr);
+    force_all = 0;
     return;
   }
 
   // screen scale is 1 based, video mode is 0 based
   draw_funcs[screen_scale - 1][video_mode](lcd_ptr);
+  force_all = 0;
 }

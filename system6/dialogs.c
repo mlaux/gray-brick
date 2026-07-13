@@ -10,6 +10,7 @@
 #include "dialogs.h"
 #include "settings.h"
 #include "gb_palettes.h"
+#include "lcd_mac.h"
 
 // default mappings: up=W, down=S, left=A, right=D, a=L, b=K, select=N, start=M
 static unsigned char defaultMappings[8] = { 0x0d, 0x01, 0x00, 0x02, 0x25, 0x28, 0x2d, 0x2e };
@@ -583,6 +584,7 @@ void ShowPreferencesDialog(void)
   if (itemHit == ok) {
     video_mode = videoModeItem - 5;
     frame_skip = frameSkipItem - 8;
+    lcd_mac_invalidate();
     SavePreferences();
   }
 

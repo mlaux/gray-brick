@@ -15,6 +15,8 @@ void init_indexed_lut(WindowPtr wp);
 
 struct lcd;
 void lcd_draw(struct lcd *lcd_ptr);
-void lcd_blit_color_bands(struct lcd *lcd_ptr, int scale);
+void lcd_blit_color_bands(struct lcd *lcd_ptr, int scale, int all);
+
+void lcd_mac_invalidate(void);
 
 #endif

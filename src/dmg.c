@@ -1004,6 +1004,15 @@ static void render_frame(struct dmg *dmg)
     }
     lcd->row_scx_uniform = uniform;
 
+    // CGB row content also depends on palette ram and attrs, which the
+    // diff does not see; keep every row dirty so blitters never skip
+    if (dmg->cgb && dmg->cgb->mode) {
+        memset(lcd->row_dirty, ROW_DIRTY_CONTENT | ROW_DIRTY_OFFSET, 144);
+        lcd->frame_dirty = ROW_DIRTY_CONTENT | ROW_DIRTY_OFFSET;
+    } else {
+        lcd_diff_rows(lcd);
+    }
+
     lcd_draw(lcd);
 }
 
