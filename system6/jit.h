@@ -12,8 +12,8 @@ typedef struct {
     /*  4 */ void *read_func;
     /*  8 */ void *write_func;
     /*  c */ void *ei_di_func;
-    /* 10 */ volatile u8 trace_enabled; // if set, dispatcher always returns to C
-    /* 11 */ volatile u8 current_rom_bank;
+    /* 10 */ u8 trace_enabled; // if set, dispatcher always returns to C
+    /* 11 */ u8 current_rom_bank;
     /* 12 */ u8 _pad[2];
     /* 14 */ void **bank0_cache;
     /* 18 */ void ***banked_cache;
@@ -27,7 +27,7 @@ typedef struct {
     /* 38 */ u32 _pad2;
     /* 3c */ u32 *frame_cycles_ptr; // pointer to dmg->frame_cycles for HALT
     /* 40 */ void *stop_func;  // STOP handler (for CGB speed switch)
-    /* 44 */ volatile u8 effective_double_speed;  // 1 when cgb double_speed && !ignore_double_speed
+    /* 44 */ u8 effective_double_speed;  // 1 when cgb double_speed && !ignore_double_speed
     /* 45 */ u8 _pad4[3];
     /* 48 */ u16 gb_sp; // GB stack pointer value (always valid)
     /* 4a */ u16 _pad3;

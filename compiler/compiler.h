@@ -39,6 +39,7 @@
 #define REG_68K_A_READ_PAGE 5
 #define REG_68K_A_WRITE_PAGE 6
 
+#define COND_HI  2   // unsigned higher
 #define COND_CC  4   // carry clear (nc)
 #define COND_CS  5   // carry set (c)
 #define COND_NE  6   // not equal/not zero (nz)

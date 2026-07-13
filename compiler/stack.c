@@ -18,10 +18,11 @@ void compile_ld_sp_imm16(
     emit_move_w_dn(block, REG_68K_D_SCRATCH_1, gb_sp);
     emit_move_w_dn_disp_an(block, REG_68K_D_SCRATCH_1, JIT_CTX_GB_SP, REG_68K_A_CTX);
 
-    // compile-time WRAM/HRAM detection. stacks at the exact bottom of a
-    // region ($c000, $ff80) stay in slow mode: the first push writes
-    // below the region, and a native A3 would walk out of the buffer
-    if (ctx && ctx->wram_base && gb_sp > 0xc000 && gb_sp < 0xd000) {
+    // compile-time WRAM/HRAM detection. stacks less than 2 bytes above
+    // the bottom of a region ($c000/$c001, $ff80/$ff81) stay in slow
+    // mode: the first push writes at SP-2, below the region, and a
+    // native A3 would walk out of the buffer
+    if (ctx && ctx->wram_base && gb_sp >= 0xc002 && gb_sp < 0xd000) {
         // WRAM bank 0 ($C000-$CFFF): always fixed, use compile-time address
         uint32_t addr = (uint32_t) ctx->wram_base + (gb_sp - 0xc000);
         emit_movea_l_imm32(block, REG_68K_A_SP, addr);
@@ -41,7 +42,7 @@ void compile_ld_sp_imm16(
         emit_lea_disp_an_an(block, (int16_t) gb_sp, REG_68K_A_SP, REG_68K_A_SP);
         emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 1);
         emit_move_l_dn_disp_an(block, REG_68K_D_SCRATCH_1, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
-    } else if (ctx && ctx->hram_base && gb_sp >= 0xff80 && gb_sp <= 0xfffe) {
+    } else if (ctx && ctx->hram_base && gb_sp >= 0xff82 && gb_sp <= 0xfffe) {
         // HRAM: A3 = hram_base + (gb_sp - 0xFF80)
         uint32_t addr = (uint32_t) ctx->hram_base + (gb_sp - 0xff80);
         emit_movea_l_imm32(block, REG_68K_A_SP, addr);
@@ -402,22 +403,22 @@ int compile_stack_op(
                 // Runtime range check for WRAM and HRAM
                 size_t not_wram, not_hram, done, done2;
 
-                // Check WRAM: $C000 <= HL < $E000
-                // Check if high byte is in [$C0, $E0)
+                // Check WRAM: $c002 <= HL <= $e000, same bounds as the
+                // compile-time path above
                 emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
-                emit_rol_w_8(block, REG_68K_D_SCRATCH_1);  // get high byte into low position
-                emit_subi_b_dn(block, REG_68K_D_SCRATCH_1, 0xc0);  // high byte - $C0
-                emit_cmp_b_imm_dn(block, REG_68K_D_SCRATCH_1, 0x20);  // < $20 means [$C0, $E0)
+                emit_subi_w_dn(block, 0xc002, REG_68K_D_SCRATCH_1);
+                emit_cmpi_w_imm_dn(block, 0xe000 - 0xc002, REG_68K_D_SCRATCH_1);
                 not_wram = block->length;
-                emit_bcc_w(block, 0);  // branch if >= $20 (not WRAM)
+                emit_bcc_opcode_w(block, COND_HI, 0);  // branch if out of range
 
                 // WRAM path: use page table for correct bank
-                // A3 = read_page[HL >> 8] + (s16)HL (entries are biased)
-                // This handles CGB switchable WRAM banks ($D000-$DFFF)
-                // correctly, since the page table is updated on bank switch
+                // A3 = read_page[(HL-1) >> 8] + (s16)HL (entries are
+                // biased). page of HL-1, same rule as the compile-time
+                // path: HL = $e000 anchors in page $df
                 emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
-                // D0 = HL >> 8 (page number)
+                // D0 = (HL - 1) >> 8 (page number)
                 emit_move_w_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);
+                emit_subq_w_dn(block, REG_68K_D_SCRATCH_0, 1);
                 emit_lsr_w_imm_dn(block, 8, REG_68K_D_SCRATCH_0);
                 // A3 = read_page[page] (biased entry, see PAGE_BIAS in dmg.h)
                 compile_page_lookup(block, REG_68K_A_READ_PAGE, REG_68K_D_SCRATCH_0, REG_68K_A_SP);
@@ -428,17 +429,17 @@ int compile_stack_op(
                 done = block->length;
                 emit_bra_w(block, 0);
 
-                // Not WRAM - check HRAM: high byte == $FF
+                // Not WRAM - check HRAM
                 block->code[not_wram + 2] = (block->length - not_wram - 2) >> 8;
                 block->code[not_wram + 3] = (block->length - not_wram - 2) & 0xff;
 
                 if (ctx->hram_base) {
-                    // Check if high byte is $FF
+                    // Check HRAM: $ff82 <= HL <= $fffe
                     emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
-                    emit_rol_w_8(block, REG_68K_D_SCRATCH_1);  // get high byte into low position
-                    emit_cmp_b_imm_dn(block, REG_68K_D_SCRATCH_1, 0xff);
+                    emit_subi_w_dn(block, 0xff82, REG_68K_D_SCRATCH_1);
+                    emit_cmpi_w_imm_dn(block, 0xfffe - 0xff82, REG_68K_D_SCRATCH_1);
                     not_hram = block->length;
-                    emit_bne_w(block, 0);  // branch if high byte != $FF
+                    emit_bcc_opcode_w(block, COND_HI, 0);  // branch if out of range
 
                     // HRAM path: A3 = hram_base + (HL - $FF80)
                     emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
