@@ -656,8 +656,13 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
         case 0xfa: // ld a, (u16)
             {
                 uint16_t addr = READ_BYTE(src_ptr) | (READ_BYTE(src_ptr + 1) << 8);
+                // banked reads only fold from banked blocks (cached per bank);
+                // fixed/upper blocks run under any bank, so read at runtime
+                int fold = addr < 0x4000
+                        || (addr < 0x8000 && src_address >= 0x4000
+                            && src_address < 0x8000);
                 src_ptr += 2;
-                if (addr < 0x8000) {
+                if (fold) {
                     uint8_t val = ctx->read(ctx->dmg, addr);
                     emit_moveq_dn(block, REG_68K_D_A, val);
                 } else {
