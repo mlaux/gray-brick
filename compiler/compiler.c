@@ -298,7 +298,8 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
 
         case 0x39: // add hl, sp
             emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_0);  // D0.w = HL
-            emit_move_w_an_dn(block, REG_68K_A_SP, REG_68K_D_SCRATCH_1);  // D1.w = SP
+            // read gb_sp from context, not A3 - might be a native pointer
+            emit_move_w_disp_an_dn(block, JIT_CTX_GB_SP, REG_68K_A_CTX, REG_68K_D_SCRATCH_1);
             emit_add_w_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);  // D0 += D1, sets C
             emit_movea_w_dn_an(block, REG_68K_D_SCRATCH_0, REG_68K_A_HL);  // HL = D0
             compile_set_c_flag(block);

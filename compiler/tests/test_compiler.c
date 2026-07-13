@@ -265,6 +265,10 @@ void run_program(uint8_t *gb_rom, uint16_t start_pc)
     // Initialize GB stack pointer (A3 = base + SP, and JIT_CTX_GB_SP for slow path)
     m68k_set_reg(M68K_REG_A3, GB_MEM_BASE + DEFAULT_GB_SP);
     m68k_write_memory_16(JIT_CTX_ADDR + JIT_CTX_GB_SP, DEFAULT_GB_SP);
+    // start in fast mode like the real emulator. GB_MEM_BASE is 0, so A3
+    // doubles as a valid host pointer. ld sp drops back to slow mode
+    // because test_ctx has no wram_base
+    m68k_write_memory_32(JIT_CTX_ADDR + JIT_CTX_STACK_IN_RAM, 1);
 
     // Set A4 to runtime context
     m68k_set_reg(M68K_REG_A4, JIT_CTX_ADDR);
@@ -406,8 +410,10 @@ void run_block_with_frame_cycles_mem(
     // Set A4 to runtime context
     m68k_set_reg(M68K_REG_A4, JIT_CTX_ADDR);
 
-    // Initialize GB stack pointer (A3 = base + SP)
+    // Initialize GB stack pointer (A3 = base + SP), fast mode as above
     m68k_set_reg(M68K_REG_A3, GB_MEM_BASE + DEFAULT_GB_SP);
+    m68k_write_memory_16(JIT_CTX_ADDR + JIT_CTX_GB_SP, DEFAULT_GB_SP);
+    m68k_write_memory_32(JIT_CTX_ADDR + JIT_CTX_STACK_IN_RAM, 1);
 
     m68k_execute(1000);
 

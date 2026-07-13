@@ -2,6 +2,7 @@
 #include "compiler.h"
 #include "branches.h"
 #include "emitters.h"
+#include "stack.h"
 
 // helper for reading GB memory during compilation
 #define READ_BYTE(off) (ctx->read(ctx->dmg, src_address + (off)))
@@ -267,13 +268,7 @@ void compile_call_imm16(
     uint16_t ret_addr = src_address + *src_ptr + 2;  // address after call
     *src_ptr += 2;
 
-    // push return address (A3 = native WRAM pointer)
-    emit_subq_w_an(block, REG_68K_A_SP, 2);
-    emit_subi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
-    emit_move_w_dn(block, REG_68K_D_SCRATCH_1, ret_addr);
-    emit_move_b_dn_ind_an(block, REG_68K_D_SCRATCH_1, REG_68K_A_SP);
-    emit_rol_w_8(block, REG_68K_D_SCRATCH_1);
-    emit_move_b_dn_disp_an(block, REG_68K_D_SCRATCH_1, 1, REG_68K_A_SP);
+    compile_push_imm16(block, ret_addr);
 
     // jump to target
     emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
@@ -294,45 +289,35 @@ void compile_call_cond(
 ) {
     uint16_t target = READ_BYTE(*src_ptr) | (READ_BYTE(*src_ptr + 1) << 8);
     uint16_t ret_addr = src_address + *src_ptr + 2;  // address after call
+    size_t skip;
     *src_ptr += 2;
 
     // Test the flag bit in D7
     emit_btst_imm_dn(block, flag_bit, REG_68K_D_FLAGS);
 
     // If condition NOT met, skip the call sequence
-    // call sequence: addi(6) + subq(2) + subi(6) + move.w(4) + move.b(2) + rol(2) + move.b(4) +
-    //                moveq(2) + move.w(4) + patchable_exit(16) = 48, +2 = 50
+    skip = block->length;
     if (branch_if_set) {
-        emit_beq_w(block, 50);
+        emit_beq_w(block, 0);
     } else {
-        emit_bne_w(block, 50);
+        emit_bne_w(block, 0);
     }
 
     emit_add_cycles(block, 12);  // extra cycles for taken branch
-
-    // Push return address
-    emit_subq_w_an(block, REG_68K_A_SP, 2);
-    emit_subi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
-    emit_move_w_dn(block, REG_68K_D_SCRATCH_1, ret_addr);
-    emit_move_b_dn_ind_an(block, REG_68K_D_SCRATCH_1, REG_68K_A_SP);
-    emit_rol_w_8(block, REG_68K_D_SCRATCH_1);
-    emit_move_b_dn_disp_an(block, REG_68K_D_SCRATCH_1, 1, REG_68K_A_SP);
+    compile_push_imm16(block, ret_addr);
 
     // Jump to target
     emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
     emit_move_w_dn(block, REG_68K_D_NEXT_PC, target);
     emit_patchable_exit(block);
+
+    block->code[skip + 2] = (block->length - skip - 2) >> 8;
+    block->code[skip + 3] = (block->length - skip - 2) & 0xff;
 }
 
 void compile_ret(struct code_block *block)
 {
-    // pop return address from stack (A3 = native WRAM pointer)
-    emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
-    emit_move_b_disp_an_dn(block, 1, REG_68K_A_SP, REG_68K_D_NEXT_PC);
-    emit_rol_w_8(block, REG_68K_D_NEXT_PC);
-    emit_move_b_ind_an_dn(block, REG_68K_A_SP, REG_68K_D_NEXT_PC);
-    emit_addq_w_an(block, REG_68K_A_SP, 2);
-    emit_addi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
+    compile_pop_pc(block);
     emit_dispatch_jump(block);
 }
 
@@ -341,39 +326,30 @@ void compile_ret(struct code_block *block)
 // branch_if_set: if true, return when flag is set; if false, return when clear
 void compile_ret_cond(struct code_block *block, uint8_t flag_bit, int branch_if_set)
 {
+    size_t skip;
+
     // Test the flag bit in D7
     emit_btst_imm_dn(block, flag_bit, REG_68K_D_FLAGS);
 
     // If condition NOT met, skip the return sequence
-    // ret sequence: addi(6) + moveq(2) + move.b(4) + rol(2) + move.b(2) + addq(2) + addi(6) +
-    //               dispatch_jump(6) = 30, +2 = 32
+    skip = block->length;
     if (branch_if_set) {
-        emit_beq_w(block, 32);
+        emit_beq_w(block, 0);
     } else {
-        emit_bne_w(block, 32);
+        emit_bne_w(block, 0);
     }
 
     emit_add_cycles(block, 12);  // extra cycles for taken branch
-
-    // Pop return address and dispatch
-    emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
-    emit_move_b_disp_an_dn(block, 1, REG_68K_A_SP, REG_68K_D_NEXT_PC);
-    emit_rol_w_8(block, REG_68K_D_NEXT_PC);
-    emit_move_b_ind_an_dn(block, REG_68K_A_SP, REG_68K_D_NEXT_PC);
-    emit_addq_w_an(block, REG_68K_A_SP, 2);
-    emit_addi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
+    compile_pop_pc(block);
     emit_dispatch_jump(block);
+
+    block->code[skip + 2] = (block->length - skip - 2) >> 8;
+    block->code[skip + 3] = (block->length - skip - 2) & 0xff;
 }
 
 void compile_rst_n(struct code_block *block, uint8_t target, uint16_t ret_addr)
 {
-    // push return address
-    emit_subq_w_an(block, REG_68K_A_SP, 2);
-    emit_subi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
-    emit_move_w_dn(block, REG_68K_D_SCRATCH_1, ret_addr);
-    emit_move_b_dn_ind_an(block, REG_68K_D_SCRATCH_1, REG_68K_A_SP);
-    emit_rol_w_8(block, REG_68K_D_SCRATCH_1);
-    emit_move_b_dn_disp_an(block, REG_68K_D_SCRATCH_1, 1, REG_68K_A_SP);
+    compile_push_imm16(block, ret_addr);
 
     // jump to target (0x00, 0x08, 0x10, 0x18, 0x20, 0x28, 0x30, 0x38)
     emit_moveq_dn(block, REG_68K_D_NEXT_PC, target);
@@ -492,21 +468,18 @@ void compile_jp_cond_fused(
 // Fused ret cond - uses live CCR flags
 void compile_ret_cond_fused(struct code_block *block, int cond)
 {
+    size_t skip;
+
     // Skip return if condition NOT met
-    // ret sequence: addi(6) + moveq(2) + move.b(4) + rol(2) + move.b(2) + addq(2) + addi(6) +
-    //               dispatch_jump(6) = 30, +2 = 32
-    emit_bcc_opcode_w(block, invert_cond(cond), 32);
+    skip = block->length;
+    emit_bcc_opcode_w(block, invert_cond(cond), 0);
 
     emit_add_cycles(block, 12);  // extra cycles for taken branch
-
-    // Pop return address and dispatch
-    emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
-    emit_move_b_disp_an_dn(block, 1, REG_68K_A_SP, REG_68K_D_NEXT_PC);
-    emit_rol_w_8(block, REG_68K_D_NEXT_PC);
-    emit_move_b_ind_an_dn(block, REG_68K_A_SP, REG_68K_D_NEXT_PC);
-    emit_addq_w_an(block, REG_68K_A_SP, 2);
-    emit_addi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
+    compile_pop_pc(block);
     emit_dispatch_jump(block);
+
+    block->code[skip + 2] = (block->length - skip - 2) >> 8;
+    block->code[skip + 3] = (block->length - skip - 2) & 0xff;
 }
 
 // Fused call cond - uses live CCR flags
@@ -519,25 +492,21 @@ void compile_call_cond_fused(
 ) {
     uint16_t target = READ_BYTE(*src_ptr) | (READ_BYTE(*src_ptr + 1) << 8);
     uint16_t ret_addr = src_address + *src_ptr + 2;
+    size_t skip;
     *src_ptr += 2;
 
     // Skip call if condition NOT met
-    // call sequence: addi(6) + subq(2) + subi(6) + move.w(4) + move.b(2) + rol(2) + move.b(4) +
-    //                moveq(2) + move.w(4) + patchable_exit(16) = 48, +2 = 50
-    emit_bcc_opcode_w(block, invert_cond(cond), 50);
+    skip = block->length;
+    emit_bcc_opcode_w(block, invert_cond(cond), 0);
 
     emit_add_cycles(block, 12);  // extra cycles for taken branch
-
-    // Push return address
-    emit_subq_w_an(block, REG_68K_A_SP, 2);
-    emit_subi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
-    emit_move_w_dn(block, REG_68K_D_SCRATCH_1, ret_addr);
-    emit_move_b_dn_ind_an(block, REG_68K_D_SCRATCH_1, REG_68K_A_SP);
-    emit_rol_w_8(block, REG_68K_D_SCRATCH_1);
-    emit_move_b_dn_disp_an(block, REG_68K_D_SCRATCH_1, 1, REG_68K_A_SP);
+    compile_push_imm16(block, ret_addr);
 
     // Jump to target
     emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
     emit_move_w_dn(block, REG_68K_D_NEXT_PC, target);
     emit_patchable_exit(block);
+
+    block->code[skip + 2] = (block->length - skip - 2) >> 8;
+    block->code[skip + 3] = (block->length - skip - 2) & 0xff;
 }

@@ -12,6 +12,12 @@ void compile_ld_sp_imm16(
     uint16_t *src_ptr
 );
 
+// Guarded push of a 16-bit constant (call/rst return addresses)
+void compile_push_imm16(struct code_block *block, uint16_t value);
+
+// Guarded pop of the return address into D3, zero-extended (ret)
+void compile_pop_pc(struct code_block *block);
+
 // Compile stack operations (push, pop, ld sp, ld hl,sp+n)
 // Returns 1 if opcode was handled, 0 otherwise
 int compile_stack_op(

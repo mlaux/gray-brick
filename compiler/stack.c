@@ -82,6 +82,65 @@ static void compile_slow_push_d0(struct code_block *block)
     compile_call_dmg_write16_d0(block);
 }
 
+// Guarded push of a 16-bit constant (call/rst return addresses)
+void compile_push_imm16(struct code_block *block, uint16_t value)
+{
+    size_t slow_push, done;
+
+    emit_tst_l_disp_an(block, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
+    slow_push = block->length;
+    emit_beq_w(block, 0);
+
+    // Fast path: use A3 directly
+    emit_subq_w_an(block, REG_68K_A_SP, 2);
+    emit_subi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
+    emit_move_w_dn(block, REG_68K_D_SCRATCH_1, value);
+    emit_move_b_dn_ind_an(block, REG_68K_D_SCRATCH_1, REG_68K_A_SP);
+    emit_rol_w_8(block, REG_68K_D_SCRATCH_1);
+    emit_move_b_dn_disp_an(block, REG_68K_D_SCRATCH_1, 1, REG_68K_A_SP);
+    done = block->length;
+    emit_bra_w(block, 0);
+
+    // Slow path
+    block->code[slow_push + 2] = (block->length - slow_push - 2) >> 8;
+    block->code[slow_push + 3] = (block->length - slow_push - 2) & 0xff;
+    emit_move_w_dn(block, REG_68K_D_SCRATCH_0, value);
+    compile_slow_push_d0(block);
+
+    block->code[done + 2] = (block->length - done - 2) >> 8;
+    block->code[done + 3] = (block->length - done - 2) & 0xff;
+}
+
+// Guarded pop of the return address into D3, zero-extended (ret)
+void compile_pop_pc(struct code_block *block)
+{
+    size_t slow_pop, done;
+
+    emit_tst_l_disp_an(block, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
+    slow_pop = block->length;
+    emit_beq_w(block, 0);
+
+    // Fast path: use A3 directly
+    emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
+    emit_move_b_disp_an_dn(block, 1, REG_68K_A_SP, REG_68K_D_NEXT_PC);
+    emit_rol_w_8(block, REG_68K_D_NEXT_PC);
+    emit_move_b_ind_an_dn(block, REG_68K_A_SP, REG_68K_D_NEXT_PC);
+    emit_addq_w_an(block, REG_68K_A_SP, 2);
+    emit_addi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
+    done = block->length;
+    emit_bra_w(block, 0);
+
+    // Slow path: dmg_read16 clobbers D3, so build it afterward
+    block->code[slow_pop + 2] = (block->length - slow_pop - 2) >> 8;
+    block->code[slow_pop + 3] = (block->length - slow_pop - 2) & 0xff;
+    compile_slow_pop_to_d1(block);
+    emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
+    emit_move_w_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_NEXT_PC);
+
+    block->code[done + 2] = (block->length - done - 2) >> 8;
+    block->code[done + 3] = (block->length - done - 2) & 0xff;
+}
+
 int compile_stack_op(
     struct code_block *block,
     uint8_t op,
