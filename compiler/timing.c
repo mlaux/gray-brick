@@ -29,6 +29,9 @@ void compile_ly_wait(
 
     uint32_t target_cycles = wait_ly * 456;
 
+    // the wait synthesis overwrites D2, subsuming any pending cycles
+    pending_cycles = 0;
+
     // load frame_cycles pointer
     emit_movea_l_disp_an_an(block, JIT_CTX_FRAME_CYCLES_PTR, REG_68K_A_CTX, REG_68K_A_SCRATCH_1);
     // load frame_cycles into d0
@@ -105,6 +108,9 @@ void compile_ly_wait_reg(
     uint8_t jr_opcode,
     uint16_t next_pc
 ) {
+    // the wait synthesis overwrites D2, subsuming any pending cycles
+    pending_cycles = 0;
+
     // Get the target LY value into D0
     compile_get_gb_reg_d0(block, gb_reg);
 
@@ -173,6 +179,8 @@ static void emit_wake_skip(struct code_block *block, int next_pc)
 
 void compile_halt(struct code_block *block, int next_pc)
 {
+    // the wake skip overwrites D2, subsuming any pending cycles
+    pending_cycles = 0;
     emit_wake_skip(block, next_pc);
 }
 
@@ -188,8 +196,10 @@ void compile_hram_idle_wait(
     uint8_t jr_opcode,
     uint16_t loop_pc
 ) {
-    // cycles for the and + untaken jr (the ldh was already counted)
-    emit_add_cycles(block, 12);
+    // cycles for the and + untaken jr (the ldh was already counted).
+    // the repeat path overwrites D2 with the wake skip, so pending stays
+    // deferred for the fall-through
+    defer_cycles(12);
 
     // A = HRAM flag
     emit_movea_l_ind_an_an(block, REG_68K_A_CTX, REG_68K_A_SCRATCH_1);

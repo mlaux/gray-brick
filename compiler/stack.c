@@ -87,6 +87,8 @@ void compile_push_imm16(struct code_block *block, uint16_t value)
 {
     size_t slow_push, done;
 
+    // flush before the fast/slow split so both paths see the same D2
+    flush_cycles(block);
     emit_tst_l_disp_an(block, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
     slow_push = block->length;
     emit_beq_w(block, 0);
@@ -116,6 +118,8 @@ void compile_pop_pc(struct code_block *block)
 {
     size_t slow_pop, done;
 
+    // flush before the fast/slow split so both paths see the same D2
+    flush_cycles(block);
     emit_tst_l_disp_an(block, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
     slow_pop = block->length;
     emit_beq_w(block, 0);
@@ -166,6 +170,8 @@ int compile_stack_op(
             size_t slow_push, done;
 
             // Check if sp_adjust is 0 (slow mode)
+            // flush before the fast/slow split so both paths see the same D2
+            flush_cycles(block);
             emit_tst_l_disp_an(block, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
             slow_push = block->length;
             emit_beq_w(block, 0);  // branch to slow path
@@ -201,6 +207,8 @@ int compile_stack_op(
         {
             size_t slow_push, done;
 
+            // flush before the fast/slow split so both paths see the same D2
+            flush_cycles(block);
             emit_tst_l_disp_an(block, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
             slow_push = block->length;
             emit_beq_w(block, 0);
@@ -230,6 +238,8 @@ int compile_stack_op(
         {
             size_t slow_push, done;
 
+            // flush before the fast/slow split so both paths see the same D2
+            flush_cycles(block);
             emit_tst_l_disp_an(block, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
             slow_push = block->length;
             emit_beq_w(block, 0);
@@ -259,6 +269,8 @@ int compile_stack_op(
         {
             size_t slow_push, done;
 
+            // flush before the fast/slow split so both paths see the same D2
+            flush_cycles(block);
             emit_tst_l_disp_an(block, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
             slow_push = block->length;
             emit_beq_w(block, 0);
@@ -290,6 +302,8 @@ int compile_stack_op(
         {
             size_t slow_pop, done;
 
+            // flush before the fast/slow split so both paths see the same D2
+            flush_cycles(block);
             emit_tst_l_disp_an(block, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
             slow_pop = block->length;
             emit_beq_w(block, 0);
@@ -325,6 +339,8 @@ int compile_stack_op(
         {
             size_t slow_pop, done;
 
+            // flush before the fast/slow split so both paths see the same D2
+            flush_cycles(block);
             emit_tst_l_disp_an(block, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
             slow_pop = block->length;
             emit_beq_w(block, 0);
@@ -359,6 +375,8 @@ int compile_stack_op(
         {
             size_t slow_pop, done;
 
+            // flush before the fast/slow split so both paths see the same D2
+            flush_cycles(block);
             emit_tst_l_disp_an(block, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
             slow_pop = block->length;
             emit_beq_w(block, 0);
@@ -389,6 +407,8 @@ int compile_stack_op(
         {
             size_t slow_pop, done;
 
+            // flush before the fast/slow split so both paths see the same D2
+            flush_cycles(block);
             emit_tst_l_disp_an(block, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
             slow_pop = block->length;
             emit_beq_w(block, 0);

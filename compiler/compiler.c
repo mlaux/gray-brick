@@ -20,6 +20,67 @@
 int compiler_68020;
 uint16_t m68k_offsets[256];
 
+int pending_cycles;
+
+// GB offsets that are targets of backward jumps within the block; pending
+// cycles must be flushed before these so loop heads sit at pending == 0
+uint8_t flush_at[256];
+
+// SM83 instruction lengths for the branch-target pre-scan (CB handled as 2)
+static const uint8_t insn_length[256] = {
+    1, 3, 1, 1, 1, 1, 2, 1, 3, 1, 1, 1, 1, 1, 2, 1, // 0x00
+    2, 3, 1, 1, 1, 1, 2, 1, 2, 1, 1, 1, 1, 1, 2, 1, // 0x10
+    2, 3, 1, 1, 1, 1, 2, 1, 2, 1, 1, 1, 1, 1, 2, 1, // 0x20
+    2, 3, 1, 1, 1, 1, 2, 1, 2, 1, 1, 1, 1, 1, 2, 1, // 0x30
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 0x40
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 0x50
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 0x60
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 0x70
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 0x80
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 0x90
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 0xa0
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 0xb0
+    1, 1, 3, 3, 3, 1, 2, 1, 1, 1, 3, 2, 3, 3, 2, 1, // 0xc0
+    1, 1, 3, 1, 3, 1, 2, 1, 1, 1, 3, 1, 3, 1, 2, 1, // 0xd0
+    2, 1, 1, 1, 1, 1, 2, 1, 2, 1, 3, 1, 1, 1, 2, 1, // 0xe0
+    2, 1, 1, 1, 1, 1, 2, 1, 2, 1, 3, 1, 1, 1, 2, 1, // 0xf0
+};
+
+void defer_cycles(int n)
+{
+    pending_cycles += n;
+}
+
+void flush_cycles(struct code_block *block)
+{
+    emit_add_cycles(block, pending_cycles);
+    pending_cycles = 0;
+}
+
+// mark targets of backward jr within the block so the main loop flushes
+// pending cycles there. spurious marks (offsets the main loop never lands
+// on, or code past an exit) are harmless
+static void scan_branch_targets(
+    uint16_t src_address,
+    struct compile_ctx *ctx
+) {
+    uint16_t off = 0;
+
+    while (off < 256) {
+        uint8_t op = READ_BYTE(off);
+        uint16_t next = off + insn_length[op];
+
+        if (op == 0x18 || op == 0x20 || op == 0x28
+                || op == 0x30 || op == 0x38) {
+            int16_t target = (int16_t) next + (int8_t) READ_BYTE(off + 1);
+            if (target >= 0 && target < off) {
+                flush_at[target] = 1;
+            }
+        }
+        off = next;
+    }
+}
+
 void compiler_init(void)
 {
     // nothing for now
@@ -125,6 +186,10 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
     block->failed_address = 0;
     memset(m68k_offsets, 0, sizeof m68k_offsets);
 
+    pending_cycles = 0;
+    memset(flush_at, 0, sizeof flush_at);
+    scan_branch_targets(src_address, ctx);
+
     // set everything to illegal instruction so it's easy to catch weird branches
     for (k = 0; k < sizeof block->code; k += 2) {
       block->code[k] = 0x4a;
@@ -134,22 +199,26 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
     while (!done) {
         size_t before = block->length;
         // detect overflow of code block and chain to next block
-        // longest instruction is 178 bytes, exit sequence is 20 bytes
+        // longest instruction is 178 bytes, exit sequence is 26 bytes
         // worst case: 253 nops then a fused compare/branch
-        if (block->length > sizeof(block->code) - 200 || src_ptr >= 256) {
+        if (block->length > sizeof(block->code) - 220 || src_ptr >= 256) {
+            flush_cycles(block);
             emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
             emit_move_w_dn(block, REG_68K_D_NEXT_PC, src_address + src_ptr);
             emit_patchable_exit(block);
             break;
         }
 
+        if (flush_at[src_ptr]) {
+            flush_cycles(block);
+        }
         m68k_offsets[src_ptr] = block->length;
         block->count++;
         op = READ_BYTE(src_ptr);
         src_ptr++;
 
         if (op != 0xcb) {
-            emit_add_cycles(block, instructions[op].cycles);
+            defer_cycles(instructions[op].cycles);
         }
 
         switch (op) {
@@ -364,11 +433,12 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
         case 0xcb: // CB prefix
             {
                 uint8_t cb_op = READ_BYTE(src_ptr++);
-                emit_add_cycles(block, instructions[0x100 + cb_op].cycles);
+                defer_cycles(instructions[0x100 + cb_op].cycles);
                 if (!compile_cb_insn(block, cb_op)) {
                     block->error = 1;
                     block->failed_opcode = 0xcb00 | cb_op;
                     block->failed_address = src_address + src_ptr - 2;
+                    flush_cycles(block);
                     emit_move_l_dn(block, REG_68K_D_NEXT_PC, 0xffffffff);
                     emit_dispatch_jump(block);
                     done = 1;
@@ -388,6 +458,7 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
             {
                 uint16_t target = READ_BYTE(src_ptr) | (READ_BYTE(src_ptr + 1) << 8);
                 src_ptr += 2;
+                flush_cycles(block);
                 emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
                 emit_move_w_dn(block, REG_68K_D_NEXT_PC, target);
                 emit_patchable_exit(block);
@@ -450,6 +521,7 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
             break;
 
         case 0xe9: // jp (hl)
+            flush_cycles(block);
             emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_NEXT_PC);
             emit_dispatch_jump(block);
             done = 1;
@@ -697,6 +769,7 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
             block->error = 1;
             block->failed_opcode = op;
             block->failed_address = src_address + src_ptr - 1;
+            flush_cycles(block);
             emit_move_l_dn(block, REG_68K_D_NEXT_PC, 0xffffffff);
             emit_dispatch_jump(block);
             done = 1;
@@ -710,6 +783,7 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
         }
 
         if (ctx->single_instruction && !done) {
+            flush_cycles(block);
             emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
             emit_move_w_dn(block, REG_68K_D_NEXT_PC, src_address + src_ptr);
             emit_patchable_exit(block);

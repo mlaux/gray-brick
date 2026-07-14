@@ -3,6 +3,7 @@
 #include "flags.h"
 #include "interop.h"
 #include "branches.h"
+#include "instructions.h"
 
 // helper for reading GB memory during compilation
 #define READ_BYTE(off) (ctx->read(ctx->dmg, src_address + (off)))
@@ -27,9 +28,18 @@ static int try_fuse_branch(
     if (!allow_carry && (cond == COND_CS || cond == COND_CC))
         return 0;
 
+    // if the branch itself is a backward-jump target, don't fuse: the
+    // main loop must land on it to flush pending cycles at the boundary
+    if (*src_ptr < 256 && flush_at[*src_ptr])
+        return 0;
+
     // Record m68k offset for branch instruction and consume opcode
     m68k_offsets[*src_ptr] = block->length;
     (*src_ptr)++;
+
+    // base cycles of the consumed branch; the fused emitters add the
+    // taken-path extra themselves
+    defer_cycles(instructions[next_op].cycles);
 
     // Emit fused branch based on opcode type
     switch (next_op) {

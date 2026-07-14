@@ -957,9 +957,9 @@ static void render_band_pass(
 // been "scanned" by then, and the game's vblank handler hasn't run yet
 // (EV_RENDER and EV_VBLANK fire in the same sync, and handlers only run
 // after it), so OAM holds the frame's final state. mid-frame register
-// writes were logged as the beam crossed lines; replaying them as bands
+// writes were logged as the beam crossed lines replay them as bands
 // reproduces the frame the game composed. an empty log is one band from
-// the live regs - games that never write mid-frame pay nothing
+// the live regs
 static void render_frame(struct dmg *dmg)
 {
     struct lcd *lcd = dmg->lcd;

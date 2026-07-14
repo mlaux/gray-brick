@@ -35,6 +35,9 @@ void compile_page_lookup(
 // addr in D1, val_reg specifies value register
 void compile_slow_dmg_write(struct code_block *block, uint8_t val_reg)
 {
+    // D2 must be exact for lazy register evaluation. no-op when reached
+    // through the inline wrapper, which already flushed before the split
+    flush_cycles(block);
     // store current cycle count for lazy register evaluation
     emit_move_l_dn_disp_an(block, REG_68K_D_CYCLE_COUNT, JIT_CTX_READ_CYCLES, REG_68K_A_CTX);
     // and push so retro68 doesn't erase
@@ -51,6 +54,8 @@ void compile_slow_dmg_write(struct code_block *block, uint8_t val_reg)
 // inline dmg_write with page table fast path - addr in D1, value in val_reg
 static void compile_inline_dmg_write(struct code_block *block, uint8_t val_reg)
 {
+    // flush before the fast/slow split so both paths see the same D2
+    flush_cycles(block);
     // Fast path: check write page table. entries are biased, so the full
     // address in D1.w indexes the page directly
     // move.w d1, d3                     ; 2 bytes [0-1]
@@ -98,6 +103,9 @@ void compile_call_dmg_write_d0(struct code_block *block)
 // Emit slow path call to dmg_read - expects address in D1, returns in D0
 void compile_slow_dmg_read(struct code_block *block)
 {
+    // D2 must be exact for lazy DIV/LY evaluation. no-op when reached
+    // through the inline wrapper, which already flushed before the split
+    flush_cycles(block);
     // store current cycle count for DIV/LY evaluation
     emit_move_l_dn_disp_an(block, REG_68K_D_CYCLE_COUNT, JIT_CTX_READ_CYCLES, REG_68K_A_CTX); // 4
     emit_push_l_dn(block, REG_68K_D_CYCLE_COUNT); // 2
@@ -113,6 +121,8 @@ void compile_slow_dmg_read(struct code_block *block)
 // Page table fast path, falls back to slow path for unmapped pages
 void compile_call_dmg_read(struct code_block *block)
 {
+    // flush before the fast/slow split so both paths see the same D2
+    flush_cycles(block);
     // Fast path: check page table. entries are biased, so the full
     // address in D1.w indexes the page directly
     // move.w d1, d0                     ; 2 bytes [0-1]
@@ -146,6 +156,7 @@ void compile_call_dmg_read_a(struct code_block *block)
 
 void compile_call_ei_di(struct code_block *block, int enabled)
 {
+    flush_cycles(block);
     // push enabled
     emit_moveq_dn(block, REG_68K_D_SCRATCH_1, (int8_t) enabled);
     // i actually have this as a 16-bit int for some reason
@@ -163,6 +174,7 @@ void compile_call_ei_di(struct code_block *block, int enabled)
 // Slow path for dmg_read16 - addr in D1.w, result in D0.w
 void compile_slow_dmg_read16(struct code_block *block)
 {
+    flush_cycles(block);
     emit_move_l_dn_disp_an(block, REG_68K_D_CYCLE_COUNT, JIT_CTX_READ_CYCLES, REG_68K_A_CTX);
     emit_push_l_dn(block, REG_68K_D_CYCLE_COUNT);
     emit_push_w_dn(block, REG_68K_D_SCRATCH_1);
@@ -180,6 +192,9 @@ void compile_call_dmg_read16(struct code_block *block)
     // the 68000 page lookup is 2 bytes longer than the 68020 one, and the
     // first slow-path branch jumps over it
     int pad = compiler_68020 ? 0 : 2;
+
+    // flush before the fast/slow split so both paths see the same D2
+    flush_cycles(block);
 
     // Check if both bytes on same page (addr & 0xff != 0xff)
     // If low byte is 0xff, second byte would cross to next page
@@ -229,6 +244,7 @@ void compile_call_dmg_read16(struct code_block *block)
 // Slow path for dmg_write16 - addr in D1.w, data in D0.w
 void compile_slow_dmg_write16(struct code_block *block)
 {
+    flush_cycles(block);
     emit_move_l_dn_disp_an(block, REG_68K_D_CYCLE_COUNT, JIT_CTX_READ_CYCLES, REG_68K_A_CTX);
     emit_push_l_dn(block, REG_68K_D_CYCLE_COUNT);
     emit_push_w_dn(block, REG_68K_D_SCRATCH_0);
@@ -247,6 +263,9 @@ void compile_call_dmg_write16_d0(struct code_block *block)
     // the 68000 page lookup is 2 bytes longer than the 68020 one, and the
     // first slow-path branch jumps over it
     int pad = compiler_68020 ? 0 : 2;
+
+    // flush before the fast/slow split so both paths see the same D2
+    flush_cycles(block);
 
     // Save data to D3 before we use D0 as scratch
     // move.w d0, d3                     ; 2 bytes [0-1]
@@ -302,6 +321,7 @@ void compile_call_dmg_write16_d0(struct code_block *block)
 // If returns non-zero, we set HALT_SENTINEL and exit
 void compile_call_stop(struct code_block *block, int next_pc)
 {
+    flush_cycles(block);
     // push dmg pointer
     emit_push_l_disp_an(block, JIT_CTX_DMG, REG_68K_A_CTX);  // 4
     // load stop_func address

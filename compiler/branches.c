@@ -76,10 +76,13 @@ int compile_jr(
             ctx->cache_store(target_gb_pc, ctx->current_bank, code_ptr);
         }
 
+        flush_cycles(block);
+
         // Tiny loops (disp >= -3, e.g. "dec a; jr nz") are pure computation
         // (no room for memory access + flag-setting instruction).
         // Skip interrupt check to avoid overhead killing performance.
         if (disp >= -3) {
+            m68k_disp = (int16_t) target_m68k - (int16_t) (block->length + 2);
             emit_bra_w(block, m68k_disp);
             return 0;
         }
@@ -105,6 +108,7 @@ int compile_jr(
 
     // Forward jump or outside block - go through patchable exit
     target_gb_pc = src_address + target_gb_offset;
+    flush_cycles(block);
     emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
     emit_move_w_dn(block, REG_68K_D_NEXT_PC, target_gb_pc);
     emit_patchable_exit(block);
@@ -141,7 +145,6 @@ void compile_jr_cond(
         // Backward jump - check condition, then maybe interrupt flag
         target_gb_pc = src_address + target_gb_offset;
         target_m68k = m68k_offsets[target_gb_offset];
-        m68k_disp = (int16_t) target_m68k - (int16_t) (block->length + 2);
 
         // Register mid-block entry point for this branch target
         if (ctx->cache_store) {
@@ -151,15 +154,20 @@ void compile_jr_cond(
 
         // Tiny loops (disp >= -3): skip interrupt check, just branch
         if (disp >= -3) {
-            // Skip if NOT taken (skip: addq(2) + bra.w(4) = 6, +2 = 8)
+            // Skip if NOT taken
+            size_t skip = block->length;
             if (branch_if_set) {
-                emit_beq_w(block, 8);
+                emit_beq_w(block, 0);
             } else {
-                emit_bne_w(block, 8);
+                emit_bne_w(block, 0);
             }
-            emit_add_cycles(block, 4);  // extra cycles for taken branch
-            int16_t bra_disp = (int16_t) target_m68k - (int16_t) (block->length + 2);
-            emit_bra_w(block, bra_disp);
+            // taken path: materialize pending + taken extra, loop head is
+            // at pending == 0. fall-through keeps deferring
+            emit_add_cycles(block, pending_cycles + 4);
+            m68k_disp = (int16_t) target_m68k - (int16_t) (block->length + 2);
+            emit_bra_w(block, m68k_disp);
+            block->code[skip + 2] = (block->length - skip - 2) >> 8;
+            block->code[skip + 3] = (block->length - skip - 2) & 0xff;
             return;
         }
 
@@ -169,6 +177,7 @@ void compile_jr_cond(
         //   bne/beq .check_cycles        ; if condition met, check cycles
         //   bra.w .fall_through          ; condition not met, skip all
         // .check_cycles:
+        //   add pending + 4 to d2
         //   cmp.l JIT_CTX_WAKE_LIMIT(a4), d2
         //   bcs.w loop_target            ; cycles < exit budget, do native branch
         //   moveq #0, d0                 ; cycles >= exit budget, exit
@@ -176,23 +185,20 @@ void compile_jr_cond(
         //   patchable_exit
         // .fall_through:
 
-        // Sizes: bne/beq(4) + bra.w(4) + addq(2) + cmp.l(4) + bcs.w(4) + moveq(2) + move.w(4) + patchable_exit(14) = 38
-        // .check_cycles is at +8 from first branch
-        // .fall_through is at +38 from first branch
-
         if (branch_if_set) {
             // Branch if flag is set: btst gives Z=0 when bit=1, so use bne
-            emit_bne_w(block, 6);  // skip to .check_cycles (+8, but PC is at +2)
+            emit_bne_w(block, 6);  // skip the bra.w to .check_cycles
         } else {
             // Branch if flag is clear: btst gives Z=1 when bit=0, so use beq
             emit_beq_w(block, 6);
         }
 
-        // bra.w to .fall_through (addq(2) + cmp.l(4) + bcs.w(4) + moveq(2) + move.w(4) + patchable_exit(14) = 30, plus 2 for PC = 32)
-        emit_bra_w(block, 32);
+        // bra.w to .fall_through
+        size_t fall = block->length;
+        emit_bra_w(block, 0);
 
         // .check_cycles:
-        emit_add_cycles(block, 4);  // extra cycles for taken branch
+        emit_add_cycles(block, pending_cycles + 4);
         emit_cmp_l_disp_an_dn(block, JIT_CTX_WAKE_LIMIT, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
 
         // bcs.w to native loop target (cycles < exit budget)
@@ -204,7 +210,9 @@ void compile_jr_cond(
         emit_move_w_dn(block, REG_68K_D_NEXT_PC, target_gb_pc);
         emit_patchable_exit(block);
 
-        // .fall_through: block continues
+        // .fall_through: block continues deferring
+        block->code[fall + 2] = (block->length - fall - 2) >> 8;
+        block->code[fall + 3] = (block->length - fall - 2) & 0xff;
         return;
     }
 
@@ -212,18 +220,22 @@ void compile_jr_cond(
     // If condition NOT met, skip the exit sequence
     target_gb_pc = src_address + target_gb_offset;
 
+    size_t skip = block->length;
     if (branch_if_set) {
         // Skip exit if flag is clear (btst Z=1 when bit=0)
-        emit_beq_w(block, 26);  // skip: addq(2) + moveq(2) + move.w(4) + patchable_exit(16) = 24, plus 2 = 26
+        emit_beq_w(block, 0);
     } else {
         // Skip exit if flag is set (btst Z=0 when bit=1)
-        emit_bne_w(block, 26);
+        emit_bne_w(block, 0);
     }
 
-    emit_add_cycles(block, 4);  // extra cycles for taken branch
+    emit_add_cycles(block, pending_cycles + 4);  // pending + taken extra
     emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
     emit_move_w_dn(block, REG_68K_D_NEXT_PC, target_gb_pc);
     emit_patchable_exit(block);
+
+    block->code[skip + 2] = (block->length - skip - 2) >> 8;
+    block->code[skip + 3] = (block->length - skip - 2) & 0xff;
 }
 
 // Compile conditional absolute jump (jp nz, jp z, jp nc, jp c)
@@ -238,24 +250,29 @@ void compile_jp_cond(
     int branch_if_set
 ) {
     uint16_t target = READ_BYTE(*src_ptr) | (READ_BYTE(*src_ptr + 1) << 8);
+    size_t skip;
     *src_ptr += 2;
 
     // Test the flag bit in D7
     emit_btst_imm_dn(block, flag_bit, REG_68K_D_FLAGS);
 
     // If condition NOT met, skip the exit sequence
+    skip = block->length;
     if (branch_if_set) {
         // Skip exit if flag is clear (btst Z=1 when bit=0)
-        emit_beq_w(block, 26);  // skip: addq(2) + moveq(2) + move.w(4) + patchable_exit(16) = 24, plus 2 = 26
+        emit_beq_w(block, 0);
     } else {
         // Skip exit if flag is set (btst Z=0 when bit=1)
-        emit_bne_w(block, 26);
+        emit_bne_w(block, 0);
     }
 
-    emit_add_cycles(block, 4);  // extra cycles for taken branch
+    emit_add_cycles(block, pending_cycles + 4);  // pending + taken extra
     emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
     emit_move_w_dn(block, REG_68K_D_NEXT_PC, target);
     emit_patchable_exit(block);
+
+    block->code[skip + 2] = (block->length - skip - 2) >> 8;
+    block->code[skip + 3] = (block->length - skip - 2) & 0xff;
 }
 
 void compile_call_imm16(
@@ -268,6 +285,7 @@ void compile_call_imm16(
     uint16_t ret_addr = src_address + *src_ptr + 2;  // address after call
     *src_ptr += 2;
 
+    flush_cycles(block);
     compile_push_imm16(block, ret_addr);
 
     // jump to target
@@ -290,6 +308,7 @@ void compile_call_cond(
     uint16_t target = READ_BYTE(*src_ptr) | (READ_BYTE(*src_ptr + 1) << 8);
     uint16_t ret_addr = src_address + *src_ptr + 2;  // address after call
     size_t skip;
+    int saved;
     *src_ptr += 2;
 
     // Test the flag bit in D7
@@ -303,13 +322,17 @@ void compile_call_cond(
         emit_bne_w(block, 0);
     }
 
-    emit_add_cycles(block, 12);  // extra cycles for taken branch
+    // taken path: materialize pending + extra; restore for the fall-through
+    saved = pending_cycles;
+    emit_add_cycles(block, pending_cycles + 12);
+    pending_cycles = 0;
     compile_push_imm16(block, ret_addr);
 
     // Jump to target
     emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
     emit_move_w_dn(block, REG_68K_D_NEXT_PC, target);
     emit_patchable_exit(block);
+    pending_cycles = saved;
 
     block->code[skip + 2] = (block->length - skip - 2) >> 8;
     block->code[skip + 3] = (block->length - skip - 2) & 0xff;
@@ -327,6 +350,7 @@ void compile_ret(struct code_block *block)
 void compile_ret_cond(struct code_block *block, uint8_t flag_bit, int branch_if_set)
 {
     size_t skip;
+    int saved;
 
     // Test the flag bit in D7
     emit_btst_imm_dn(block, flag_bit, REG_68K_D_FLAGS);
@@ -339,9 +363,13 @@ void compile_ret_cond(struct code_block *block, uint8_t flag_bit, int branch_if_
         emit_bne_w(block, 0);
     }
 
-    emit_add_cycles(block, 12);  // extra cycles for taken branch
+    // taken path: materialize pending + extra; restore for the fall-through
+    saved = pending_cycles;
+    emit_add_cycles(block, pending_cycles + 12);
+    pending_cycles = 0;
     compile_pop_pc(block);
     emit_dispatch_jump(block);
+    pending_cycles = saved;
 
     block->code[skip + 2] = (block->length - skip - 2) >> 8;
     block->code[skip + 3] = (block->length - skip - 2) & 0xff;
@@ -391,11 +419,14 @@ int compile_jr_cond_fused(
 
         // Tiny loops: skip cycle check
         if (disp >= -3) {
-            // Skip if NOT taken (skip: addq(2) + bra.w(4) = 6, +2 = 8)
-            emit_bcc_opcode_w(block, invert_cond(cond), 8);
-            emit_add_cycles(block, 4);  // extra cycles for taken branch
+            // Skip if NOT taken
+            size_t skip = block->length;
+            emit_bcc_opcode_w(block, invert_cond(cond), 0);
+            emit_add_cycles(block, pending_cycles + 4);
             m68k_disp = (int16_t) target_m68k - (int16_t) (block->length + 2);
             emit_bra_w(block, m68k_disp);
+            block->code[skip + 2] = (block->length - skip - 2) >> 8;
+            block->code[skip + 3] = (block->length - skip - 2) & 0xff;
             return 0;
         }
 
@@ -404,7 +435,7 @@ int compile_jr_cond_fused(
         //   bcc.w .check_cycles      ; if condition met
         //   bra.w .fall_through      ; condition not met
         // .check_cycles:
-        //   addq.l #4, d2            ; extra cycles for taken branch
+        //   add pending + 4 to d2    ; extra cycles for taken branch
         //   cmp.l JIT_CTX_WAKE_LIMIT(a4), d2
         //   bcs.w loop_target        ; cycles < exit budget
         //   <exit via patchable_exit>
@@ -413,11 +444,12 @@ int compile_jr_cond_fused(
         // Branch to check_cycles if condition met
         emit_bcc_opcode_w(block, cond, 6);
 
-        // bra.w to .fall_through (addq(2) + cmp.l(4) + bcs.w(4) + exit(20) = 30, plus 2 = 32)
-        emit_bra_w(block, 32);
+        // bra.w to .fall_through
+        size_t fall = block->length;
+        emit_bra_w(block, 0);
 
         // .check_cycles:
-        emit_add_cycles(block, 4);  // extra cycles for taken branch
+        emit_add_cycles(block, pending_cycles + 4);
         emit_cmp_l_disp_an_dn(block, JIT_CTX_WAKE_LIMIT, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
 
         // bcs.w to native loop target (cycles < exit budget)
@@ -429,19 +461,26 @@ int compile_jr_cond_fused(
         emit_move_w_dn(block, REG_68K_D_NEXT_PC, target_gb_pc);
         emit_patchable_exit(block);
 
+        // .fall_through: block continues deferring
+        block->code[fall + 2] = (block->length - fall - 2) >> 8;
+        block->code[fall + 3] = (block->length - fall - 2) & 0xff;
         return 0;
     }
 
     // Forward/external jump - conditionally exit via patchable exit
     target_gb_pc = src_address + target_gb_offset;
 
-    // Skip exit if condition NOT met (skip: addq(2) + moveq(2) + move.w(4) + patchable_exit(16) = 24, +2 = 26)
-    emit_bcc_opcode_w(block, invert_cond(cond), 26);
+    // Skip exit if condition NOT met
+    size_t skip = block->length;
+    emit_bcc_opcode_w(block, invert_cond(cond), 0);
 
-    emit_add_cycles(block, 4);  // extra cycles for taken branch
+    emit_add_cycles(block, pending_cycles + 4);  // pending + taken extra
     emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
     emit_move_w_dn(block, REG_68K_D_NEXT_PC, target_gb_pc);
     emit_patchable_exit(block);
+
+    block->code[skip + 2] = (block->length - skip - 2) >> 8;
+    block->code[skip + 3] = (block->length - skip - 2) & 0xff;
     return 0;  // doesn't end block - fall through continues
 }
 
@@ -454,29 +493,39 @@ void compile_jp_cond_fused(
     int cond
 ) {
     uint16_t target = READ_BYTE(*src_ptr) | (READ_BYTE(*src_ptr + 1) << 8);
+    size_t skip;
     *src_ptr += 2;
 
-    // Skip exit if condition NOT met (skip: addq(2) + moveq(2) + move.w(4) + patchable_exit(16) = 24, +2 = 26)
-    emit_bcc_opcode_w(block, invert_cond(cond), 26);
+    // Skip exit if condition NOT met
+    skip = block->length;
+    emit_bcc_opcode_w(block, invert_cond(cond), 0);
 
-    emit_add_cycles(block, 4);  // extra cycles for taken branch
+    emit_add_cycles(block, pending_cycles + 4);  // pending + taken extra
     emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
     emit_move_w_dn(block, REG_68K_D_NEXT_PC, target);
     emit_patchable_exit(block);
+
+    block->code[skip + 2] = (block->length - skip - 2) >> 8;
+    block->code[skip + 3] = (block->length - skip - 2) & 0xff;
 }
 
 // Fused ret cond - uses live CCR flags
 void compile_ret_cond_fused(struct code_block *block, int cond)
 {
     size_t skip;
+    int saved;
 
     // Skip return if condition NOT met
     skip = block->length;
     emit_bcc_opcode_w(block, invert_cond(cond), 0);
 
-    emit_add_cycles(block, 12);  // extra cycles for taken branch
+    // taken path: materialize pending + extra; restore for the fall-through
+    saved = pending_cycles;
+    emit_add_cycles(block, pending_cycles + 12);
+    pending_cycles = 0;
     compile_pop_pc(block);
     emit_dispatch_jump(block);
+    pending_cycles = saved;
 
     block->code[skip + 2] = (block->length - skip - 2) >> 8;
     block->code[skip + 3] = (block->length - skip - 2) & 0xff;
@@ -493,19 +542,24 @@ void compile_call_cond_fused(
     uint16_t target = READ_BYTE(*src_ptr) | (READ_BYTE(*src_ptr + 1) << 8);
     uint16_t ret_addr = src_address + *src_ptr + 2;
     size_t skip;
+    int saved;
     *src_ptr += 2;
 
     // Skip call if condition NOT met
     skip = block->length;
     emit_bcc_opcode_w(block, invert_cond(cond), 0);
 
-    emit_add_cycles(block, 12);  // extra cycles for taken branch
+    // taken path: materialize pending + extra; restore for the fall-through
+    saved = pending_cycles;
+    emit_add_cycles(block, pending_cycles + 12);
+    pending_cycles = 0;
     compile_push_imm16(block, ret_addr);
 
     // Jump to target
     emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
     emit_move_w_dn(block, REG_68K_D_NEXT_PC, target);
     emit_patchable_exit(block);
+    pending_cycles = saved;
 
     block->code[skip + 2] = (block->length - skip - 2) >> 8;
     block->code[skip + 3] = (block->length - skip - 2) & 0xff;

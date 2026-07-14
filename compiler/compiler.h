@@ -91,6 +91,18 @@ struct code_block {
 
 extern uint16_t m68k_offsets[256];
 
+// deferred cycle counting: instruction cycles accumulate at compile time in
+// pending_cycles and are materialized into D2 as one add at points where the
+// runtime value is observed (C calls, wake checks, block exits). loop heads
+// found by the block pre-scan always sit at pending == 0
+extern int pending_cycles;
+void defer_cycles(int n);
+void flush_cycles(struct code_block *block);
+
+// GB offsets targeted by backward jumps in the current block (pre-scan);
+// pending cycles are flushed there so loop heads sit at pending == 0
+extern uint8_t flush_at[256];
+
 typedef uint8_t (*dmg_read_fn)(void *dmg, uint16_t address);
 
 // cache store function signature for registering mid-block entry points
