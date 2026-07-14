@@ -61,6 +61,7 @@ u32 host_frames(void);
 void host_dump_state(FILE *fp);
 extern int host_chain;
 extern int host_trace;
+extern FILE *host_insn_log;
 extern u32 host_dispatches;
 extern u32 host_int_delivered[5];
 extern u32 host_exit_cause[];

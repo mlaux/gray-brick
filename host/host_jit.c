@@ -34,6 +34,7 @@
 
 int host_chain;
 int host_trace;
+FILE *host_insn_log;
 u32 host_dispatches;
 
 // per-vector interrupt delivery counts and which deadline bounded each
@@ -168,6 +169,20 @@ static void sync_budget_to_68k(void)
     ctx_w32(JIT_CTX_WAKE_LIMIT, jit_ctx.wake_limit);
 }
 
+// --insn-log: every instruction Musashi executes, one line each, with
+// "=" event lines interleaved at block entries, gate calls into the C
+// side, interrupt delivery, and hardware sync. cycles column is
+// m68k_cycles_run(), which restarts at every "enter" line
+static void insn_hook(unsigned int pc)
+{
+    char dis[128];
+
+    m68k_disassemble(dis, pc, compiler_68020 ? M68K_CPU_TYPE_68020
+                                             : M68K_CPU_TYPE_68000);
+    fprintf(host_insn_log, "%06x %6d  %s\n",
+            pc & 0xffffff, m68k_cycles_run(), dis);
+}
+
 // serial capture: SB write latches the byte, SC write with bit 7 set
 // sends it. dmg.c has no serial support, so this is the only observer
 static void gated_write(u16 addr, u8 data)
@@ -197,39 +212,75 @@ static int handle_stop(void)
 void host_gate(unsigned int index, unsigned int sp)
 {
     switch (index) {
-    case GATE_READ:
+    case GATE_READ: {
+        u16 addr = m68_r16(sp + 8);
+        u8 v;
         jit_ctx.read_cycles = m68_r32(JIT_CTX_ADDR + JIT_CTX_READ_CYCLES);
-        m68k_set_reg(M68K_REG_D0, dmg_read(dmg, m68_r16(sp + 8)));
+        v = dmg_read(dmg, addr);
+        if (host_insn_log) {
+            fprintf(host_insn_log, "= read %04x -> %02x\n", addr, v);
+        }
+        m68k_set_reg(M68K_REG_D0, v);
         break;
-    case GATE_WRITE:
+    }
+    case GATE_WRITE: {
+        u16 addr = m68_r16(sp + 8);
+        u8 data = m68k_mem[sp + 10];
         jit_ctx.read_cycles = m68_r32(JIT_CTX_ADDR + JIT_CTX_READ_CYCLES);
-        gated_write(m68_r16(sp + 8), m68k_mem[sp + 10]);
+        if (host_insn_log) {
+            fprintf(host_insn_log, "= write %04x = %02x\n", addr, data);
+        }
+        gated_write(addr, data);
         sync_page_tables();
         sync_budget_to_68k();
         break;
-    case GATE_READ16:
+    }
+    case GATE_READ16: {
+        u16 addr = m68_r16(sp + 8);
+        u16 v;
         jit_ctx.read_cycles = m68_r32(JIT_CTX_ADDR + JIT_CTX_READ_CYCLES);
-        m68k_set_reg(M68K_REG_D0, dmg_read16(dmg, m68_r16(sp + 8)));
+        v = dmg_read16(dmg, addr);
+        if (host_insn_log) {
+            fprintf(host_insn_log, "= read16 %04x -> %04x\n", addr, v);
+        }
+        m68k_set_reg(M68K_REG_D0, v);
         break;
+    }
     case GATE_WRITE16: {
         u16 addr = m68_r16(sp + 8);
         u16 data = m68_r16(sp + 10);
         jit_ctx.read_cycles = m68_r32(JIT_CTX_ADDR + JIT_CTX_READ_CYCLES);
+        if (host_insn_log) {
+            fprintf(host_insn_log, "= write16 %04x = %04x\n", addr, data);
+        }
         gated_write(addr, data & 0xff);
         gated_write(addr + 1, data >> 8);
         sync_page_tables();
         sync_budget_to_68k();
         break;
     }
-    case GATE_EI_DI:
-        dmg_ei_di(dmg, m68_r16(sp + 8));
+    case GATE_EI_DI: {
+        u16 v = m68_r16(sp + 8);
+        if (host_insn_log) {
+            fprintf(host_insn_log, "= %s\n", v ? "ei" : "di");
+        }
+        dmg_ei_di(dmg, v);
         sync_budget_to_68k();
         break;
+    }
     case GATE_STOP:
+        if (host_insn_log) {
+            fprintf(host_insn_log, "= stop\n");
+        }
         m68k_set_reg(M68K_REG_D0, handle_stop());
         sync_budget_to_68k();
         break;
     case GATE_RETURN:
+        if (host_insn_log) {
+            fprintf(host_insn_log, "= exit d3=%x d2=%u\n",
+                    m68k_get_reg(NULL, M68K_REG_D3),
+                    m68k_get_reg(NULL, M68K_REG_D2));
+        }
         block_returned = 1;
         m68k_end_timeslice();
         break;
@@ -284,6 +335,9 @@ static int clear_all_blocks(void)
     }
 
     sync_page_tables();
+    if (host_insn_log) {
+        fprintf(host_insn_log, "= arena-reset\n");
+    }
     return 1;
 }
 
@@ -337,6 +391,13 @@ static void *compile_checked(u32 pc)
             }
         }
         sync_page_tables();
+    }
+
+    // block map: lets a post-processor attribute arena pcs to GB blocks
+    if (host_insn_log) {
+        fprintf(host_insn_log, "= compile %02x:%04x..%04x arena=%06x len=%zu\n",
+                jit_ctx.current_rom_bank, pc, block->end_address,
+                (u32) ((u8 *) block->code - m68k_mem), block->length);
     }
 
     return block->code;
@@ -415,6 +476,10 @@ static void check_interrupts(void)
     for (k = 0; k < 5; k++) {
         if (pending & (1 << k)) {
             host_int_delivered[k]++;
+            if (host_insn_log) {
+                fprintf(host_insn_log, "= int %d vector=%04x\n",
+                        k, handlers[k]);
+            }
             dmg->interrupt_request_mask &= ~(1 << k);
             dmg->interrupt_enable = 0;
 
@@ -527,6 +592,19 @@ void host_jit_init(struct dmg *d)
                                      : M68K_CPU_TYPE_68000);
     m68k_pulse_reset();
 
+    if (host_insn_log) {
+        fprintf(host_insn_log,
+                "# gb6run insn log, cpu=%s\n"
+                "# return-stub=%06x exc-stub=%06x chain-stub=%06x "
+                "gate-stubs=%06x+16*k\n"
+                "# jit-ctx=%06x arena=%06x..%06x\n"
+                "# columns: pc, musashi cycles this timeslice, disasm\n",
+                compiler_68020 ? "68020" : "68000",
+                RETURN_STUB_ADDR, EXC_STUB_ADDR, CHAIN_STUB_ADDR,
+                GATE_STUB_BASE, JIT_CTX_ADDR, ARENA_ADDR, ARENA_END);
+        m68k_set_instr_hook_callback(insn_hook);
+    }
+
     for (k = 0; k < 8; k++) {
         m68k_set_reg(M68K_REG_D0 + k, 0);
     }
@@ -609,6 +687,12 @@ enter:
     if (host_trace) {
         trace_block(d3, m68k_get_reg(NULL, M68K_REG_D2));
     }
+    if (host_insn_log) {
+        fprintf(host_insn_log, "= enter %02x:%04x arena=%06x d2=%u frame=%u\n",
+                jit_ctx.current_rom_bank, d3,
+                (u32) ((u8 *) code - m68k_mem),
+                m68k_get_reg(NULL, M68K_REG_D2), dmg->frame_cycles);
+    }
 
     sync_ctx_to_68k();
     execute_block(code);
@@ -641,6 +725,11 @@ enter:
     m68k_set_reg(M68K_REG_D2, 0);
     update_wake_limit();
     sync_page_tables();
+
+    if (host_insn_log) {
+        fprintf(host_insn_log, "= sync d2=%u frame=%u wake=%u\n",
+                d2, dmg->frame_cycles, jit_ctx.wake_limit);
+    }
 
     host_dispatches++;
     return 1;

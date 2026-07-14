@@ -56,6 +56,7 @@ static int opt_log_raster;
 static int opt_scx_stats;
 static int opt_dirty_stats;
 static int opt_exit_stats;
+static const char *opt_insn_log;
 
 // 160x144, gray (1 byte/px) for DMG or RGB (3 bytes/px) for CGB
 static u8 frame_out[160 * 144 * 3];
@@ -550,6 +551,7 @@ static void usage(void)
         "  --scx-stats          row_scx uniformity summary to stderr\n"
         "  --dirty-stats        row-diff savings summary + clean-row assertion\n"
         "  --exit-stats         exit budget causes + interrupt deliveries\n"
+        "  --insn-log FILE      log every executed 68k instruction (- for stdout)\n"
         "  --no-stat-ints       drop STAT events from the scheduler (Mac menu toggle)\n"
         "  --chain              chain cached blocks like the Mac dispatcher\n"
         "  --cpu 68000|68020    codegen + emulated cpu (default 68020)\n"
@@ -605,6 +607,8 @@ int main(int argc, char *argv[])
             opt_dirty_stats = 1;
         } else if (!strcmp(argv[k], "--exit-stats")) {
             opt_exit_stats = 1;
+        } else if (!strcmp(argv[k], "--insn-log") && k + 1 < argc) {
+            opt_insn_log = argv[++k];
         } else if (!strcmp(argv[k], "--no-stat-ints")) {
             stat_ints_enabled = 0;
         } else if (!strcmp(argv[k], "--chain")) {
@@ -682,6 +686,16 @@ int main(int argc, char *argv[])
     if (opt_dump_dir || opt_hash_frames || opt_log_raster || opt_scx_stats
             || opt_dirty_stats) {
         host_lcd_draw_hook = frame_hook;
+    }
+
+    if (opt_insn_log) {
+        host_insn_log = strcmp(opt_insn_log, "-") ? fopen(opt_insn_log, "w")
+                                                  : stdout;
+        if (!host_insn_log) {
+            fprintf(stderr, "gb6run: cannot write %s\n", opt_insn_log);
+            return 2;
+        }
+        setvbuf(host_insn_log, NULL, _IOFBF, 1 << 20);
     }
 
     host_jit_init(dmg);

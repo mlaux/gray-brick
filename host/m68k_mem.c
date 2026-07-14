@@ -45,6 +45,32 @@ unsigned int m68k_read_memory_32(unsigned int address)
          | m68k_mem[address + 3];
 }
 
+// side-effect-free reads for m68kdasm (--insn-log)
+
+unsigned int m68k_read_disassembler_8(unsigned int address)
+{
+    return address < M68K_MEM_SIZE ? m68k_mem[address] : 0;
+}
+
+unsigned int m68k_read_disassembler_16(unsigned int address)
+{
+    if (address + 1 >= M68K_MEM_SIZE) {
+        return 0;
+    }
+    return (m68k_mem[address] << 8) | m68k_mem[address + 1];
+}
+
+unsigned int m68k_read_disassembler_32(unsigned int address)
+{
+    if (address + 3 >= M68K_MEM_SIZE) {
+        return 0;
+    }
+    return ((unsigned int) m68k_mem[address] << 24)
+         | (m68k_mem[address + 1] << 16)
+         | (m68k_mem[address + 2] << 8)
+         | m68k_mem[address + 3];
+}
+
 void m68k_write_memory_8(unsigned int address, unsigned int value)
 {
     if (address >= M68K_MEM_SIZE) {

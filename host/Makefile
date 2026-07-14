@@ -6,6 +6,7 @@ BUILD = build
 
 MUSASHI_DIR = ../compiler/musashi
 MUSASHI_OBJS = $(MUSASHI_DIR)/m68kcpu.o $(MUSASHI_DIR)/m68kops.o \
+               $(MUSASHI_DIR)/m68kdasm.o \
                $(MUSASHI_DIR)/softfloat/softfloat.o
 
 SRC_NAMES = dmg lcd lcd_cgb mbc cgb audio rom rom_patches
