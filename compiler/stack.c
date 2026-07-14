@@ -65,7 +65,7 @@ static void compile_slow_pop_to_d1(struct code_block *block)
     // call dmg_read16 - result in D0.w
     compile_call_dmg_read16(block);
     // increment gb_sp by 2
-    emit_addi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
+    emit_addq_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
     // move result to D1
     emit_move_w_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_SCRATCH_1);
 }
@@ -75,7 +75,7 @@ static void compile_slow_pop_to_d1(struct code_block *block)
 static void compile_slow_push_d0(struct code_block *block)
 {
     // decrement gb_sp by 2 first
-    emit_subi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
+    emit_subq_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
     // D1 = gb_sp (new value)
     emit_move_w_disp_an_dn(block, JIT_CTX_GB_SP, REG_68K_A_CTX, REG_68K_D_SCRATCH_1);
     // call dmg_write16 - value in D0.w, addr in D1.w
@@ -91,26 +91,22 @@ void compile_push_imm16(struct code_block *block, uint16_t value)
     flush_cycles(block);
     emit_tst_l_disp_an(block, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
     slow_push = block->length;
-    emit_beq_w(block, 0);
+    emit_beq_b(block, 0);
 
-    // Fast path: use A3 directly
+    // Fast path: use A3 directly, store both bytes as immediates
     emit_subq_w_an(block, REG_68K_A_SP, 2);
-    emit_subi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
-    emit_move_w_dn(block, REG_68K_D_SCRATCH_1, value);
-    emit_move_b_dn_ind_an(block, REG_68K_D_SCRATCH_1, REG_68K_A_SP);
-    emit_rol_w_8(block, REG_68K_D_SCRATCH_1);
-    emit_move_b_dn_disp_an(block, REG_68K_D_SCRATCH_1, 1, REG_68K_A_SP);
+    emit_subq_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
+    emit_move_b_imm_ind_an(block, value & 0xff, REG_68K_A_SP);
+    emit_move_b_imm_disp_an(block, value >> 8, 1, REG_68K_A_SP);
     done = block->length;
-    emit_bra_w(block, 0);
+    emit_bra_b(block, 0);
 
     // Slow path
-    block->code[slow_push + 2] = (block->length - slow_push - 2) >> 8;
-    block->code[slow_push + 3] = (block->length - slow_push - 2) & 0xff;
+    block->code[slow_push + 1] = block->length - slow_push - 2;
     emit_move_w_dn(block, REG_68K_D_SCRATCH_0, value);
     compile_slow_push_d0(block);
 
-    block->code[done + 2] = (block->length - done - 2) >> 8;
-    block->code[done + 3] = (block->length - done - 2) & 0xff;
+    block->code[done + 1] = block->length - done - 2;
 }
 
 // Guarded pop of the return address into D3, zero-extended (ret)
@@ -122,7 +118,7 @@ void compile_pop_pc(struct code_block *block)
     flush_cycles(block);
     emit_tst_l_disp_an(block, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
     slow_pop = block->length;
-    emit_beq_w(block, 0);
+    emit_beq_b(block, 0);
 
     // Fast path: use A3 directly
     emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
@@ -130,19 +126,17 @@ void compile_pop_pc(struct code_block *block)
     emit_rol_w_8(block, REG_68K_D_NEXT_PC);
     emit_move_b_ind_an_dn(block, REG_68K_A_SP, REG_68K_D_NEXT_PC);
     emit_addq_w_an(block, REG_68K_A_SP, 2);
-    emit_addi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
+    emit_addq_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
     done = block->length;
-    emit_bra_w(block, 0);
+    emit_bra_b(block, 0);
 
     // Slow path: dmg_read16 clobbers D3, so build it afterward
-    block->code[slow_pop + 2] = (block->length - slow_pop - 2) >> 8;
-    block->code[slow_pop + 3] = (block->length - slow_pop - 2) & 0xff;
+    block->code[slow_pop + 1] = block->length - slow_pop - 2;
     compile_slow_pop_to_d1(block);
     emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
     emit_move_w_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_NEXT_PC);
 
-    block->code[done + 2] = (block->length - done - 2) >> 8;
-    block->code[done + 3] = (block->length - done - 2) & 0xff;
+    block->code[done + 1] = block->length - done - 2;
 }
 
 int compile_stack_op(
@@ -174,32 +168,29 @@ int compile_stack_op(
             flush_cycles(block);
             emit_tst_l_disp_an(block, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
             slow_push = block->length;
-            emit_beq_w(block, 0);  // branch to slow path
+            emit_beq_b(block, 0);  // branch to slow path
 
             // Fast path: use A3 directly
             // SP -= 2 (both A3 and gb_sp)
             emit_subq_w_an(block, REG_68K_A_SP, 2);
-            emit_subi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
-            // Reconstruct BC into D1.w
-            compile_join_bc(block, REG_68K_D_SCRATCH_1);
-            // [SP] = low byte (C)
-            emit_move_b_dn_ind_an(block, REG_68K_D_SCRATCH_1, REG_68K_A_SP);
-            // swap to get high byte
-            emit_rol_w_8(block, REG_68K_D_SCRATCH_1);
+            emit_subq_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
+            // bytes are already in split positions, store via swap
             // [SP+1] = high byte (B)
-            emit_move_b_dn_disp_an(block, REG_68K_D_SCRATCH_1, 1, REG_68K_A_SP);
+            emit_swap(block, REG_68K_D_BC);
+            emit_move_b_dn_disp_an(block, REG_68K_D_BC, 1, REG_68K_A_SP);
+            emit_swap(block, REG_68K_D_BC);
+            // [SP] = low byte (C)
+            emit_move_b_dn_ind_an(block, REG_68K_D_BC, REG_68K_A_SP);
             done = block->length;
-            emit_bra_w(block, 0);
+            emit_bra_b(block, 0);
 
             // Slow path
-            block->code[slow_push + 2] = (block->length - slow_push - 2) >> 8;
-            block->code[slow_push + 3] = (block->length - slow_push - 2) & 0xff;
+            block->code[slow_push + 1] = block->length - slow_push - 2;
             compile_join_bc(block, REG_68K_D_SCRATCH_0);
             compile_slow_push_d0(block);
 
             // Patch done branch
-            block->code[done + 2] = (block->length - done - 2) >> 8;
-            block->code[done + 3] = (block->length - done - 2) & 0xff;
+            block->code[done + 1] = block->length - done - 2;
         }
         return 1;
 
@@ -211,26 +202,24 @@ int compile_stack_op(
             flush_cycles(block);
             emit_tst_l_disp_an(block, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
             slow_push = block->length;
-            emit_beq_w(block, 0);
+            emit_beq_b(block, 0);
 
-            // Fast path
+            // Fast path: bytes already in split positions
             emit_subq_w_an(block, REG_68K_A_SP, 2);
-            emit_subi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
-            compile_join_de(block, REG_68K_D_SCRATCH_1);
-            emit_move_b_dn_ind_an(block, REG_68K_D_SCRATCH_1, REG_68K_A_SP);
-            emit_rol_w_8(block, REG_68K_D_SCRATCH_1);
-            emit_move_b_dn_disp_an(block, REG_68K_D_SCRATCH_1, 1, REG_68K_A_SP);
+            emit_subq_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
+            emit_swap(block, REG_68K_D_DE);
+            emit_move_b_dn_disp_an(block, REG_68K_D_DE, 1, REG_68K_A_SP);
+            emit_swap(block, REG_68K_D_DE);
+            emit_move_b_dn_ind_an(block, REG_68K_D_DE, REG_68K_A_SP);
             done = block->length;
-            emit_bra_w(block, 0);
+            emit_bra_b(block, 0);
 
             // Slow path
-            block->code[slow_push + 2] = (block->length - slow_push - 2) >> 8;
-            block->code[slow_push + 3] = (block->length - slow_push - 2) & 0xff;
+            block->code[slow_push + 1] = block->length - slow_push - 2;
             compile_join_de(block, REG_68K_D_SCRATCH_0);
             compile_slow_push_d0(block);
 
-            block->code[done + 2] = (block->length - done - 2) >> 8;
-            block->code[done + 3] = (block->length - done - 2) & 0xff;
+            block->code[done + 1] = block->length - done - 2;
         }
         return 1;
 
@@ -242,26 +231,24 @@ int compile_stack_op(
             flush_cycles(block);
             emit_tst_l_disp_an(block, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
             slow_push = block->length;
-            emit_beq_w(block, 0);
+            emit_beq_b(block, 0);
 
             // Fast path
             emit_subq_w_an(block, REG_68K_A_SP, 2);
-            emit_subi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
+            emit_subq_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
             emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
             emit_move_b_dn_ind_an(block, REG_68K_D_SCRATCH_1, REG_68K_A_SP);
             emit_rol_w_8(block, REG_68K_D_SCRATCH_1);
             emit_move_b_dn_disp_an(block, REG_68K_D_SCRATCH_1, 1, REG_68K_A_SP);
             done = block->length;
-            emit_bra_w(block, 0);
+            emit_bra_b(block, 0);
 
             // Slow path
-            block->code[slow_push + 2] = (block->length - slow_push - 2) >> 8;
-            block->code[slow_push + 3] = (block->length - slow_push - 2) & 0xff;
+            block->code[slow_push + 1] = block->length - slow_push - 2;
             emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_0);
             compile_slow_push_d0(block);
 
-            block->code[done + 2] = (block->length - done - 2) >> 8;
-            block->code[done + 3] = (block->length - done - 2) & 0xff;
+            block->code[done + 1] = block->length - done - 2;
         }
         return 1;
 
@@ -273,28 +260,26 @@ int compile_stack_op(
             flush_cycles(block);
             emit_tst_l_disp_an(block, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
             slow_push = block->length;
-            emit_beq_w(block, 0);
+            emit_beq_b(block, 0);
 
             // Fast path
             emit_subq_w_an(block, REG_68K_A_SP, 2);
-            emit_subi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
+            emit_subq_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
             // [SP] = F (low byte - flags)
             emit_move_b_dn_ind_an(block, REG_68K_D_FLAGS, REG_68K_A_SP);
             // [SP+1] = A (high byte)
             emit_move_b_dn_disp_an(block, REG_68K_D_A, 1, REG_68K_A_SP);
             done = block->length;
-            emit_bra_w(block, 0);
+            emit_bra_b(block, 0);
 
             // Slow path: build AF in D0.w
-            block->code[slow_push + 2] = (block->length - slow_push - 2) >> 8;
-            block->code[slow_push + 3] = (block->length - slow_push - 2) & 0xff;
+            block->code[slow_push + 1] = block->length - slow_push - 2;
             emit_move_b_dn_dn(block, REG_68K_D_A, REG_68K_D_SCRATCH_0);
             emit_rol_w_8(block, REG_68K_D_SCRATCH_0);
             emit_move_b_dn_dn(block, REG_68K_D_FLAGS, REG_68K_D_SCRATCH_0);
             compile_slow_push_d0(block);
 
-            block->code[done + 2] = (block->length - done - 2) >> 8;
-            block->code[done + 3] = (block->length - done - 2) & 0xff;
+            block->code[done + 1] = block->length - done - 2;
         }
         return 1;
 
@@ -306,32 +291,29 @@ int compile_stack_op(
             flush_cycles(block);
             emit_tst_l_disp_an(block, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
             slow_pop = block->length;
-            emit_beq_w(block, 0);
+            emit_beq_b(block, 0);
 
-            // Fast path: use A3
-            emit_move_b_disp_an_dn(block, 1, REG_68K_A_SP, REG_68K_D_SCRATCH_1);
-            emit_rol_w_8(block, REG_68K_D_SCRATCH_1);
-            emit_move_b_ind_an_dn(block, REG_68K_A_SP, REG_68K_D_SCRATCH_1);
+            // Fast path: load directly into split positions
+            emit_swap(block, REG_68K_D_BC);
+            emit_move_b_disp_an_dn(block, 1, REG_68K_A_SP, REG_68K_D_BC);  // B
+            emit_swap(block, REG_68K_D_BC);
+            emit_move_b_ind_an_dn(block, REG_68K_A_SP, REG_68K_D_BC);  // C
             emit_addq_w_an(block, REG_68K_A_SP, 2);
-            emit_addi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
+            emit_addq_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
             done = block->length;
-            emit_bra_w(block, 0);
+            emit_bra_b(block, 0);
 
-            // Slow path
-            block->code[slow_pop + 2] = (block->length - slow_pop - 2) >> 8;
-            block->code[slow_pop + 3] = (block->length - slow_pop - 2) & 0xff;
+            // Slow path: convert D1.w = 0xBBCC to 0x00BB00CC in BC
+            block->code[slow_pop + 1] = block->length - slow_pop - 2;
             compile_slow_pop_to_d1(block);
-
-            // Patch done branch
-            block->code[done + 2] = (block->length - done - 2) >> 8;
-            block->code[done + 3] = (block->length - done - 2) & 0xff;
-
-            // Convert D1.w = 0xBBCC to 0x00BB00CC in BC
             emit_move_b_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_BC);  // C = low byte
             emit_rol_w_8(block, REG_68K_D_SCRATCH_1);  // D1.b = B
             emit_swap(block, REG_68K_D_BC);
             emit_move_b_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_BC);  // B = high byte
             emit_swap(block, REG_68K_D_BC);
+
+            // Patch done branch
+            block->code[done + 1] = block->length - done - 2;
         }
         return 1;
 
@@ -343,31 +325,28 @@ int compile_stack_op(
             flush_cycles(block);
             emit_tst_l_disp_an(block, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
             slow_pop = block->length;
-            emit_beq_w(block, 0);
+            emit_beq_b(block, 0);
 
-            // Fast path
-            emit_move_b_disp_an_dn(block, 1, REG_68K_A_SP, REG_68K_D_SCRATCH_1);
-            emit_rol_w_8(block, REG_68K_D_SCRATCH_1);
-            emit_move_b_ind_an_dn(block, REG_68K_A_SP, REG_68K_D_SCRATCH_1);
+            // Fast path: load directly into split positions
+            emit_swap(block, REG_68K_D_DE);
+            emit_move_b_disp_an_dn(block, 1, REG_68K_A_SP, REG_68K_D_DE);  // D
+            emit_swap(block, REG_68K_D_DE);
+            emit_move_b_ind_an_dn(block, REG_68K_A_SP, REG_68K_D_DE);  // E
             emit_addq_w_an(block, REG_68K_A_SP, 2);
-            emit_addi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
+            emit_addq_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
             done = block->length;
-            emit_bra_w(block, 0);
+            emit_bra_b(block, 0);
 
-            // Slow path
-            block->code[slow_pop + 2] = (block->length - slow_pop - 2) >> 8;
-            block->code[slow_pop + 3] = (block->length - slow_pop - 2) & 0xff;
+            // Slow path: convert D1.w = 0xDDEE to 0x00DD00EE in DE
+            block->code[slow_pop + 1] = block->length - slow_pop - 2;
             compile_slow_pop_to_d1(block);
-
-            block->code[done + 2] = (block->length - done - 2) >> 8;
-            block->code[done + 3] = (block->length - done - 2) & 0xff;
-
-            // Convert D1.w = 0xDDEE to 0x00DD00EE in DE
             emit_move_b_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_DE);
             emit_rol_w_8(block, REG_68K_D_SCRATCH_1);
             emit_swap(block, REG_68K_D_DE);
             emit_move_b_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_DE);
             emit_swap(block, REG_68K_D_DE);
+
+            block->code[done + 1] = block->length - done - 2;
         }
         return 1;
 
@@ -379,24 +358,22 @@ int compile_stack_op(
             flush_cycles(block);
             emit_tst_l_disp_an(block, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
             slow_pop = block->length;
-            emit_beq_w(block, 0);
+            emit_beq_b(block, 0);
 
             // Fast path
             emit_move_b_disp_an_dn(block, 1, REG_68K_A_SP, REG_68K_D_SCRATCH_1);
             emit_rol_w_8(block, REG_68K_D_SCRATCH_1);
             emit_move_b_ind_an_dn(block, REG_68K_A_SP, REG_68K_D_SCRATCH_1);
             emit_addq_w_an(block, REG_68K_A_SP, 2);
-            emit_addi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
+            emit_addq_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
             done = block->length;
-            emit_bra_w(block, 0);
+            emit_bra_b(block, 0);
 
             // Slow path
-            block->code[slow_pop + 2] = (block->length - slow_pop - 2) >> 8;
-            block->code[slow_pop + 3] = (block->length - slow_pop - 2) & 0xff;
+            block->code[slow_pop + 1] = block->length - slow_pop - 2;
             compile_slow_pop_to_d1(block);
 
-            block->code[done + 2] = (block->length - done - 2) >> 8;
-            block->code[done + 3] = (block->length - done - 2) & 0xff;
+            block->code[done + 1] = block->length - done - 2;
 
             // HL = D1.w
             emit_movea_w_dn_an(block, REG_68K_D_SCRATCH_1, REG_68K_A_HL);
@@ -411,19 +388,18 @@ int compile_stack_op(
             flush_cycles(block);
             emit_tst_l_disp_an(block, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
             slow_pop = block->length;
-            emit_beq_w(block, 0);
+            emit_beq_b(block, 0);
 
             // Fast path: sets A and F directly
             emit_move_b_disp_an_dn(block, 1, REG_68K_A_SP, REG_68K_D_A);  // A = [SP+1]
             emit_move_b_ind_an_dn(block, REG_68K_A_SP, REG_68K_D_FLAGS);  // F = [SP]
             emit_addq_w_an(block, REG_68K_A_SP, 2);
-            emit_addi_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
+            emit_addq_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
             done = block->length;
-            emit_bra_w(block, 0);
+            emit_bra_b(block, 0);
 
             // Slow path
-            block->code[slow_pop + 2] = (block->length - slow_pop - 2) >> 8;
-            block->code[slow_pop + 3] = (block->length - slow_pop - 2) & 0xff;
+            block->code[slow_pop + 1] = block->length - slow_pop - 2;
             compile_slow_pop_to_d1(block);
             // D1.w = 0xAAFF, A = high byte, F = low byte
             emit_move_b_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_FLAGS);  // F = low
@@ -431,8 +407,7 @@ int compile_stack_op(
             emit_move_b_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_A);  // A = high
 
             // Patch done branch
-            block->code[done + 2] = (block->length - done - 2) >> 8;
-            block->code[done + 3] = (block->length - done - 2) & 0xff;
+            block->code[done + 1] = block->length - done - 2;
         }
         return 1;
 
@@ -444,7 +419,13 @@ int compile_stack_op(
             if (offset != 0) {
                 // update both A3 and gb_sp
                 emit_lea_disp_an_an(block, offset, REG_68K_A_SP, REG_68K_A_SP);
-                emit_addi_w_disp_an(block, offset, JIT_CTX_GB_SP, REG_68K_A_CTX);
+                if (offset > 0 && offset <= 8) {
+                    emit_addq_w_disp_an(block, offset, JIT_CTX_GB_SP, REG_68K_A_CTX);
+                } else if (offset < 0 && offset >= -8) {
+                    emit_subq_w_disp_an(block, -offset, JIT_CTX_GB_SP, REG_68K_A_CTX);
+                } else {
+                    emit_addi_w_disp_an(block, offset, JIT_CTX_GB_SP, REG_68K_A_CTX);
+                }
             }
         }
         return 1;

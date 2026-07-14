@@ -64,20 +64,20 @@ static void compile_inline_dmg_write(struct code_block *block, uint8_t val_reg)
     emit_lsr_w_imm_dn(block, 8, REG_68K_D_NEXT_PC);
     // movea.l (a6,d3.w*4), a0           ; 4 bytes [4-7] (6 on 68000)
     compile_page_lookup(block, REG_68K_A_WRITE_PAGE, REG_68K_D_NEXT_PC, REG_68K_A_SCRATCH_1);
-    // cmpa.w #0, a0                     ; 4 bytes [8-11]
-    emit_cmpa_w_imm_an(block, 0, REG_68K_A_SCRATCH_1);
-    // beq.s slow_path (+6)              ; 2 bytes [12-13] -> offset 20
+    // move.l a0, d3 - sets Z, d3 is dead ; 2 bytes [8-9]
+    emit_move_l_an_dn(block, REG_68K_A_SCRATCH_1, REG_68K_D_NEXT_PC);
+    // beq.s slow_path (+6)              ; 2 bytes [10-11] -> offset 18
     emit_beq_b(block, 6);
 
     // Page hit:
-    // move.b val_reg, (a0,d1.w)         ; 4 bytes [14-17]
+    // move.b val_reg, (a0,d1.w)         ; 4 bytes [12-15]
     emit_move_b_dn_idx_an(block, val_reg, REG_68K_A_SCRATCH_1, REG_68K_D_SCRATCH_1);
-    // bra.s done (+24)                  ; 2 bytes [18-19] -> offset 44
+    // bra.s done (+24)                  ; 2 bytes [16-17] -> offset 42
     emit_bra_b(block, 24);
 
-    // slow_path: (offset 20)
+    // slow_path: (offset 18)
     compile_slow_dmg_write(block, val_reg);
-    // falls through to done (offset 44)
+    // falls through to done (offset 42)
 }
 
 // Call dmg_write(dmg, addr, val) - addr in D1, val in D4 (A register)
@@ -131,20 +131,20 @@ void compile_call_dmg_read(struct code_block *block)
     emit_lsr_w_imm_dn(block, 8, REG_68K_D_SCRATCH_0);
     // movea.l (a5,d0.w*4), a0           ; 4 bytes [4-7] (6 on 68000)
     compile_page_lookup(block, REG_68K_A_READ_PAGE, REG_68K_D_SCRATCH_0, REG_68K_A_SCRATCH_1);
-    // cmpa.w #0, a0                     ; 4 bytes [8-11]
-    emit_cmpa_w_imm_an(block, 0, REG_68K_A_SCRATCH_1);
-    // beq.s slow_path (+6)              ; 2 bytes [12-13] -> offset 20
+    // move.l a0, d0 - sets Z, d0 is dead ; 2 bytes [8-9]
+    emit_move_l_an_dn(block, REG_68K_A_SCRATCH_1, REG_68K_D_SCRATCH_0);
+    // beq.s slow_path (+6)              ; 2 bytes [10-11] -> offset 18
     emit_beq_b(block, 6);
 
     // Page hit:
-    // move.b (a0,d1.w), d0              ; 4 bytes [14-17]
+    // move.b (a0,d1.w), d0              ; 4 bytes [12-15]
     emit_move_b_idx_an_dn(block, REG_68K_A_SCRATCH_1, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);
-    // bra.s done (+22)                  ; 2 bytes [18-19] -> offset 42
+    // bra.s done (+22)                  ; 2 bytes [16-17] -> offset 40
     emit_bra_b(block, 22);
 
-    // slow_path: (offset 20)
+    // slow_path: (offset 18)
     compile_slow_dmg_read(block);
-    // falls through to done (offset 42)
+    // falls through to done (offset 40)
 }
 
 // Call dmg_read(dmg, addr) - addr in D1, result goes to D4 (A register)
@@ -204,8 +204,8 @@ void compile_call_dmg_read16(struct code_block *block)
     emit_andi_w_dn(block, REG_68K_D_SCRATCH_0, 0x00ff);
     // cmpi.w #$00ff, d0                 ; 4 bytes [6-9]
     emit_cmpi_w_imm_dn(block, 0x00ff, REG_68K_D_SCRATCH_0);
-    // beq.b slow_path (+32/+34)         ; 2 bytes [10-11] -> offset 44
-    emit_beq_b(block, 32 + pad);
+    // beq.b slow_path (+30/+32)         ; 2 bytes [10-11] -> offset 42
+    emit_beq_b(block, 30 + pad);
 
     // Page table lookup
     // move.w d1, d0                     ; 2 bytes [12-13]
@@ -214,31 +214,31 @@ void compile_call_dmg_read16(struct code_block *block)
     emit_lsr_w_imm_dn(block, 8, REG_68K_D_SCRATCH_0);
     // movea.l (a5,d0.w*4), a0           ; 4 bytes [16-19] (6 on 68000)
     compile_page_lookup(block, REG_68K_A_READ_PAGE, REG_68K_D_SCRATCH_0, REG_68K_A_SCRATCH_1);
-    // cmpa.w #0, a0                     ; 4 bytes [20-23]
-    emit_cmpa_w_imm_an(block, 0, REG_68K_A_SCRATCH_1);
-    // beq.b slow_path (+18)             ; 2 bytes [24-25] -> offset 44
+    // move.l a0, d0 - sets Z, d0 is dead ; 2 bytes [20-21]
+    emit_move_l_an_dn(block, REG_68K_A_SCRATCH_1, REG_68K_D_SCRATCH_0);
+    // beq.b slow_path (+18)             ; 2 bytes [22-23] -> offset 42
     emit_beq_b(block, 18);
 
     // Fast read - low byte at (a0,d1.w), high byte one address later
     // (no page cross possible: low byte of the address is not 0xff)
-    // move.b (a0,d1.w), d3              ; 4 bytes [26-29] - low byte -> d3
+    // move.b (a0,d1.w), d3              ; 4 bytes [24-27] - low byte -> d3
     emit_move_b_idx_an_dn(block, REG_68K_A_SCRATCH_1, REG_68K_D_SCRATCH_1, REG_68K_D_NEXT_PC);
-    // move.w d1, d0                     ; 2 bytes [30-31]
+    // move.w d1, d0                     ; 2 bytes [28-29]
     emit_move_w_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);
-    // addq.w #1, d0                     ; 2 bytes [32-33]
+    // addq.w #1, d0                     ; 2 bytes [30-31]
     emit_addq_w_dn(block, REG_68K_D_SCRATCH_0, 1);
-    // move.b (a0,d0.w), d0              ; 4 bytes [34-37] - high byte -> d0.b
+    // move.b (a0,d0.w), d0              ; 4 bytes [32-35] - high byte -> d0.b
     emit_move_b_idx_an_dn(block, REG_68K_A_SCRATCH_1, REG_68K_D_SCRATCH_0, REG_68K_D_SCRATCH_0);
-    // lsl.w #8, d0                      ; 2 bytes [38-39] - shift high byte up
+    // lsl.w #8, d0                      ; 2 bytes [36-37] - shift high byte up
     emit_lsl_w_imm_dn(block, 8, REG_68K_D_SCRATCH_0);
-    // move.b d3, d0                     ; 2 bytes [40-41] - combine low byte
+    // move.b d3, d0                     ; 2 bytes [38-39] - combine low byte
     emit_move_b_dn_dn(block, REG_68K_D_NEXT_PC, REG_68K_D_SCRATCH_0);
-    // bra.b done (+22)                  ; 2 bytes [42-43] -> offset 66
+    // bra.b done (+22)                  ; 2 bytes [40-41] -> offset 64
     emit_bra_b(block, 22);
 
-    // slow_path: (offset 44)
+    // slow_path: (offset 42)
     compile_slow_dmg_read16(block);
-    // falls through to done (offset 66)
+    // falls through to done (offset 64)
 }
 
 // Slow path for dmg_write16 - addr in D1.w, data in D0.w
@@ -278,8 +278,8 @@ void compile_call_dmg_write16_d0(struct code_block *block)
     emit_andi_w_dn(block, REG_68K_D_SCRATCH_0, 0x00ff);
     // cmpi.w #$00ff, d0                 ; 4 bytes [8-11]
     emit_cmpi_w_imm_dn(block, 0x00ff, REG_68K_D_SCRATCH_0);
-    // beq.b slow_path (+30/+32)         ; 2 bytes [12-13] -> offset 44
-    emit_beq_b(block, 30 + pad);
+    // beq.b slow_path (+28/+30)         ; 2 bytes [12-13] -> offset 42
+    emit_beq_b(block, 28 + pad);
 
     // Page table lookup
     // move.w d1, d0                     ; 2 bytes [14-15]
@@ -288,32 +288,32 @@ void compile_call_dmg_write16_d0(struct code_block *block)
     emit_lsr_w_imm_dn(block, 8, REG_68K_D_SCRATCH_0);
     // movea.l (a6,d0.w*4), a0           ; 4 bytes [18-21] (6 on 68000)
     compile_page_lookup(block, REG_68K_A_WRITE_PAGE, REG_68K_D_SCRATCH_0, REG_68K_A_SCRATCH_1);
-    // cmpa.w #0, a0                     ; 4 bytes [22-25]
-    emit_cmpa_w_imm_an(block, 0, REG_68K_A_SCRATCH_1);
-    // beq.b slow_path (+16)             ; 2 bytes [26-27] -> offset 44
+    // move.l a0, d0 - sets Z, d0 is dead ; 2 bytes [22-23]
+    emit_move_l_an_dn(block, REG_68K_A_SCRATCH_1, REG_68K_D_SCRATCH_0);
+    // beq.b slow_path (+16)             ; 2 bytes [24-25] -> offset 42
     emit_beq_b(block, 16);
 
     // Fast write - low byte at (a0,d1.w), high byte one address later
     // (no page cross possible: low byte of the address is not 0xff)
-    // move.b d3, (a0,d1.w)              ; 4 bytes [28-31] - write low byte
+    // move.b d3, (a0,d1.w)              ; 4 bytes [26-29] - write low byte
     emit_move_b_dn_idx_an(block, REG_68K_D_NEXT_PC, REG_68K_A_SCRATCH_1, REG_68K_D_SCRATCH_1);
-    // lsr.w #8, d3                      ; 2 bytes [32-33] - shift high byte down
+    // lsr.w #8, d3                      ; 2 bytes [30-31] - shift high byte down
     emit_lsr_w_imm_dn(block, 8, REG_68K_D_NEXT_PC);
-    // move.w d1, d0                     ; 2 bytes [34-35]
+    // move.w d1, d0                     ; 2 bytes [32-33]
     emit_move_w_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);
-    // addq.w #1, d0                     ; 2 bytes [36-37]
+    // addq.w #1, d0                     ; 2 bytes [34-35]
     emit_addq_w_dn(block, REG_68K_D_SCRATCH_0, 1);
-    // move.b d3, (a0,d0.w)              ; 4 bytes [38-41] - write high byte
+    // move.b d3, (a0,d0.w)              ; 4 bytes [36-39] - write high byte
     emit_move_b_dn_idx_an(block, REG_68K_D_NEXT_PC, REG_68K_A_SCRATCH_1, REG_68K_D_SCRATCH_0);
-    // bra.b done (+26)                  ; 2 bytes [42-43] -> offset 70
+    // bra.b done (+26)                  ; 2 bytes [40-41] -> offset 68
     emit_bra_b(block, 26);
 
-    // slow_path: (offset 44)
+    // slow_path: (offset 42)
     // Restore data from D3 to D0 for slow path
-    // move.w d3, d0                     ; 2 bytes [44-45]
+    // move.w d3, d0                     ; 2 bytes [42-43]
     emit_move_w_dn_dn(block, REG_68K_D_NEXT_PC, REG_68K_D_SCRATCH_0);
     compile_slow_dmg_write16(block);
-    // falls through to done (offset 70)
+    // falls through to done (offset 68)
 }
 
 // Call stop_func(dmg) - returns 0 to continue, non-zero to halt

@@ -260,6 +260,27 @@ void emit_move_b_dn_disp_an(struct code_block *block, uint8_t dreg, int16_t disp
     emit_word(block, disp);
 }
 
+// move.b #imm, (An) - store immediate byte to memory
+void emit_move_b_imm_ind_an(struct code_block *block, uint8_t imm, uint8_t areg)
+{
+    // 00 01 aaa 010 111 100
+    emit_word(block, 0x10bc | (areg << 9));
+    emit_word(block, imm);
+}
+
+// move.b #imm, d(An) - store immediate byte to memory with displacement
+void emit_move_b_imm_disp_an(
+    struct code_block *block,
+    uint8_t imm,
+    int16_t disp,
+    uint8_t areg
+) {
+    // 00 01 aaa 101 111 100
+    emit_word(block, 0x117c | (areg << 9));
+    emit_word(block, imm);
+    emit_word(block, disp);
+}
+
 // move.b (An), Dn - load byte from memory via address register
 void emit_move_b_ind_an_dn(struct code_block *block, uint8_t areg, uint8_t dreg)
 {
@@ -1079,6 +1100,32 @@ void emit_addq_b_disp_an(
     // 0101 ddd 0 00 101 aaa (ddd: 1-7 = 1-7, 0 = 8)
     uint8_t ddd = (data == 8) ? 0 : data;
     emit_word(block, 0x5000 | (ddd << 9) | 0x28 | areg);
+    emit_word(block, disp);
+}
+
+// addq.w #data, d(An) - add quick (1-8) to memory word
+void emit_addq_w_disp_an(
+    struct code_block *block,
+    uint8_t data,
+    int16_t disp,
+    uint8_t areg
+) {
+    // 0101 ddd 0 01 101 aaa (ddd: 1-7 = 1-7, 0 = 8)
+    uint8_t ddd = (data == 8) ? 0 : data;
+    emit_word(block, 0x5040 | (ddd << 9) | 0x28 | areg);
+    emit_word(block, disp);
+}
+
+// subq.w #data, d(An) - subtract quick (1-8) from memory word
+void emit_subq_w_disp_an(
+    struct code_block *block,
+    uint8_t data,
+    int16_t disp,
+    uint8_t areg
+) {
+    // 0101 ddd 1 01 101 aaa (ddd: 1-7 = 1-7, 0 = 8)
+    uint8_t ddd = (data == 8) ? 0 : data;
+    emit_word(block, 0x5140 | (ddd << 9) | 0x28 | areg);
     emit_word(block, disp);
 }
 

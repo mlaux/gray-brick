@@ -337,7 +337,7 @@ void StartEmulation(void)
   dmg.rom_bank_switch_hook = on_rom_bank_switch;
 
   // Initialize CGB state if ROM supports it and user has enabled GBC mode
-  if (gbc_enabled && (rom.cgb_flag == 0x80 || rom.cgb_flag == 0xC0)) {
+  if (gbc_enabled && (rom.cgb_flag & 0xc0)) {
     cgb_init(&cgb_state, rom.cgb_flag);
     dmg.cgb = &cgb_state;
   } else {
@@ -413,7 +413,7 @@ static void UpdateMenuItems(void)
   CheckItem(menu, EDIT_IGNORE_DOUBLE_SPEED, ignore_double_speed);
   CheckItem(menu, EDIT_STAT_INTS, stat_ints_enabled);
   if (g_wp) {
-    int supports_cgb = rom.cgb_flag == 0x80 || rom.cgb_flag == 0xC0;
+    int supports_cgb = rom.cgb_flag & 0xc0;
     if (!supports_cgb) {
       // force menu item off for non-cgb roms so it's not disabled and checked
       // which would be confusing
@@ -683,7 +683,6 @@ void OnMenuAction(long action)
       CheckItem(GetMenuHandle(MENU_EDIT), EDIT_IGNORE_DOUBLE_SPEED, ignore_double_speed);
       SavePreferences();
     } else if (item == EDIT_STAT_INTS) {
-      // takes effect at the next frame wrap, which rearms EV_STAT
       stat_ints_enabled = !stat_ints_enabled;
       CheckItem(GetMenuHandle(MENU_EDIT), EDIT_STAT_INTS, stat_ints_enabled);
       SavePreferences();
@@ -805,7 +804,7 @@ static int CheckFinderFiles(void)
   } else if (theFile.fType == 'SRAM') {
     ShowCenteredAlert(
         ALRT_4_LINE,
-        "\pSave files cannot be opened directly.",
+        "\pSave files can't be opened directly.",
         "\pOpen the ROM instead, and the save",
         "\pwill be loaded automatically.",
         "\p",

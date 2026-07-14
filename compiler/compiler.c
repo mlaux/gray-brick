@@ -137,9 +137,13 @@ static void compile_ld_imm16_split(
 ) {
     uint8_t lobyte = READ_BYTE(*src_ptr);
     uint8_t hibyte = READ_BYTE(*src_ptr + 1);
+    uint32_t split = ((uint32_t) hibyte << 16) | lobyte;
     *src_ptr += 2;
-    emit_move_l_dn(block, reg, hibyte << 16);
-    emit_move_w_dn(block, reg, lobyte);
+    if (split < 0x80) {
+        emit_moveq_dn(block, reg, split);
+    } else {
+        emit_move_l_dn(block, reg, split);
+    }
 }
 
 static void compile_ld_imm16_contiguous(
@@ -286,12 +290,12 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
 
         case 0x3b: // dec sp
             emit_subq_l_an(block, REG_68K_A_SP, 1);
-            emit_subi_w_disp_an(block, 1, JIT_CTX_GB_SP, REG_68K_A_CTX);
+            emit_subq_w_disp_an(block, 1, JIT_CTX_GB_SP, REG_68K_A_CTX);
             break;
 
         case 0x33: // inc sp
             emit_addq_l_an(block, REG_68K_A_SP, 1);
-            emit_addi_w_disp_an(block, 1, JIT_CTX_GB_SP, REG_68K_A_CTX);
+            emit_addq_w_disp_an(block, 1, JIT_CTX_GB_SP, REG_68K_A_CTX);
             break;
 
         case 0x03: // inc bc

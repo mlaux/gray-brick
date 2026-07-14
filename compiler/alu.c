@@ -33,7 +33,7 @@ static void compile_daa_track_sub(struct code_block *block)
 static void compile_daa(struct code_block *block)
 {
     size_t branch_to_sub, branch_add_h_done;
-    size_t branch_to_finish, branch_to_finish2;
+    size_t branch_to_finish;
 
     // Save original A lower nibble into D1 for H computation later
     // (before any DAA adjustments modify A)
@@ -44,7 +44,7 @@ static void compile_daa(struct code_block *block)
     emit_move_b_disp_an_dn(block, JIT_CTX_DAA_STATE + 1, REG_68K_A_CTX, REG_68K_D_SCRATCH_0);
     emit_tst_b_dn(block, REG_68K_D_SCRATCH_0);
     branch_to_sub = block->length;
-    emit_bne_w(block, 0);  // branch to subtraction path if N=1
+    emit_bne_b(block, 0);  // branch to subtraction path if N=1
 
     // === Addition path (N=0) ===
     // First check C || A > 0x99 -> add 0x60
@@ -63,11 +63,11 @@ static void compile_daa(struct code_block *block)
     // Compute H: D1 < (D0 & 0xF)?
     emit_andi_b_dn(block, REG_68K_D_SCRATCH_0, 0x0F);  // D0 = old_A & 0xF
     emit_cmp_b_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_SCRATCH_1);  // cmp D0, D1
-    emit_bcc_s(block, 8);  // if D1 >= D0 (carry clear), H=0, check nibble value
+    emit_bcc_s(block, 6);  // if D1 >= D0 (carry clear), H=0, check nibble value
     // H=1, add 0x06
     emit_addi_b_dn(block, REG_68K_D_A, 0x06);
     branch_add_h_done = block->length;
-    emit_bra_w(block, 0);  // skip to finish
+    emit_bra_b(block, 0);  // skip to finish
 
     // H=0, check if original (A & 0x0F) > 9 (D1 still has this value)
     emit_cmp_b_imm_dn(block, REG_68K_D_SCRATCH_1, 0x09);
@@ -75,12 +75,11 @@ static void compile_daa(struct code_block *block)
     emit_addi_b_dn(block, REG_68K_D_A, 0x06);
 
     branch_to_finish = block->length;
-    emit_bra_w(block, 0);  // jump to finish
+    emit_bra_b(block, 0);  // jump to finish
 
     // === Subtraction path (N=1) ===
     // Patch branch_to_sub
-    block->code[branch_to_sub + 2] = (block->length - branch_to_sub - 2) >> 8;
-    block->code[branch_to_sub + 3] = (block->length - branch_to_sub - 2) & 0xff;
+    block->code[branch_to_sub + 1] = block->length - branch_to_sub - 2;
 
     // Check C -> sub 0x60
     emit_btst_imm_dn(block, 0, REG_68K_D_FLAGS);
@@ -95,17 +94,10 @@ static void compile_daa(struct code_block *block)
     emit_bls_b(block, 4);  // if D1 <= D0 (lower or same), no H, skip
     emit_subi_b_dn(block, REG_68K_D_A, 0x06);
 
-    branch_to_finish2 = block->length;
-    emit_bra_w(block, 0);
-
-    // === Finish: set Z flag ===
+    // === Finish: set Z flag === (sub path falls through)
     // Patch forward branches
-    block->code[branch_add_h_done + 2] = (block->length - branch_add_h_done - 2) >> 8;
-    block->code[branch_add_h_done + 3] = (block->length - branch_add_h_done - 2) & 0xff;
-    block->code[branch_to_finish + 2] = (block->length - branch_to_finish - 2) >> 8;
-    block->code[branch_to_finish + 3] = (block->length - branch_to_finish - 2) & 0xff;
-    block->code[branch_to_finish2 + 2] = (block->length - branch_to_finish2 - 2) >> 8;
-    block->code[branch_to_finish2 + 3] = (block->length - branch_to_finish2 - 2) & 0xff;
+    block->code[branch_add_h_done + 1] = block->length - branch_add_h_done - 2;
+    block->code[branch_to_finish + 1] = block->length - branch_to_finish - 2;
 
     // Set Z flag based on A, preserve C
     emit_andi_b_dn(block, REG_68K_D_FLAGS, 0x01);  // keep only C

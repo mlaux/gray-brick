@@ -665,7 +665,7 @@ int main(int argc, char *argv[])
     memset(dmg, 0, sizeof *dmg);
     dmg_new(dmg, &rom, &lcd);
 
-    if (gbc_enabled && (rom.cgb_flag == 0x80 || rom.cgb_flag == 0xc0)) {
+    if (gbc_enabled && (rom.cgb_flag & 0xc0)) {
         cgb_init(&cgb, rom.cgb_flag);
         dmg->cgb = &cgb;
     }

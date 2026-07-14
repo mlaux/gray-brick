@@ -54,9 +54,9 @@ int compile_jr(
         // cmp.l JIT_CTX_WAKE_LIMIT(a4), d2
         emit_cmp_l_disp_an_dn(block, JIT_CTX_WAKE_LIMIT, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
 
-        // bcs.w over exit sequence to bra.w (skip moveq(2) + move.w(4) + patchable_exit(14) = 20, plus 2 = 22)
+        // bcs.b over exit sequence to bra.w (skip moveq(2) + move.w(4) + patchable_exit(14) = 20)
         // bcs = branch if carry set = branch if cycles < exit budget
-        emit_bcs_w(block, 22);
+        emit_bcs_b(block, 20);
         // Exit to dispatcher with target PC
         emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
         emit_move_w_dn(block, REG_68K_D_NEXT_PC, target_gb_pc);
@@ -120,17 +120,16 @@ void compile_jr_cond(
             // Skip if NOT taken
             size_t skip = block->length;
             if (branch_if_set) {
-                emit_beq_w(block, 0);
+                emit_beq_b(block, 0);
             } else {
-                emit_bne_w(block, 0);
+                emit_bne_b(block, 0);
             }
             // taken path: materialize pending + taken extra, loop head is
             // at pending == 0. fall-through keeps deferring
             emit_add_cycles(block, pending_cycles + 4);
             m68k_disp = (int16_t) target_m68k - (int16_t) (block->length + 2);
             emit_bra_w(block, m68k_disp);
-            block->code[skip + 2] = (block->length - skip - 2) >> 8;
-            block->code[skip + 3] = (block->length - skip - 2) & 0xff;
+            block->code[skip + 1] = block->length - skip - 2;
             return;
         }
 
@@ -138,7 +137,7 @@ void compile_jr_cond(
         // Structure:
         //   btst #flag_bit, d7           ; already emitted above
         //   bne/beq .check_cycles        ; if condition met, check cycles
-        //   bra.w .fall_through          ; condition not met, skip all
+        //   bra.b .fall_through          ; condition not met, skip all
         // .check_cycles:
         //   add pending + 4 to d2
         //   cmp.l JIT_CTX_WAKE_LIMIT(a4), d2
@@ -150,15 +149,15 @@ void compile_jr_cond(
 
         if (branch_if_set) {
             // Branch if flag is set: btst gives Z=0 when bit=1, so use bne
-            emit_bne_w(block, 6);  // skip the bra.w to .check_cycles
+            emit_bne_b(block, 2);  // skip the bra.b to .check_cycles
         } else {
             // Branch if flag is clear: btst gives Z=1 when bit=0, so use beq
-            emit_beq_w(block, 6);
+            emit_beq_b(block, 2);
         }
 
-        // bra.w to .fall_through
+        // bra.b to .fall_through
         size_t fall = block->length;
-        emit_bra_w(block, 0);
+        emit_bra_b(block, 0);
 
         // .check_cycles:
         emit_add_cycles(block, pending_cycles + 4);
@@ -174,8 +173,7 @@ void compile_jr_cond(
         emit_patchable_exit(block);
 
         // .fall_through: block continues deferring
-        block->code[fall + 2] = (block->length - fall - 2) >> 8;
-        block->code[fall + 3] = (block->length - fall - 2) & 0xff;
+        block->code[fall + 1] = block->length - fall - 2;
         return;
     }
 
@@ -186,10 +184,10 @@ void compile_jr_cond(
     size_t skip = block->length;
     if (branch_if_set) {
         // Skip exit if flag is clear (btst Z=1 when bit=0)
-        emit_beq_w(block, 0);
+        emit_beq_b(block, 0);
     } else {
         // Skip exit if flag is set (btst Z=0 when bit=1)
-        emit_bne_w(block, 0);
+        emit_bne_b(block, 0);
     }
 
     emit_add_cycles(block, pending_cycles + 4);  // pending + taken extra
@@ -197,8 +195,7 @@ void compile_jr_cond(
     emit_move_w_dn(block, REG_68K_D_NEXT_PC, target_gb_pc);
     emit_patchable_exit(block);
 
-    block->code[skip + 2] = (block->length - skip - 2) >> 8;
-    block->code[skip + 3] = (block->length - skip - 2) & 0xff;
+    block->code[skip + 1] = block->length - skip - 2;
 }
 
 // Compile conditional absolute jump (jp nz, jp z, jp nc, jp c)
@@ -223,10 +220,10 @@ void compile_jp_cond(
     skip = block->length;
     if (branch_if_set) {
         // Skip exit if flag is clear (btst Z=1 when bit=0)
-        emit_beq_w(block, 0);
+        emit_beq_b(block, 0);
     } else {
         // Skip exit if flag is set (btst Z=0 when bit=1)
-        emit_bne_w(block, 0);
+        emit_bne_b(block, 0);
     }
 
     emit_add_cycles(block, pending_cycles + 4);  // pending + taken extra
@@ -234,8 +231,7 @@ void compile_jp_cond(
     emit_move_w_dn(block, REG_68K_D_NEXT_PC, target);
     emit_patchable_exit(block);
 
-    block->code[skip + 2] = (block->length - skip - 2) >> 8;
-    block->code[skip + 3] = (block->length - skip - 2) & 0xff;
+    block->code[skip + 1] = block->length - skip - 2;
 }
 
 void compile_call_imm16(
