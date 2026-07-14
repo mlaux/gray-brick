@@ -13,12 +13,12 @@ void compile_call_ei_di(struct code_block *block, int enabled);
 void compile_slow_dmg_read(struct code_block *block);
 void compile_slow_dmg_write(struct code_block *block, uint8_t val_reg);
 
-// page table entry lookup, page index (addr >> 8) in idx_dreg,
-// biased entry left in dest_areg. clobbers idx_dreg on 68000
+// page table entry lookup, GB address in addr_dreg (clobbered),
+// biased entry left in dest_areg
 void compile_page_lookup(
     struct code_block *block,
     uint8_t table_areg,
-    uint8_t idx_dreg,
+    uint8_t addr_dreg,
     uint8_t dest_areg
 );
 

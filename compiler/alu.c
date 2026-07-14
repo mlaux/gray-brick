@@ -34,6 +34,7 @@ static void compile_daa(struct code_block *block)
 {
     size_t branch_to_sub, branch_add_h_done;
     size_t branch_to_finish;
+    size_t skip;
 
     // Save original A lower nibble into D1 for H computation later
     // (before any DAA adjustments modify A)
@@ -48,13 +49,17 @@ static void compile_daa(struct code_block *block)
 
     // === Addition path (N=0) ===
     // First check C || A > 0x99 -> add 0x60
-    emit_btst_imm_dn(block, 0, REG_68K_D_FLAGS);  // test C flag (4 bytes)
-    emit_bne_b(block, 6);  // if C set, skip compare and jump to add 0x60 (2 bytes)
-    emit_cmp_b_imm_dn(block, REG_68K_D_A, 0x99);  // (4 bytes)
-    emit_bls_b(block, 8);  // if A <= 0x99, skip add 0x60 and ori (2 bytes)
+    emit_btst_imm_dn(block, 0, REG_68K_D_FLAGS);  // test C flag
+    size_t have_carry = block->length;
+    emit_bne_b(block, 0);  // if C set, add 0x60 without the compare
+    emit_cmp_b_imm_dn(block, REG_68K_D_A, 0x99);
+    skip = block->length;
+    emit_bls_b(block, 0);  // if A <= 0x99, skip add 0x60 and ori
     // add 0x60 and set C
-    emit_addi_b_dn(block, REG_68K_D_A, 0x60);  // (4 bytes)
-    emit_ori_b_dn(block, REG_68K_D_FLAGS, 0x01);  // set C (4 bytes)
+    patch_branch_b(block, have_carry);
+    emit_addi_b_dn(block, REG_68K_D_A, 0x60);
+    emit_ori_b_dn(block, REG_68K_D_FLAGS, 0x01);  // set C
+    patch_branch_b(block, skip);
 
     // Now check H || (A & 0x0F) > 9 -> add 0x06
     // Load old_A into D0 for H computation
@@ -63,47 +68,55 @@ static void compile_daa(struct code_block *block)
     // Compute H: D1 < (D0 & 0xF)?
     emit_andi_b_dn(block, REG_68K_D_SCRATCH_0, 0x0F);  // D0 = old_A & 0xF
     emit_cmp_b_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_SCRATCH_1);  // cmp D0, D1
-    emit_bcc_s(block, 6);  // if D1 >= D0 (carry clear), H=0, check nibble value
+    skip = block->length;
+    emit_bcc_s(block, 0);  // if D1 >= D0 (carry clear), H=0, check nibble value
     // H=1, add 0x06
     emit_addi_b_dn(block, REG_68K_D_A, 0x06);
     branch_add_h_done = block->length;
     emit_bra_b(block, 0);  // skip to finish
 
     // H=0, check if original (A & 0x0F) > 9 (D1 still has this value)
+    patch_branch_b(block, skip);
     emit_cmp_b_imm_dn(block, REG_68K_D_SCRATCH_1, 0x09);
-    emit_bls_b(block, 4);  // if <= 9, skip
+    skip = block->length;
+    emit_bls_b(block, 0);  // if <= 9, skip
     emit_addi_b_dn(block, REG_68K_D_A, 0x06);
+    patch_branch_b(block, skip);
 
     branch_to_finish = block->length;
     emit_bra_b(block, 0);  // jump to finish
 
     // === Subtraction path (N=1) ===
-    // Patch branch_to_sub
-    block->code[branch_to_sub + 1] = block->length - branch_to_sub - 2;
+    patch_branch_b(block, branch_to_sub);
 
     // Check C -> sub 0x60
     emit_btst_imm_dn(block, 0, REG_68K_D_FLAGS);
-    emit_beq_b(block, 4);  // if C clear, skip
+    skip = block->length;
+    emit_beq_b(block, 0);  // if C clear, skip
     emit_subi_b_dn(block, REG_68K_D_A, 0x60);
+    patch_branch_b(block, skip);
 
     // Compute H: D1 > (old_A & 0xF) for subtraction
     // Load old_A & 0xF into D0
     emit_move_b_disp_an_dn(block, JIT_CTX_DAA_STATE, REG_68K_A_CTX, REG_68K_D_SCRATCH_0);
     emit_andi_b_dn(block, REG_68K_D_SCRATCH_0, 0x0F);  // D0 = old_A & 0xF
     emit_cmp_b_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_SCRATCH_1);  // cmp D0, D1
-    emit_bls_b(block, 4);  // if D1 <= D0 (lower or same), no H, skip
+    skip = block->length;
+    emit_bls_b(block, 0);  // if D1 <= D0 (lower or same), no H, skip
     emit_subi_b_dn(block, REG_68K_D_A, 0x06);
+    patch_branch_b(block, skip);
 
     // === Finish: set Z flag === (sub path falls through)
-    // Patch forward branches
-    block->code[branch_add_h_done + 1] = block->length - branch_add_h_done - 2;
-    block->code[branch_to_finish + 1] = block->length - branch_to_finish - 2;
+    patch_branch_b(block, branch_add_h_done);
+    patch_branch_b(block, branch_to_finish);
 
     // Set Z flag based on A, preserve C
     emit_andi_b_dn(block, REG_68K_D_FLAGS, 0x01);  // keep only C
     emit_tst_b_dn(block, REG_68K_D_A);
-    emit_bne_b(block, 4);  // if not zero, skip setting Z
+    skip = block->length;
+    emit_bne_b(block, 0);  // if not zero, skip setting Z
     emit_ori_b_dn(block, REG_68K_D_FLAGS, 0x04);  // set Z
+    patch_branch_b(block, skip);
 }
 
 // ADC core: expects operand already in D1.b
@@ -122,8 +135,10 @@ static void compile_adc_core(struct code_block *block)
 
     // Test old carry and conditionally add 1
     emit_btst_imm_dn(block, 0, REG_68K_D_FLAGS);
-    emit_beq_b(block, 2);
+    size_t no_carry = block->length;
+    emit_beq_b(block, 0);
     emit_addq_w_dn(block, REG_68K_D_SCRATCH_0, 1);
+    patch_branch_b(block, no_carry);
 
     // Add operand: add.w D1, D0
     emit_add_w_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);
@@ -156,8 +171,10 @@ static void compile_sbc_core(struct code_block *block)
 
     // Add old borrow to subtrahend
     emit_btst_imm_dn(block, 0, REG_68K_D_FLAGS);
-    emit_beq_b(block, 2);
+    size_t no_borrow = block->length;
+    emit_beq_b(block, 0);
     emit_addq_w_dn(block, REG_68K_D_SCRATCH_1, 1);
+    patch_branch_b(block, no_borrow);
 
     // Subtract: D0 = A - (operand + borrow_in), sets CCR.C if borrow
     emit_sub_w_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);

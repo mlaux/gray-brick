@@ -64,6 +64,8 @@ void emit_bcs_w(struct code_block *block, int16_t disp);
 void emit_bcc_w(struct code_block *block, int16_t disp);
 void emit_bcc_s(struct code_block *block, int8_t disp);
 void emit_bcc_opcode_w(struct code_block *block, int cond, int16_t disp);
+void patch_branch_b(struct code_block *block, size_t branch_at);
+void patch_branch_w(struct code_block *block, size_t branch_at);
 void emit_btst_imm_dn(struct code_block *block, uint8_t bit, uint8_t dreg);
 void emit_bclr_imm_dn(struct code_block *block, uint8_t bit, uint8_t dreg);
 void emit_bset_imm_dn(struct code_block *block, uint8_t bit, uint8_t dreg);

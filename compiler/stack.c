@@ -102,11 +102,11 @@ void compile_push_imm16(struct code_block *block, uint16_t value)
     emit_bra_b(block, 0);
 
     // Slow path
-    block->code[slow_push + 1] = block->length - slow_push - 2;
+    patch_branch_b(block, slow_push);
     emit_move_w_dn(block, REG_68K_D_SCRATCH_0, value);
     compile_slow_push_d0(block);
 
-    block->code[done + 1] = block->length - done - 2;
+    patch_branch_b(block, done);
 }
 
 // Guarded pop of the return address into D3, zero-extended (ret)
@@ -131,12 +131,12 @@ void compile_pop_pc(struct code_block *block)
     emit_bra_b(block, 0);
 
     // Slow path: dmg_read16 clobbers D3, so build it afterward
-    block->code[slow_pop + 1] = block->length - slow_pop - 2;
+    patch_branch_b(block, slow_pop);
     compile_slow_pop_to_d1(block);
     emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
     emit_move_w_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_NEXT_PC);
 
-    block->code[done + 1] = block->length - done - 2;
+    patch_branch_b(block, done);
 }
 
 int compile_stack_op(
@@ -185,12 +185,12 @@ int compile_stack_op(
             emit_bra_b(block, 0);
 
             // Slow path
-            block->code[slow_push + 1] = block->length - slow_push - 2;
+            patch_branch_b(block, slow_push);
             compile_join_bc(block, REG_68K_D_SCRATCH_0);
             compile_slow_push_d0(block);
 
             // Patch done branch
-            block->code[done + 1] = block->length - done - 2;
+            patch_branch_b(block, done);
         }
         return 1;
 
@@ -215,11 +215,11 @@ int compile_stack_op(
             emit_bra_b(block, 0);
 
             // Slow path
-            block->code[slow_push + 1] = block->length - slow_push - 2;
+            patch_branch_b(block, slow_push);
             compile_join_de(block, REG_68K_D_SCRATCH_0);
             compile_slow_push_d0(block);
 
-            block->code[done + 1] = block->length - done - 2;
+            patch_branch_b(block, done);
         }
         return 1;
 
@@ -244,11 +244,11 @@ int compile_stack_op(
             emit_bra_b(block, 0);
 
             // Slow path
-            block->code[slow_push + 1] = block->length - slow_push - 2;
+            patch_branch_b(block, slow_push);
             emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_0);
             compile_slow_push_d0(block);
 
-            block->code[done + 1] = block->length - done - 2;
+            patch_branch_b(block, done);
         }
         return 1;
 
@@ -273,13 +273,13 @@ int compile_stack_op(
             emit_bra_b(block, 0);
 
             // Slow path: build AF in D0.w
-            block->code[slow_push + 1] = block->length - slow_push - 2;
+            patch_branch_b(block, slow_push);
             emit_move_b_dn_dn(block, REG_68K_D_A, REG_68K_D_SCRATCH_0);
             emit_rol_w_8(block, REG_68K_D_SCRATCH_0);
             emit_move_b_dn_dn(block, REG_68K_D_FLAGS, REG_68K_D_SCRATCH_0);
             compile_slow_push_d0(block);
 
-            block->code[done + 1] = block->length - done - 2;
+            patch_branch_b(block, done);
         }
         return 1;
 
@@ -304,7 +304,7 @@ int compile_stack_op(
             emit_bra_b(block, 0);
 
             // Slow path: convert D1.w = 0xBBCC to 0x00BB00CC in BC
-            block->code[slow_pop + 1] = block->length - slow_pop - 2;
+            patch_branch_b(block, slow_pop);
             compile_slow_pop_to_d1(block);
             emit_move_b_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_BC);  // C = low byte
             emit_rol_w_8(block, REG_68K_D_SCRATCH_1);  // D1.b = B
@@ -313,7 +313,7 @@ int compile_stack_op(
             emit_swap(block, REG_68K_D_BC);
 
             // Patch done branch
-            block->code[done + 1] = block->length - done - 2;
+            patch_branch_b(block, done);
         }
         return 1;
 
@@ -338,7 +338,7 @@ int compile_stack_op(
             emit_bra_b(block, 0);
 
             // Slow path: convert D1.w = 0xDDEE to 0x00DD00EE in DE
-            block->code[slow_pop + 1] = block->length - slow_pop - 2;
+            patch_branch_b(block, slow_pop);
             compile_slow_pop_to_d1(block);
             emit_move_b_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_DE);
             emit_rol_w_8(block, REG_68K_D_SCRATCH_1);
@@ -346,7 +346,7 @@ int compile_stack_op(
             emit_move_b_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_DE);
             emit_swap(block, REG_68K_D_DE);
 
-            block->code[done + 1] = block->length - done - 2;
+            patch_branch_b(block, done);
         }
         return 1;
 
@@ -370,10 +370,10 @@ int compile_stack_op(
             emit_bra_b(block, 0);
 
             // Slow path
-            block->code[slow_pop + 1] = block->length - slow_pop - 2;
+            patch_branch_b(block, slow_pop);
             compile_slow_pop_to_d1(block);
 
-            block->code[done + 1] = block->length - done - 2;
+            patch_branch_b(block, done);
 
             // HL = D1.w
             emit_movea_w_dn_an(block, REG_68K_D_SCRATCH_1, REG_68K_A_HL);
@@ -399,7 +399,7 @@ int compile_stack_op(
             emit_bra_b(block, 0);
 
             // Slow path
-            block->code[slow_pop + 1] = block->length - slow_pop - 2;
+            patch_branch_b(block, slow_pop);
             compile_slow_pop_to_d1(block);
             // D1.w = 0xAAFF, A = high byte, F = low byte
             emit_move_b_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_FLAGS);  // F = low
@@ -407,7 +407,7 @@ int compile_stack_op(
             emit_move_b_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_A);  // A = high
 
             // Patch done branch
-            block->code[done + 1] = block->length - done - 2;
+            patch_branch_b(block, done);
         }
         return 1;
 
@@ -476,10 +476,9 @@ int compile_stack_op(
                 // biased). page of HL-1, same rule as the compile-time
                 // path: HL = $e000 anchors in page $df
                 emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
-                // D0 = (HL - 1) >> 8 (page number)
+                // D0 = HL - 1, page lookup does the shift
                 emit_move_w_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);
                 emit_subq_w_dn(block, REG_68K_D_SCRATCH_0, 1);
-                emit_lsr_w_imm_dn(block, 8, REG_68K_D_SCRATCH_0);
                 // A3 = read_page[page] (biased entry, see PAGE_BIAS in dmg.h)
                 compile_page_lookup(block, REG_68K_A_READ_PAGE, REG_68K_D_SCRATCH_0, REG_68K_A_SP);
                 // A3 += (s16)HL to complete the biased address
@@ -490,8 +489,7 @@ int compile_stack_op(
                 emit_bra_w(block, 0);
 
                 // Not WRAM - check HRAM
-                block->code[not_wram + 2] = (block->length - not_wram - 2) >> 8;
-                block->code[not_wram + 3] = (block->length - not_wram - 2) & 0xff;
+                patch_branch_w(block, not_wram);
 
                 if (ctx->hram_base) {
                     // Check HRAM: $ff82 <= HL <= $fffe
@@ -512,8 +510,7 @@ int compile_stack_op(
                     emit_bra_w(block, 0);
 
                     // Patch not_hram branch to slow mode
-                    block->code[not_hram + 2] = (block->length - not_hram - 2) >> 8;
-                    block->code[not_hram + 3] = (block->length - not_hram - 2) & 0xff;
+                    patch_branch_w(block, not_hram);
                 }
 
                 // Slow mode: A3 = HL (GB SP value)
@@ -522,11 +519,9 @@ int compile_stack_op(
                 emit_move_l_dn_disp_an(block, REG_68K_D_SCRATCH_1, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
 
                 // Patch done branches
-                block->code[done + 2] = (block->length - done - 2) >> 8;
-                block->code[done + 3] = (block->length - done - 2) & 0xff;
+                patch_branch_w(block, done);
                 if (ctx->hram_base) {
-                    block->code[done2 + 2] = (block->length - done2 - 2) >> 8;
-                    block->code[done2 + 3] = (block->length - done2 - 2) & 0xff;
+                    patch_branch_w(block, done2);
                 }
             } else {
                 // No context - simple path for testing

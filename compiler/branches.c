@@ -54,9 +54,9 @@ int compile_jr(
         // cmp.l JIT_CTX_WAKE_LIMIT(a4), d2
         emit_cmp_l_disp_an_dn(block, JIT_CTX_WAKE_LIMIT, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
 
-        // bcs.b over exit sequence to bra.w (skip moveq(2) + move.w(4) + patchable_exit(14) = 20)
         // bcs = branch if carry set = branch if cycles < exit budget
-        emit_bcs_b(block, 20);
+        size_t skip = block->length;
+        emit_bcs_b(block, 0);
         // Exit to dispatcher with target PC
         emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
         emit_move_w_dn(block, REG_68K_D_NEXT_PC, target_gb_pc);
@@ -64,6 +64,7 @@ int compile_jr(
 
         // Native branch (cycles < scanline boundary)
         // Recompute displacement since block->length changed
+        patch_branch_b(block, skip);
         m68k_disp = (int16_t) target_m68k - (int16_t) (block->length + 2);
         emit_bra_w(block, m68k_disp);
         return 0;
@@ -129,7 +130,7 @@ void compile_jr_cond(
             emit_add_cycles(block, pending_cycles + 4);
             m68k_disp = (int16_t) target_m68k - (int16_t) (block->length + 2);
             emit_bra_w(block, m68k_disp);
-            block->code[skip + 1] = block->length - skip - 2;
+            patch_branch_b(block, skip);
             return;
         }
 
@@ -147,12 +148,13 @@ void compile_jr_cond(
         //   patchable_exit
         // .fall_through:
 
+        size_t cond = block->length;
         if (branch_if_set) {
             // Branch if flag is set: btst gives Z=0 when bit=1, so use bne
-            emit_bne_b(block, 2);  // skip the bra.b to .check_cycles
+            emit_bne_b(block, 0);  // skip the bra.b to .check_cycles
         } else {
             // Branch if flag is clear: btst gives Z=1 when bit=0, so use beq
-            emit_beq_b(block, 2);
+            emit_beq_b(block, 0);
         }
 
         // bra.b to .fall_through
@@ -160,6 +162,7 @@ void compile_jr_cond(
         emit_bra_b(block, 0);
 
         // .check_cycles:
+        patch_branch_b(block, cond);
         emit_add_cycles(block, pending_cycles + 4);
         emit_cmp_l_disp_an_dn(block, JIT_CTX_WAKE_LIMIT, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
 
@@ -173,7 +176,7 @@ void compile_jr_cond(
         emit_patchable_exit(block);
 
         // .fall_through: block continues deferring
-        block->code[fall + 1] = block->length - fall - 2;
+        patch_branch_b(block, fall);
         return;
     }
 
@@ -195,7 +198,7 @@ void compile_jr_cond(
     emit_move_w_dn(block, REG_68K_D_NEXT_PC, target_gb_pc);
     emit_patchable_exit(block);
 
-    block->code[skip + 1] = block->length - skip - 2;
+    patch_branch_b(block, skip);
 }
 
 // Compile conditional absolute jump (jp nz, jp z, jp nc, jp c)
@@ -231,7 +234,7 @@ void compile_jp_cond(
     emit_move_w_dn(block, REG_68K_D_NEXT_PC, target);
     emit_patchable_exit(block);
 
-    block->code[skip + 1] = block->length - skip - 2;
+    patch_branch_b(block, skip);
 }
 
 void compile_call_imm16(
@@ -293,8 +296,7 @@ void compile_call_cond(
     emit_patchable_exit(block);
     pending_cycles = saved;
 
-    block->code[skip + 2] = (block->length - skip - 2) >> 8;
-    block->code[skip + 3] = (block->length - skip - 2) & 0xff;
+    patch_branch_w(block, skip);
 }
 
 void compile_ret(struct code_block *block)
@@ -330,8 +332,7 @@ void compile_ret_cond(struct code_block *block, uint8_t flag_bit, int branch_if_
     emit_dispatch_jump(block);
     pending_cycles = saved;
 
-    block->code[skip + 2] = (block->length - skip - 2) >> 8;
-    block->code[skip + 3] = (block->length - skip - 2) & 0xff;
+    patch_branch_w(block, skip);
 }
 
 void compile_rst_n(struct code_block *block, uint8_t target, uint16_t ret_addr)

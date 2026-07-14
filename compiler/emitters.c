@@ -441,6 +441,20 @@ void emit_bne_w(struct code_block *block, int16_t disp)
     emit_word(block, disp);
 }
 
+// resolve a forward byte branch emitted with displacement 0 to land here
+void patch_branch_b(struct code_block *block, size_t branch_at)
+{
+    block->code[branch_at + 1] = block->length - branch_at - 2;
+}
+
+// resolve a forward word branch emitted with displacement 0 to land here
+void patch_branch_w(struct code_block *block, size_t branch_at)
+{
+    uint16_t disp = block->length - branch_at - 2;
+    block->code[branch_at + 2] = disp >> 8;
+    block->code[branch_at + 3] = disp & 0xff;
+}
+
 // bcs.w - branch if C=1 with 16-bit displacement
 void emit_bcs_w(struct code_block *block, int16_t disp)
 {
