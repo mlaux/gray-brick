@@ -46,7 +46,7 @@ char *rom_get_title(struct rom *rom, char *buf)
     buf[16] = '\0';
     len = strlen(buf);
 
-    if ((unsigned char) buf[15] == 0x80 || (unsigned char) buf[15] == 0xc0) {
+    if ((unsigned char) buf[15] & 0xc0) {
         // CGB game or GB compatible CGB game
         buf[11] = '\0';
         len = strlen(buf);

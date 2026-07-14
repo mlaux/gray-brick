@@ -266,7 +266,7 @@ int compile_alu_op(
         compile_set_z_flag(block);
         return 1;
 
-    case 0x2d: // dec l (movea doesn't affect CCR, so we can fuse)
+    case 0x2d: // dec l
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
         emit_subq_b_dn(block, REG_68K_D_SCRATCH_1, 1);
         emit_movea_w_dn_an(block, REG_68K_D_SCRATCH_1, REG_68K_A_HL);

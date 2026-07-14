@@ -38,10 +38,7 @@ void cgb_init(struct cgb_state *cgb, int cgb_flag)
 {
     memset(cgb, 0, sizeof(struct cgb_state));
 
-    // Set CGB mode based on ROM header flag
-    // 0x80 = CGB enhanced (works on DMG too)
-    // 0xC0 = CGB only
-    cgb->mode = (cgb_flag == 0x80 || cgb_flag == 0xC0) ? 1 : 0;
+    cgb->mode = (cgb_flag & 0xc0) ? 1 : 0;
     cgb->double_speed = 0;
     cgb->speed_switch_armed = 0;
     cgb->vram_bank = 0;
