@@ -294,7 +294,7 @@ static u8 get_button_state(struct dmg *dmg)
 {
     // each selected group pulls its pressed bits low. with neither group
     // selected the low nibble reads 0xf (nothing pressed), not 0 - games
-    // park P1 at $30 between polls and a raw read there must not see
+    // park P1 at $30 between polls and a raw read there shouldn't see
     // phantom presses. bits 4-5 read back the select lines (0 = selected),
     // 6-7 are unused and read 1
     u8 ret = 0xcf;

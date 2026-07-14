@@ -8,57 +8,6 @@
 // helper for reading GB memory during compilation
 #define READ_BYTE(off) (ctx->read(ctx->dmg, src_address + (off)))
 
-// Try to fuse with a following conditional branch using live CCR flags.
-// allow_carry: if true, allow C conditions (for cp/sub); if false, only Z (for and/or/tst)
-// Returns 1 if fused, 0 if caller should save flags normally.
-static int try_fuse_branch(
-    struct code_block *block,
-    struct compile_ctx *ctx,
-    uint16_t *src_ptr,
-    uint16_t src_address,
-    int allow_carry
-) {
-    uint8_t next_op = READ_BYTE(*src_ptr);
-    int cond = get_branch_condition(next_op);
-
-    if (cond == COND_NONE)
-        return 0;
-
-    // For and/or/tst, only fuse Z conditions
-    if (!allow_carry && (cond == COND_CS || cond == COND_CC))
-        return 0;
-
-    // if the branch itself is a backward-jump target, don't fuse: the
-    // main loop must land on it to flush pending cycles at the boundary
-    if (*src_ptr < 256 && flush_at[*src_ptr])
-        return 0;
-
-    // Record m68k offset for branch instruction and consume opcode
-    m68k_offsets[*src_ptr] = block->length;
-    (*src_ptr)++;
-
-    // base cycles of the consumed branch; the fused emitters add the
-    // taken-path extra themselves
-    defer_cycles(instructions[next_op].cycles);
-
-    // Emit fused branch based on opcode type
-    switch (next_op) {
-    case 0x20: case 0x28: case 0x30: case 0x38:  // jr nz/z/nc/c
-        compile_jr_cond_fused(block, ctx, src_ptr, src_address, cond);
-        break;
-    case 0xc2: case 0xca: case 0xd2: case 0xda:  // jp nz/z/nc/c
-        compile_jp_cond_fused(block, ctx, src_ptr, src_address, cond);
-        break;
-    case 0xc4: case 0xcc: case 0xd4: case 0xdc:  // call nz/z/nc/c
-        compile_call_cond_fused(block, ctx, src_ptr, src_address, cond);
-        break;
-    default:  // ret nz/z/nc/c
-        compile_ret_cond_fused(block, cond);
-        break;
-    }
-    return 1;
-}
-
 // DAA tracking: save old_A and set N flag before ALU ops that affect A
 // These are needed for DAA to compute the half-carry (H) and know add vs sub
 static void compile_daa_track_add(struct code_block *block)
@@ -266,7 +215,6 @@ int compile_alu_op(
     case 0x0d: // dec c
         emit_subq_b_dn(block, REG_68K_D_BC, 1);
         compile_set_z_flag(block);
-        try_fuse_branch(block, ctx, src_ptr, src_address, 0);
         return 1;
 
     case 0x14: // inc d
@@ -291,7 +239,6 @@ int compile_alu_op(
     case 0x1d: // dec e
         emit_subq_b_dn(block, REG_68K_D_DE, 1);
         compile_set_z_flag(block);
-        try_fuse_branch(block, ctx, src_ptr, src_address, 0);
         return 1;
 
     case 0x24: // inc h
@@ -324,7 +271,6 @@ int compile_alu_op(
         emit_subq_b_dn(block, REG_68K_D_SCRATCH_1, 1);
         emit_movea_w_dn_an(block, REG_68K_D_SCRATCH_1, REG_68K_A_HL);
         compile_set_z_flag(block);
-        try_fuse_branch(block, ctx, src_ptr, src_address, 0);
         return 1;
 
     case 0x34: // inc (hl)
@@ -349,14 +295,12 @@ int compile_alu_op(
         compile_daa_track_add(block);  // Track for DAA (games use INC A + DAA)
         emit_addq_b_dn(block, REG_68K_D_A, 1);
         compile_set_z_flag(block);
-        try_fuse_branch(block, ctx, src_ptr, src_address, 0);
         return 1;
 
     case 0x3d: // dec a
         compile_daa_track_sub(block);  // Track for DAA (games use DEC A + DAA)
         emit_subq_b_dn(block, REG_68K_D_A, 1);
         compile_set_z_flag(block);
-        try_fuse_branch(block, ctx, src_ptr, src_address, 0);
         return 1;
 
     // misc ALU ops
@@ -634,7 +578,6 @@ int compile_alu_op(
     case 0xa7: // and a, a - set flags based on A
         emit_tst_b_dn(block, REG_68K_D_A);
         compile_set_zc_flags(block);
-        try_fuse_branch(block, ctx, src_ptr, src_address, 0);
         return 1;
 
     case 0xa8: // xor a, b
@@ -733,7 +676,6 @@ int compile_alu_op(
     case 0xb7: // or a, a - set flags based on A
         emit_tst_b_dn(block, REG_68K_D_A);
         compile_set_zc_flags(block);
-        try_fuse_branch(block, ctx, src_ptr, src_address, 0);
         return 1;
 
     case 0xb8: // cp a, b
@@ -747,7 +689,6 @@ int compile_alu_op(
     case 0xb9: // cp a, c
         emit_cmp_b_dn_dn(block, REG_68K_D_BC, REG_68K_D_A);
         compile_set_zc_flags(block);
-        try_fuse_branch(block, ctx, src_ptr, src_address, 1);
         return 1;
 
     case 0xba: // cp a, d 
@@ -761,7 +702,6 @@ int compile_alu_op(
     case 0xbb: // cp a, e
         emit_cmp_b_dn_dn(block, REG_68K_D_DE, REG_68K_D_A);
         compile_set_zc_flags(block);
-        try_fuse_branch(block, ctx, src_ptr, src_address, 1);
         return 1;
 
     case 0xbc: // cp a, h
@@ -769,14 +709,12 @@ int compile_alu_op(
         emit_rol_w_8(block, REG_68K_D_SCRATCH_1);
         emit_cmp_b_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_A);
         compile_set_zc_flags(block);
-        try_fuse_branch(block, ctx, src_ptr, src_address, 1);
         return 1;
 
     case 0xbd: // cp a, l
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
         emit_cmp_b_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_A);
         compile_set_zc_flags(block);
-        try_fuse_branch(block, ctx, src_ptr, src_address, 1);
         return 1;
 
     case 0xbe: // cp a, (hl)
@@ -784,7 +722,6 @@ int compile_alu_op(
         compile_call_dmg_read(block);
         emit_cmp_b_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_A);
         compile_set_zc_flags(block);
-        try_fuse_branch(block, ctx, src_ptr, src_address, 1);
         return 1;
 
     case 0xbf: // cp a, a - always Z=1, N=1, H=0, C=0
@@ -840,7 +777,6 @@ int compile_alu_op(
         emit_cmp_b_imm_dn(block, REG_68K_D_A, READ_BYTE(*src_ptr));
         (*src_ptr)++;
         compile_set_zc_flags(block);
-        try_fuse_branch(block, ctx, src_ptr, src_address, 1);
         return 1;
 
     default:

@@ -1,29 +1,6 @@
 #ifndef _BRANCHES_H
 #define _BRANCHES_H
 
-// Returns 68k condition code if opcode is a conditional branch, COND_NONE otherwise
-int get_branch_condition(uint8_t opcode);
-
-// Fused versions that use live CCR flags instead of btst on D7
-// Returns 1 if this ended the block, 0 otherwise
-int compile_jr_cond_fused(
-    struct code_block *block,
-    struct compile_ctx *ctx,
-    uint16_t *src_ptr,
-    uint16_t src_address,
-    int cond
-);
-
-void compile_jp_cond_fused(
-    struct code_block *block,
-    struct compile_ctx *ctx,
-    uint16_t *src_ptr,
-    uint16_t src_address,
-    int cond
-);
-
-void compile_ret_cond_fused(struct code_block *block, int cond);
-
 int compile_jr(
     struct code_block *block,
     struct compile_ctx *ctx,

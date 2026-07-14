@@ -23,7 +23,7 @@ uint16_t m68k_offsets[256];
 int pending_cycles;
 
 // GB offsets that are targets of backward jumps within the block; pending
-// cycles must be flushed before these so loop heads sit at pending == 0
+// cycles need to be flushed before these so loop heads sit at pending == 0
 uint8_t flush_at[256];
 
 // SM83 instruction lengths for the branch-target pre-scan (CB handled as 2)
@@ -199,9 +199,8 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
     while (!done) {
         size_t before = block->length;
         // detect overflow of code block and chain to next block
-        // longest instruction is 178 bytes, exit sequence is 26 bytes
-        // worst case: 253 nops then a fused compare/branch
-        if (block->length > sizeof(block->code) - 220 || src_ptr >= 256) {
+        // longest instruction is around 150 bytes, exit sequence is 26 bytes
+        if (block->length > sizeof(block->code) - 200 || src_ptr >= 256) {
             flush_cycles(block);
             emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
             emit_move_w_dn(block, REG_68K_D_NEXT_PC, src_address + src_ptr);

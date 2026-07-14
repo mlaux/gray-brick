@@ -19,14 +19,12 @@ void compile_set_zc_flags(struct code_block *block)
 
 void compile_set_z_flag(struct code_block *block)
 {
-    // inc/dec/bit must set Z from result but preserve C from previous flags.
+    // inc/dec/bit sets Z from result but preserve C from previous flags.
     // Save new CCR to D3, extract Z, merge with old C from D7.
-    // Then load merged flags into CCR so fused branches see correct Z.
     emit_move_sr_dn(block, REG_68K_D_NEXT_PC);
     emit_andi_b_dn(block, REG_68K_D_NEXT_PC, 0x04);
     emit_andi_b_dn(block, REG_68K_D_FLAGS, 0x01);
     emit_or_b_dn_dn(block, REG_68K_D_NEXT_PC, REG_68K_D_FLAGS);
-    emit_move_dn_ccr(block, REG_68K_D_FLAGS);
 }
 
 void compile_set_c_flag(struct code_block *block)

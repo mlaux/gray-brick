@@ -35,7 +35,7 @@ void compile_page_lookup(
 // addr in D1, val_reg specifies value register
 void compile_slow_dmg_write(struct code_block *block, uint8_t val_reg)
 {
-    // D2 must be exact for lazy register evaluation. no-op when reached
+    // D2 has to be exact for lazy register evaluation. no-op when reached
     // through the inline wrapper, which already flushed before the split
     flush_cycles(block);
     // store current cycle count for lazy register evaluation
@@ -103,7 +103,7 @@ void compile_call_dmg_write_d0(struct code_block *block)
 // Emit slow path call to dmg_read - expects address in D1, returns in D0
 void compile_slow_dmg_read(struct code_block *block)
 {
-    // D2 must be exact for lazy DIV/LY evaluation. no-op when reached
+    // D2 has to be exact for lazy DIV/LY evaluation. no-op when reached
     // through the inline wrapper, which already flushed before the split
     flush_cycles(block);
     // store current cycle count for DIV/LY evaluation
