@@ -84,12 +84,13 @@ struct lcd {
     u8 raster_count;
     u8 raster_overflow;
 
-    // scx&7 alignment each row of the packed buffer was rendered at; the
-    // blitters start row y's visible 160 pixels at row_scx[y].
-    // row_scx_uniform means every row matches row_scx[0], so a single
-    // whole-frame blit offset still works
+    // scx&7 alignment each row of the packed buffer was rendered at
     u8 row_scx[144];
     u8 row_scx_uniform;
+
+    // window internal line counter 
+    // advances only on lines the window renders
+    u8 window_line;
 
     // what changed since the previous rendered frame (lcd_diff_rows),
     // so blitters can skip clean rows. frame_dirty ORs all rows
@@ -102,9 +103,13 @@ struct lcd {
     u8 bcps;  // BG palette index + auto-increment (bit 7)
     u8 ocps;  // Sprite palette index + auto-increment (bit 7)
 
-    // CGB palette dirty tracking (32 bits = 32 colors)
+    // CGB palette dirty tracking (32 bits = 32 colors), owned by the
+    // mac blitter's color cache which clears it after rebuilding
     u32 bg_palette_dirty;
     u32 obj_palette_dirty;
+
+    // set when a palette write actually changes a byte
+    u8 palette_frame_dirty;
 };
 
 void lcd_new(struct lcd *lcd);
@@ -154,8 +159,8 @@ static inline void lcd_set_mode(struct lcd *lcd, int mode)
 int lcd_step(struct lcd *lcd);
 
 // fill row_dirty/frame_dirty by comparing the packed buffer and row_scx
-// against the previous rendered frame
-void lcd_diff_rows(struct lcd *lcd);
+// against the previous rendered frame; cgb mode also compares attrs
+void lcd_diff_rows(struct lcd *lcd, int cgb);
 
 // output the pixels to the screen
 void lcd_draw(struct lcd *lcd);
@@ -167,11 +172,26 @@ void lcd_render_band(
     int sy_start,
     int sy_end,
     const struct raster_regs *regs);
+
+// dmg band with lcdc bit 0 off: fill with bgp color 0
+void lcd_render_blank_band(
+    struct dmg *dmg,
+    int sy_start,
+    int sy_end,
+    const struct raster_regs *regs);
 void lcd_render_objs_band(
     struct dmg *dmg,
     int sy_start,
     int sy_end,
     const struct raster_regs *regs);
+
+// oam scan: first ten sprites per scanline in oam order
+void lcd_select_objs(
+    const u8 *oam,
+    int tall,
+    int sy_start,
+    int sy_end,
+    u16 *sel);
 
 // CGB-specific rendering (in lcd_cgb.c)
 void lcd_cgb_init_lut(void);

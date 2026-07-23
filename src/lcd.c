@@ -23,8 +23,12 @@ static u8 attr_buffer[168 * 144];
 
 // previous rendered frame for lcd_diff_rows
 static u8 prev_pixels[42 * 144];
+static u8 prev_attrs[168 * 144];
 static u8 prev_row_scx[144];
 static int diff_valid;
+
+// 1 if bg color index is nonzero
+static u8 bg_opacity[21 * 144 + 1];
 
 // LUT for horizontal flip: reverses bit order in a byte
 u8 hflip_lut[256];
@@ -140,6 +144,7 @@ void lcd_new(struct lcd *lcd)
     // Initialize CGB palette dirty flags to all-dirty so first frame updates everything
     lcd->bg_palette_dirty = 0xFFFFFFFF;
     lcd->obj_palette_dirty = 0xFFFFFFFF;
+    lcd->palette_frame_dirty = 0;
 }
 
 u8 lcd_is_valid_addr(u16 addr)
@@ -158,7 +163,7 @@ int lcd_step(struct lcd *lcd)
 
 // reject scrolling frames fast, static rows have to compare the whole
 // row but that's still faster than drawing
-void lcd_diff_rows(struct lcd *lcd)
+void lcd_diff_rows(struct lcd *lcd, int cgb)
 {
     u8 dirty_all = 0;
     int y;
@@ -167,6 +172,9 @@ void lcd_diff_rows(struct lcd *lcd)
         diff_valid = 1;
         memcpy(prev_pixels, lcd->pixels, 42 * 144);
         memcpy(prev_row_scx, lcd->row_scx, 144);
+        if (cgb) {
+            memcpy(prev_attrs, lcd->attrs, 168 * 144);
+        }
         memset(lcd->row_dirty, ROW_DIRTY_CONTENT | ROW_DIRTY_OFFSET, 144);
         lcd->frame_dirty = ROW_DIRTY_CONTENT | ROW_DIRTY_OFFSET;
         return;
@@ -183,6 +191,22 @@ void lcd_diff_rows(struct lcd *lcd)
                 dirty = ROW_DIRTY_CONTENT;
                 memcpy(prev, row, 42);
                 break;
+            }
+        }
+        if (cgb) {
+            const u16 *arow = (const u16 *) (lcd->attrs + y * 168);
+            u16 *aprev = (u16 *) (prev_attrs + y * 168);
+
+            if (!dirty) {
+                for (k = 0; k < 84; k++) {
+                    if (arow[k] != aprev[k]) {
+                        dirty = ROW_DIRTY_CONTENT;
+                        break;
+                    }
+                }
+            }
+            if (dirty) {
+                memcpy(aprev, arow, 168);
             }
         }
         if (lcd->row_scx[y] != prev_row_scx[y]) {
@@ -248,9 +272,30 @@ static inline void render_partial_start(
     }
 }
 
+// mirror of render_partial_start for the bg_opacity bits
+static inline void render_partial_opacity(
+    u8 *opac,
+    u8 op,
+    int pixel_offset,
+    int count,
+    int start_pixel
+) {
+    int k;
+
+    for (k = 0; k < count; k++) {
+        int dst = start_pixel + k;
+        u8 bit = 0x80 >> (dst & 7);
+
+        if ((op << (pixel_offset + k)) & 0x80) {
+            opac[dst >> 3] |= bit;
+        } else {
+            opac[dst >> 3] &= ~bit;
+        }
+    }
+}
+
 // render scanlines [sy_start, sy_end) of the background and window from
-// one register state. a band is as wide as the game allows: the whole
-// frame when nothing was written mid-frame
+// one register state
 void lcd_render_band(
     struct dmg *dmg,
     int sy_start,
@@ -297,6 +342,7 @@ void lcd_render_band(
     // before window: render all 21 BG tiles, no window overlay
     for (sy = sy_start; sy < sy_limit; sy++) {
         u8 *row = out + sy * 42;
+        u8 *opac = bg_opacity + sy * 21;
         int bg_y = (sy + scy) & 0xff;
         int tile_row = bg_y >> 3;
         int row_in_tile = bg_y & 7;
@@ -314,6 +360,7 @@ void lcd_render_band(
             u8 data2 = vram[tile_off + row_in_tile * 2 + 1];
 
             render_tile_row_packed(row + tile * 2, data1, data2);
+            opac[tile] = data1 | data2;
             bg_x = (bg_x + 8) & 0xff;
         }
     }
@@ -321,6 +368,7 @@ void lcd_render_band(
     // lines with window: render only visible BG tiles, then window overlay
     for (sy = sy_limit; sy < sy_end; sy++) {
         u8 *row = out + sy * 42;
+        u8 *opac = bg_opacity + sy * 21;
         int bg_y = (sy + scy) & 0xff;
         int tile_row = bg_y >> 3;
         int row_in_tile = bg_y & 7;
@@ -338,11 +386,12 @@ void lcd_render_band(
             u8 data2 = vram[tile_off + row_in_tile * 2 + 1];
 
             render_tile_row_packed(row + tile * 2, data1, data2);
+            opac[tile] = data1 | data2;
             bg_x = (bg_x + 8) & 0xff;
         }
 
         // Window overlay
-        int win_y = sy - wy;
+        int win_y = dmg->lcd->window_line++;
         int win_tile_row = win_y >> 3;
         int win_row_in_tile = win_y & 7;
         int win_start = (wx > 0 ? wx : 0) + scx_offset;
@@ -381,6 +430,16 @@ void lcd_render_band(
                     row[byte_idx + 1] = (tile0 << (8 - shift)) | (tile1 >> shift);
                     row[byte_idx + 2] = (row[byte_idx + 2] & (0xff >> shift)) | (tile1 << (8 - shift));
                 }
+
+                // window replaces bg opacity across two bytes
+                int oi = win_start >> 3;
+                int os = win_start & 7;
+                int ow = (data1 | data2) << (8 - os);
+                int om = 0xff00 >> os;
+
+                opac[oi] = (opac[oi] & ~(om >> 8)) | (ow >> 8);
+                opac[oi + 1] = (opac[oi + 1] & ~om) | ow;
+
                 win_start += 8;
                 win_x += 8;
             } else {
@@ -390,6 +449,7 @@ void lcd_render_band(
                     pixels_to_draw = win_end - win_start;
                 }
                 render_partial_start(row, data1, data2, pixel_in_tile, pixels_to_draw, win_start);
+                render_partial_opacity(opac, data1 | data2, pixel_in_tile, pixels_to_draw, win_start);
                 win_start += pixels_to_draw;
                 win_x += pixels_to_draw;
             }
@@ -397,32 +457,100 @@ void lcd_render_band(
     }
 }
 
-// render sprites whose rows land in [sy_start, sy_end) from one register
-// state. TODO: only ten per scanline, priority, attributes
+// lcdc bit 0 off on dmg shows bgp color 0
+void lcd_render_blank_band(
+    struct dmg *dmg,
+    int sy_start,
+    int sy_end,
+    const struct raster_regs *regs)
+{
+    u8 fill = 0x55 * (regs->bgp & 3);
+    int sy;
+
+    for (sy = sy_start; sy < sy_end; sy++) {
+        memset(dmg->lcd->pixels + sy * 42, fill, 42);
+        memset(bg_opacity + sy * 21, 0, 21);
+    }
+}
+
+// pick the first ten sprites per scanline in oam order
+void lcd_select_objs(
+    const u8 *oam,
+    int tall,
+    int sy_start,
+    int sy_end,
+    u16 *sel)
+{
+    u8 count[144];
+    int h = tall ? 16 : 8;
+    int k;
+
+    memset(&count[sy_start], 0, sy_end - sy_start);
+
+    for (k = 0; k < 40; k++) {
+        int top = oam[k * 4] - 16;
+        int y0 = top < sy_start ? sy_start : top;
+        int y1 = top + h > sy_end ? sy_end : top + h;
+        u16 m = 0;
+        int y;
+
+        for (y = y0; y < y1; y++) {
+            if (count[y] < 10) {
+                count[y]++;
+                m |= 1 << (y - top);
+            }
+        }
+        sel[k] = m;
+    }
+}
+
+// render sprites with rows in [sy_start, sy_end) from one register state
 void lcd_render_objs_band(
     struct dmg *dmg,
     int sy_start,
     int sy_end,
     const struct raster_regs *regs)
 {
-    struct oam_entry *oam = &((struct oam_entry *) dmg->lcd->oam)[39];
+    struct oam_entry *oam_base = (struct oam_entry *) dmg->lcd->oam;
     int tall = regs->lcdc & LCDC_OBJ_SIZE;
+    int bg_on = regs->lcdc & LCDC_ENABLE_BG;
     u8 *vram = dmg->video_ram;
     u8 *pixels = dmg->lcd->pixels;
 
     // sprites are rendered at screen position + scx offset within the wider buffer
     int scx_offset = regs->scx & 7;
 
+    u16 sel[40];
+    u8 order[40];
+    int active = 0;
     int k;
-    for (k = 39; k >= 0; k--, oam--) {
-        if (oam->pos_y == 0 || oam->pos_y >= 160) {
-            continue;
-        }
-        if (oam->pos_x == 0 || oam->pos_x >= 168) {
-            continue;
-        }
 
-        int tile_off = 16 * oam->tile;
+    lcd_select_objs(dmg->lcd->oam, tall, sy_start, sy_end, sel);
+
+    // sort drawable sprites by x, oam order breaks ties;
+    for (k = 0; k < 40; k++) {
+        struct oam_entry *e = &oam_base[k];
+        int i;
+
+        if (!sel[k]) {
+            continue;
+        }
+        if (e->pos_x == 0 || e->pos_x >= 168) {
+            continue;
+        }
+        i = active++;
+        while (i > 0 && oam_base[order[i - 1]].pos_x > e->pos_x) {
+            order[i] = order[i - 1];
+            i--;
+        }
+        order[i] = k;
+    }
+
+    for (k = active - 1; k >= 0; k--) {
+        struct oam_entry *oam = &oam_base[order[k]];
+        u16 rows = sel[order[k]];
+
+        int tile_off = 16 * (tall ? (oam->tile & 0xfe) : oam->tile);
         const u8 *lut = obj_palette_lut(
             !!(oam->attrs & OAM_ATTR_PALETTE),
             oam->attrs & OAM_ATTR_PALETTE ? regs->obp1 : regs->obp0);
@@ -432,6 +560,7 @@ void lcd_render_objs_band(
         int tile_bytes = tall ? 32 : 16;
         int mirror_x = oam->attrs & OAM_ATTR_MIRROR_X;
         int mirror_y = oam->attrs & OAM_ATTR_MIRROR_Y;
+        int behind = bg_on && (oam->attrs & OAM_ATTR_BEHIND_BG);
 
         // screen-edge clip as an opacity mask, pixel 0 in the msb
         int clip = 0xff;
@@ -442,10 +571,14 @@ void lcd_render_objs_band(
             clip &= (0xff << (lcd_x - 152)) & 0xff;
         }
 
+        int pos0 = lcd_x + scx_offset;
+        int oidx = pos0 >> 3;
+        int osh = pos0 & 7;
+
         int b;
         for (b = 0; b < tile_bytes; b += 2) {
             int row_y = lcd_y + (b >> 1);
-            if (row_y < sy_start || row_y >= sy_end) {
+            if (!(rows & (1 << (b >> 1)))) {
                 continue;
             }
 
@@ -459,6 +592,15 @@ void lcd_render_objs_band(
             }
 
             int mask8 = (data1 | data2) & clip;
+            if (behind) {
+                const u8 *ob = bg_opacity + row_y * 21;
+                int bg = ob[oidx + 1];
+
+                if (oidx >= 0) {
+                    bg |= ob[oidx] << 8;
+                }
+                mask8 &= ~(bg >> (8 - osh));
+            }
             if (!mask8) {
                 continue;
             }
@@ -470,7 +612,7 @@ void lcd_render_objs_band(
             u32 bits = (lut[idx_hi] << 8) | lut[idx_lo];
             u32 mask = mask_expand[mask8];
 
-            int pos = lcd_x + scx_offset;
+            int pos = pos0;
             if (pos < 0) {
                 bits <<= -pos * 2;
                 mask <<= -pos * 2;

@@ -81,7 +81,7 @@ static void update_cgb_palette_cache(struct lcd *lcd_ptr)
 }
 
 // CGB 1x indexed rendering - reads pixel and attr buffers
-static void lcd_draw_1x_cgb(struct lcd *lcd_ptr)
+static void lcd_draw_1x_cgb(struct lcd *lcd_ptr, int all)
 {
     int gy;
     unsigned char *src = lcd_ptr->pixels;
@@ -89,6 +89,9 @@ static void lcd_draw_1x_cgb(struct lcd *lcd_ptr)
     unsigned long *dst = (unsigned long *) offscreen_color_buf;
 
     if (screen_depth == 1) {
+        return;
+    }
+    if (!all && !lcd_ptr->frame_dirty) {
         return;
     }
 
@@ -100,6 +103,12 @@ static void lcd_draw_1x_cgb(struct lcd *lcd_ptr)
     for (gy = 0; gy < 144; gy++) {
         unsigned char *row_attr = attrs + gy * 168;
         int gx;
+
+        if (!all && !(lcd_ptr->row_dirty[gy] & ROW_DIRTY_CONTENT)) {
+            src += 42;
+            dst += 42;
+            continue;
+        }
 
         for (gx = 0; gx < 42; gx++) {
             // packed byte: p0 p1 p2 p3 (2 bits each)
@@ -139,11 +148,11 @@ static void lcd_draw_1x_cgb(struct lcd *lcd_ptr)
         dst += 42;
     }
 
-    lcd_blit_color_bands(lcd_ptr, 1, 1);
+    lcd_blit_color_bands(lcd_ptr, 1, all);
 }
 
 // CGB 2x indexed rendering
-static void lcd_draw_2x_cgb(struct lcd *lcd_ptr)
+static void lcd_draw_2x_cgb(struct lcd *lcd_ptr, int all)
 {
     int gy;
     unsigned char *src = lcd_ptr->pixels;
@@ -151,6 +160,9 @@ static void lcd_draw_2x_cgb(struct lcd *lcd_ptr)
     unsigned long *dst = (unsigned long *) offscreen_color_buf;
 
     if (screen_depth == 1) {
+        return;
+    }
+    if (!all && !lcd_ptr->frame_dirty) {
         return;
     }
 
@@ -165,6 +177,12 @@ static void lcd_draw_2x_cgb(struct lcd *lcd_ptr)
         unsigned long *row1 = dst + 84;
         unsigned char *row_attr = attrs + gy * 168;
         int gx;
+
+        if (!all && !(lcd_ptr->row_dirty[gy] & ROW_DIRTY_CONTENT)) {
+            src += 42;
+            dst += 168;
+            continue;
+        }
 
         for (gx = 0; gx < 42; gx++) {
             unsigned char packed = src[gx];
@@ -212,15 +230,22 @@ static void lcd_draw_2x_cgb(struct lcd *lcd_ptr)
         dst += 168;  // 2 rows * 84 longs per row
     }
 
-    lcd_blit_color_bands(lcd_ptr, 2, 1);
+    lcd_blit_color_bands(lcd_ptr, 2, all);
 }
 
 // Main CGB draw function - called from lcd_mac.c
-void lcd_draw_cgb(struct lcd *lcd_ptr)
+void lcd_draw_cgb(struct lcd *lcd_ptr, int all)
 {
+    // forced frames follow palette-menu/depth changes: the Color2Index
+    // results are stale against the new clut, rebuild them all
+    if (all) {
+        lcd_ptr->bg_palette_dirty = 0xffffffff;
+        lcd_ptr->obj_palette_dirty = 0xffffffff;
+    }
+
     if (screen_scale == 2) {
-        lcd_draw_2x_cgb(lcd_ptr);
+        lcd_draw_2x_cgb(lcd_ptr, all);
     } else {
-        lcd_draw_1x_cgb(lcd_ptr);
+        lcd_draw_1x_cgb(lcd_ptr, all);
     }
 }

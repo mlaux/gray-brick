@@ -135,7 +135,7 @@ void lcd_cgb_render_band(
 
         // overlay window if active
         if (window_active) {
-            int win_y = sy - wy;
+            int win_y = dmg->lcd->window_line++;
             int win_tile_row = win_y >> 3;
             int win_row_in_tile = win_y & 7;
             int win_start = (wx > 0 ? wx : 0) + scx_offset;
@@ -216,12 +216,15 @@ void lcd_cgb_render_objs_band(
     u8 *pixels = dmg->lcd->pixels;
     u8 *attrs_buf = dmg->lcd->attrs;
     int bg_enabled = regs->lcdc & LCDC_ENABLE_BG;
+    u16 sel[40];
 
     int scx_offset = regs->scx & 7;
 
+    lcd_select_objs(dmg->lcd->oam, tall, sy_start, sy_end, sel);
+
     int k;
     for (k = 39; k >= 0; k--, oam--) {
-        if (oam->pos_y == 0 || oam->pos_y >= 160) {
+        if (!sel[k]) {
             continue;
         }
         if (oam->pos_x == 0 || oam->pos_x >= 168) {
@@ -230,7 +233,7 @@ void lcd_cgb_render_objs_band(
 
         // CGB: bits 0-2 = palette number, bit 3 = VRAM bank
         int vram_bank = (oam->attrs & OAM_ATTR_CGB_VRAM_BANK) ? 0x2000 : 0;
-        int tile_off = vram_bank + 16 * oam->tile;
+        int tile_off = vram_bank + 16 * (tall ? (oam->tile & 0xfe) : oam->tile);
         u8 cgb_palette = oam->attrs & OAM_ATTR_CGB_PALETTE;
 
         int lcd_x = oam->pos_x - 8;
@@ -243,7 +246,7 @@ void lcd_cgb_render_objs_band(
         int b;
         for (b = 0; b < tile_bytes; b += 2) {
             int row_y = lcd_y + (b >> 1);
-            if (row_y < sy_start || row_y >= sy_end) {
+            if (!(sel[k] & (1 << (b >> 1)))) {
                 continue;
             }
 

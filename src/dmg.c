@@ -48,14 +48,7 @@ static u32 dmg_now_ppu(struct dmg *dmg)
 }
 
 // a write just moved a deadline, but the running dispatch snapshotted
-// wake_limit before it - and a handler arming its own next event does
-// this every single time, because at its dispatch the event it is
-// servicing was the armed one. chained blocks never re-enter the
-// dispatcher to see the table change, so tighten the snapshot in place;
-// emitted checks re-read it from jit_ctx. distances share D2's baseline
-// (the last sync point). a deliverable pending interrupt asks for an
-// immediate exit: the event already fired, its handler is what arms the
-// next deadline
+// wake_limit before it, handle this case
 static void dmg_budget_touch(struct dmg *dmg)
 {
     u32 dist = dmg_cycles_to_next_event(dmg);
@@ -426,9 +419,7 @@ static void dmg_stat_recompute(struct dmg *dmg)
 
     if (dmg_now_ppu(dmg) >= CYCLES_PER_FRAME) {
         // in-flight cycles ran past the end of the frame, so cur wrapped
-        // to a next-frame position. arming an event there would fire it
-        // against this frame's larger cycle counter, so leave rearming
-        // to the recompute at the frame wrap instead
+        // to a next-frame position
         dmg->event_deadline[EV_STAT] = EV_NONE;
         return;
     }
@@ -437,11 +428,8 @@ static void dmg_stat_recompute(struct dmg *dmg)
     dmg->stat_event_line = line;
 }
 
-// a STAT/LYC/LCDC write moves the armed event. if the beam already crossed
-// it, it fired before this write took effect; set IF now, because the
-// recompute would otherwise drop it before the sync loop ever sees it.
-// block boundaries make this deterministic, so a dropped event can starve
-// a game of the same interrupt every single frame
+// moves the armed event due to a STAT/LYC/LCDC write if the beam already
+// crossed it
 static void dmg_stat_touch(struct dmg *dmg)
 {
     if (dmg_now_ppu(dmg) >= dmg->event_deadline[EV_STAT]) {
@@ -943,6 +931,8 @@ static void render_band_pass(
             lcd_update_palette_lut(regs->bgp);
             lcd_render_band(dmg, sy_start, sy_end, regs);
         }
+    } else if (!cgb) {
+        lcd_render_blank_band(dmg, sy_start, sy_end, regs);
     }
     if (regs->lcdc & LCDC_ENABLE_OBJ) {
         if (cgb) {
@@ -953,13 +943,8 @@ static void render_band_pass(
     }
 }
 
-// one render per frame, fired at vblank start: every visible line has
+// one render per frame at vblank start - every visible line has
 // been "scanned" by then, and the game's vblank handler hasn't run yet
-// (EV_RENDER and EV_VBLANK fire in the same sync, and handlers only run
-// after it), so OAM holds the frame's final state. mid-frame register
-// writes were logged as the beam crossed lines replay them as bands
-// reproduces the frame the game composed. an empty log is one band from
-// the live regs
 static void render_frame(struct dmg *dmg)
 {
     struct lcd *lcd = dmg->lcd;
@@ -972,12 +957,13 @@ static void render_frame(struct dmg *dmg)
         return;
     }
 
+    lcd->window_line = 0;
     replay = lcd->raster_count && !lcd->raster_overflow;
     if (replay) {
         regs = lcd->frame_regs;
     } else {
-        // nothing changed mid-frame (or the log overflowed): a single
-        // band from the final register state, the old snapshot render
+        // nothing changed mid-frame (or the log overflowed) 
+        // render once from final register state
         raster_live_regs(lcd, &regs);
     }
 
@@ -993,8 +979,8 @@ static void render_frame(struct dmg *dmg)
     }
     render_band_pass(dmg, start, 144, &regs);
 
-    // a single blit offset serves the whole frame only when every band
-    // packed its rows at the same scx&7
+    // single blit offset for the whole frame when every band packed its rows
+    // at the same scx&7
     uniform = 1;
     for (k = 1; replay && k < 144; k++) {
         if (lcd->row_scx[k] != lcd->row_scx[0]) {
@@ -1004,13 +990,14 @@ static void render_frame(struct dmg *dmg)
     }
     lcd->row_scx_uniform = uniform;
 
-    // CGB row content also depends on palette ram and attrs, which the
-    // diff does not see; keep every row dirty so blitters never skip
-    if (dmg->cgb && dmg->cgb->mode) {
-        memset(lcd->row_dirty, ROW_DIRTY_CONTENT | ROW_DIRTY_OFFSET, 144);
-        lcd->frame_dirty = ROW_DIRTY_CONTENT | ROW_DIRTY_OFFSET;
-    } else {
-        lcd_diff_rows(lcd);
+    // when palette ram changes, those frames redraw everything
+    lcd_diff_rows(lcd, dmg->cgb && dmg->cgb->mode);
+    if (lcd->palette_frame_dirty) {
+        lcd->palette_frame_dirty = 0;
+        for (k = 0; k < 144; k++) {
+            lcd->row_dirty[k] |= ROW_DIRTY_CONTENT;
+        }
+        lcd->frame_dirty |= ROW_DIRTY_CONTENT;
     }
 
     lcd_draw(lcd);

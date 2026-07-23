@@ -351,13 +351,13 @@ void (*draw_funcs[2][3])(struct lcd *) = {
 };
 
 // lcd_mac_cgb.c
-void lcd_draw_cgb(struct lcd *lcd_ptr);
+void lcd_draw_cgb(struct lcd *lcd_ptr, int all);
 
 // called by dmg_step at vblank
 void lcd_draw(struct lcd *lcd_ptr)
 {
   if (dmg.cgb && dmg.cgb->mode && screen_depth > 1) {
-    lcd_draw_cgb(lcd_ptr);
+    lcd_draw_cgb(lcd_ptr, force_all);
     force_all = 0;
     return;
   }
