@@ -150,6 +150,7 @@ void emit_add_cycles(struct code_block *block, int cycles);
 void emit_move_sr_dn(struct code_block *block, uint8_t dreg);
 void emit_move_dn_ccr(struct code_block *block, uint8_t dreg);
 void emit_mulu_w_imm_dn(struct code_block *block, uint16_t imm, uint8_t dreg);
+void emit_divu_w_imm_dn(struct code_block *block, uint16_t imm, uint8_t dreg);
 void emit_cmp_l_dn_dn(struct code_block *block, uint8_t src, uint8_t dest);
 void emit_cmp_l_disp_an_dn(
     struct code_block *block,

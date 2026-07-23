@@ -621,10 +621,12 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
                         int8_t offset = (int8_t) READ_BYTE(src_ptr + 3);
 
                         if ((jr_op == 0x20 || jr_op == 0x28 || jr_op == 0x38) &&
-                            offset < 0) {
+                            offset == -6) {
                             // detected polling loop - synthesize wait
                             uint16_t next_pc = src_address + src_ptr + 4;
-                            compile_ly_wait(block, target_ly, jr_op, next_pc);
+                            uint16_t loop_pc = src_address + src_ptr - 2;
+                            compile_ly_wait(block, target_ly, jr_op,
+                                    next_pc, loop_pc, 16);
                             src_ptr += 4;
                             done = 1;
                             break;
@@ -638,10 +640,12 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
                         int8_t offset = (int8_t) READ_BYTE(src_ptr + 2);
 
                         if ((jr_op == 0x20 || jr_op == 0x28 || jr_op == 0x38) &&
-                            offset < 0) {
+                            offset == -5) {
                             // detected polling loop with register compare
                             uint16_t next_pc = src_address + src_ptr + 3;
-                            compile_ly_wait_reg(block, gb_reg, jr_op, next_pc);
+                            uint16_t loop_pc = src_address + src_ptr - 2;
+                            compile_ly_wait_reg(block, gb_reg, jr_op, next_pc,
+                                    loop_pc, next0 == 0xbe ? 16 : 12);
                             src_ptr += 3;
                             done = 1;
                             break;
@@ -656,12 +660,11 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
                         uint8_t jr_op = READ_BYTE(src_ptr + 1);
                         int8_t offset = (int8_t) READ_BYTE(src_ptr + 2);
 
-                        if ((jr_op == 0x20 || jr_op == 0x28) && offset < 0) {
+                        if ((jr_op == 0x20 || jr_op == 0x28) && offset == -5) {
                             uint16_t next_pc = src_address + src_ptr + 3;
-                            // Z from the LY the wait settles at, C clear
-                            emit_moveq_dn(block, REG_68K_D_FLAGS,
-                                    jr_op == 0x20 ? 0x04 : 0x00);
-                            compile_ly_wait(block, 0, jr_op, next_pc);
+                            uint16_t loop_pc = src_address + src_ptr - 2;
+                            compile_ly_wait(block, 0, jr_op, next_pc,
+                                    loop_pc, 12);
                             src_ptr += 3;
                             done = 1;
                             break;
@@ -780,8 +783,8 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
         }
 
         size_t emitted = block->length - before;
-        // the fused HRAM idle wait is the biggest expected sequence (82)
-        if (emitted > 96) {
+        // the fused register LY wait is the biggest expected sequence
+        if (emitted > 176) {
             fprintf(stderr, "warning: instruction %02x emitted %zu bytes\n", op, emitted);
         }
 

@@ -1265,6 +1265,16 @@ void emit_mulu_w_imm_dn(struct code_block *block, uint16_t imm, uint8_t dreg)
     emit_word(block, imm);
 }
 
+// divu.w #imm, Dn - 32/16 unsigned divide, quotient in the low word,
+// remainder in the high word
+void emit_divu_w_imm_dn(struct code_block *block, uint16_t imm, uint8_t dreg)
+{
+    // DIVU <ea>,Dn: 1000 ddd 011 <ea>
+    // immediate mode: <ea> = 111 100
+    emit_word(block, 0x80fc | (dreg << 9));
+    emit_word(block, imm);
+}
+
 // cmp.l Dn,Dn (src - dest comparison, sets flags)
 void emit_cmp_l_dn_dn(struct code_block *block, uint8_t src, uint8_t dest)
 {

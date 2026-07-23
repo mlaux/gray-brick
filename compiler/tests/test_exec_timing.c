@@ -72,15 +72,16 @@ TEST(test_halt_near_frame_end)
 // ============================================================================
 // LY wait pattern tests
 // Pattern: ldh a, [$44]; cp N; jr cc, back
-// Compiler synthesizes a wait instead of spinning in a loop
+// Compiler synthesizes a wait instead of spinning in a loop. The wait
+// matches the real loop: if the exit condition already holds it falls
+// through after one pass (ldh+cp+jr = 28 cycles), and a wait that would
+// cross an armed deadline clamps to wake_limit and exits at the loop head
 // ============================================================================
 
 TEST(test_ly_wait_jr_nz_ly0)
 {
     // ldh a, [$44]; cp 0; jr nz, back
-    // Wait for LY=0 (frame start), from frame_cycles=0
-    // target_cycles = 0 * 456 = 0, so wait until next frame
-    // D2 = (70224 + 0) - 0 = 70224, A = 0
+    // at frame_cycles=0 LY is already 0: the loop exits on the first pass
     uint8_t rom[] = {
         0xf0, 0x44,       // ldh a, ($ff44) - read LY
         0xfe, 0x00,       // cp 0
@@ -89,8 +90,9 @@ TEST(test_ly_wait_jr_nz_ly0)
     };
     run_block_with_frame_cycles(rom, 0);
     ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 0);
-    // At frame_cycles=0, waiting for LY 0 means next frame
-    ASSERT_EQ(get_cycle_count(), 70224);
+    ASSERT_EQ(get_cycle_count(), 28);
+    ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0x05, 0x04);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 6);
 }
 
 TEST(test_ly_wait_jr_nz_ly90)
@@ -108,6 +110,7 @@ TEST(test_ly_wait_jr_nz_ly90)
     run_block_with_frame_cycles(rom, 0);
     ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 90);
     ASSERT_EQ(get_cycle_count(), 90 * 456);
+    ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0x05, 0x04);
 }
 
 TEST(test_ly_wait_jr_nz_ly144)
@@ -127,10 +130,9 @@ TEST(test_ly_wait_jr_nz_ly144)
 
 TEST(test_ly_wait_jr_nz_past_target)
 {
-    // Wait for LY=50, but frame_cycles already past that
-    // frame_cycles=30000, LY 50 is at 22800
-    // Since frame_cycles >= target, wait until next frame
-    // D2 = (70224 + 22800) - 30000 = 63024
+    // Wait for LY=50, but frame_cycles=30000 is already past line 50.
+    // The next occurrence is behind the vblank deadline, so the wait
+    // advances at deadline pace: D2 = wake_limit, exit at the loop head
     uint8_t rom[] = {
         0xf0, 0x44,       // ldh a, ($ff44)
         0xfe, 0x32,       // cp 50
@@ -138,16 +140,15 @@ TEST(test_ly_wait_jr_nz_past_target)
         0x10              // stop
     };
     run_block_with_frame_cycles(rom, 30000);
-    ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 50);
-    ASSERT_EQ(get_cycle_count(), 70224 + (50 * 456) - 30000);
+    ASSERT_EQ(get_cycle_count(), 65664 - 30000);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 0);
 }
 
 TEST(test_ly_wait_jr_z_ly90)
 {
     // ldh a, [$44]; cp 90; jr z, back
-    // jr z: loop while LY == 90, exit when LY != 90
-    // This waits for LY = (90 + 1) % 154 = 91
-    // target_cycles = 91 * 456 = 41496
+    // jr z: loop while LY == 90. At frame_cycles=0 LY is 0, so the loop
+    // exits on the first pass with A = actual LY and C set (0 < 90)
     uint8_t rom[] = {
         0xf0, 0x44,       // ldh a, ($ff44)
         0xfe, 0x5a,       // cp 90
@@ -155,16 +156,32 @@ TEST(test_ly_wait_jr_z_ly90)
         0x10              // stop
     };
     run_block_with_frame_cycles(rom, 0);
+    ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 0);
+    ASSERT_EQ(get_cycle_count(), 28);
+    ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0x05, 0x01);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 6);
+}
+
+TEST(test_ly_wait_jr_z_ly90_on_line)
+{
+    // on line 90 the loop spins until line 91 starts
+    uint8_t rom[] = {
+        0xf0, 0x44,       // ldh a, ($ff44)
+        0xfe, 0x5a,       // cp 90
+        0x28, 0xfa,       // jr z, -6
+        0x10              // stop
+    };
+    run_block_with_frame_cycles(rom, 90 * 456 + 100);
     ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 91);
-    ASSERT_EQ(get_cycle_count(), 91 * 456);
+    ASSERT_EQ(get_cycle_count(), 91 * 456 - (90 * 456 + 100));
+    ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0x05, 0);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 6);
 }
 
 TEST(test_ly_wait_jr_z_ly153)
 {
     // ldh a, [$44]; cp 153; jr z, back
-    // wait_ly = (153 + 1) % 154 = 0 (wraps to start of frame)
-    // target_cycles = 0 * 456 = 0
-    // From frame_cycles=0, this should wait for next frame
+    // at frame_cycles=0 LY is 0, not 153: first-pass exit
     uint8_t rom[] = {
         0xf0, 0x44,       // ldh a, ($ff44)
         0xfe, 0x99,       // cp 153
@@ -173,8 +190,25 @@ TEST(test_ly_wait_jr_z_ly153)
     };
     run_block_with_frame_cycles(rom, 0);
     ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 0);
-    // At frame_cycles=0, target is 0, so next frame
-    ASSERT_EQ(get_cycle_count(), 70224);
+    ASSERT_EQ(get_cycle_count(), 28);
+    ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0x05, 0x01);
+}
+
+TEST(test_ly_wait_jr_z_ly153_on_line)
+{
+    // on line 153 the wait crosses the frame wrap to line 0
+    uint8_t rom[] = {
+        0xf0, 0x44,       // ldh a, ($ff44)
+        0xfe, 0x99,       // cp 153
+        0x28, 0xfa,       // jr z, -6
+        0x10              // stop
+    };
+    run_block_with_frame_cycles(rom, 153 * 456 + 8);
+    ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 0);
+    ASSERT_EQ(get_cycle_count(), 70224 - (153 * 456 + 8));
+    // A wrapped to 0, so C is set (0 < 153)
+    ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0x05, 0x01);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 6);
 }
 
 TEST(test_ly_wait_jr_c_ly100)
@@ -191,6 +225,39 @@ TEST(test_ly_wait_jr_c_ly100)
     run_block_with_frame_cycles(rom, 0);
     ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 100);
     ASSERT_EQ(get_cycle_count(), 100 * 456);
+    ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0x05, 0x04);
+}
+
+TEST(test_ly_wait_jr_c_already_past)
+{
+    // frame_cycles=50000 is on line 109, past 100: first-pass exit with
+    // A = the actual LY
+    uint8_t rom[] = {
+        0xf0, 0x44,       // ldh a, ($ff44)
+        0xfe, 0x64,       // cp 100
+        0x38, 0xfa,       // jr c, -6
+        0x10              // stop
+    };
+    run_block_with_frame_cycles(rom, 50000);
+    ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 109);
+    ASSERT_EQ(get_cycle_count(), 28);
+    ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0x05, 0);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 6);
+}
+
+TEST(test_ly_wait_jr_c_exactly_on)
+{
+    // on line 100 exactly: exit with Z set like the real cp would
+    uint8_t rom[] = {
+        0xf0, 0x44,       // ldh a, ($ff44)
+        0xfe, 0x64,       // cp 100
+        0x38, 0xfa,       // jr c, -6
+        0x10              // stop
+    };
+    run_block_with_frame_cycles(rom, 100 * 456 + 12);
+    ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 100);
+    ASSERT_EQ(get_cycle_count(), 28);
+    ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0x05, 0x04);
 }
 
 TEST(test_ly_wait_mid_frame)
@@ -211,9 +278,9 @@ TEST(test_ly_wait_mid_frame)
 
 TEST(test_ly_wait_exact_target)
 {
-    // Start exactly at the target LY cycle
-    // LY 50 is at cycle 22800, start there
-    // frame_cycles >= target_cycles, so wait for next frame
+    // Start exactly at the target LY cycle: LY == 50 already, so the
+    // loop exits on the first pass instead of waiting a whole frame
+    // (Pokemon's raster scroll polls hit this every frame)
     uint8_t rom[] = {
         0xf0, 0x44,       // ldh a, ($ff44)
         0xfe, 0x32,       // cp 50
@@ -222,8 +289,57 @@ TEST(test_ly_wait_exact_target)
     };
     run_block_with_frame_cycles(rom, 22800);
     ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 50);
-    // frame_cycles == target_cycles, uses next frame path
-    ASSERT_EQ(get_cycle_count(), 70224);
+    ASSERT_EQ(get_cycle_count(), 28);
+    ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0x05, 0x04);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 6);
+}
+
+TEST(test_ly_wait_unreachable_target)
+{
+    // cp 200: LY can never reach it, so the wait idles at deadline pace
+    // (D2 = wake_limit, exit at the loop head) instead of miscomputing
+    uint8_t rom[] = {
+        0xf0, 0x44,       // ldh a, ($ff44)
+        0xfe, 0xc8,       // cp 200
+        0x20, 0xfa,       // jr nz, -6
+        0x10              // stop
+    };
+    run_block_with_frame_cycles(rom, 10000);
+    ASSERT_EQ(get_cycle_count(), 65664 - 10000);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 0);
+}
+
+TEST(test_ly_wait_clamped_by_wake_limit)
+{
+    // an armed deadline (LYC match) sits before line 90: the wait stops
+    // there and exits at the loop head so the interrupt runs on its line
+    uint8_t rom[] = {
+        0xf0, 0x44,       // ldh a, ($ff44)
+        0xfe, 0x5a,       // cp 90
+        0x20, 0xfa,       // jr nz, -6
+        0x10              // stop
+    };
+    set_wake_limit(5000);
+    run_block_with_frame_cycles(rom, 0);
+    ASSERT_EQ(get_cycle_count(), 5000);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 0);
+}
+
+TEST(test_ly_wait_deadline_on_target_line)
+{
+    // deadline exactly at the target line start: the wait completes and
+    // falls through, so the poll can't miss its line to a long handler
+    uint8_t rom[] = {
+        0xf0, 0x44,       // ldh a, ($ff44)
+        0xfe, 0x5a,       // cp 90
+        0x20, 0xfa,       // jr nz, -6
+        0x10              // stop
+    };
+    set_wake_limit(90 * 456);
+    run_block_with_frame_cycles(rom, 0);
+    ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 90);
+    ASSERT_EQ(get_cycle_count(), 90 * 456);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 6);
 }
 
 // ============================================================================
@@ -246,6 +362,7 @@ TEST(test_ly_wait_reg_cp_b)
     run_block_with_frame_cycles(rom, 0);
     ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 90);
     ASSERT_EQ(get_cycle_count(), 90 * 456);
+    ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0x05, 0x04);
 }
 
 TEST(test_ly_wait_reg_cp_c)
@@ -299,7 +416,8 @@ TEST(test_ly_wait_reg_cp_l)
 TEST(test_ly_wait_reg_jr_z)
 {
     // ld b, 90; ldh a, [$44]; cp b; jr z, back
-    // jr z: loop while LY == 90, wait for LY = 91
+    // at frame_cycles=0 LY is 0, not 90: the loop exits on the first
+    // pass (8 for the ld + 24 for one poll pass)
     uint8_t rom[] = {
         0x06, 0x5a,       // ld b, 90
         0xf0, 0x44,       // ldh a, ($ff44)
@@ -308,14 +426,33 @@ TEST(test_ly_wait_reg_jr_z)
         0x10              // stop
     };
     run_block_with_frame_cycles(rom, 0);
+    ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 0);
+    ASSERT_EQ(get_cycle_count(), 32);
+    ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0x05, 0x01);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 7);
+}
+
+TEST(test_ly_wait_reg_jr_z_on_line)
+{
+    // on line 90 the loop spins until line 91 starts
+    uint8_t rom[] = {
+        0x06, 0x5a,       // ld b, 90
+        0xf0, 0x44,       // ldh a, ($ff44)
+        0xb8,             // cp b
+        0x28, 0xfb,       // jr z, -5
+        0x10              // stop
+    };
+    run_block_with_frame_cycles(rom, 90 * 456 + 100);
     ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 91);
-    ASSERT_EQ(get_cycle_count(), 91 * 456);
+    ASSERT_EQ(get_cycle_count(), 91 * 456 - (90 * 456 + 100));
+    ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0x05, 0);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 7);
 }
 
 TEST(test_ly_wait_reg_jr_z_wrap)
 {
     // ld c, 153; ldh a, [$44]; cp c; jr z, back
-    // jr z with LY=153: wait_ly = (153+1) % 154 = 0
+    // at frame_cycles=0 LY is 0, not 153: first-pass exit
     uint8_t rom[] = {
         0x0e, 0x99,       // ld c, 153
         0xf0, 0x44,       // ldh a, ($ff44)
@@ -325,8 +462,44 @@ TEST(test_ly_wait_reg_jr_z_wrap)
     };
     run_block_with_frame_cycles(rom, 0);
     ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 0);
-    // target=0, true_pos > 0, so wait for next frame
-    ASSERT_EQ(get_cycle_count(), 70224);
+    ASSERT_EQ(get_cycle_count(), 32);
+    ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0x05, 0x01);
+}
+
+TEST(test_ly_wait_reg_jr_z_wrap_on_line)
+{
+    // on line 153 the wait crosses the frame wrap: A wraps to 0
+    uint8_t rom[] = {
+        0x0e, 0x99,       // ld c, 153
+        0xf0, 0x44,       // ldh a, ($ff44)
+        0xb9,             // cp c
+        0x28, 0xfb,       // jr z, -5
+        0x10              // stop
+    };
+    run_block_with_frame_cycles(rom, 153 * 456 + 8);
+    ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 0);
+    ASSERT_EQ(get_cycle_count(), 70224 - (153 * 456 + 8));
+    ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0x05, 0x01);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 7);
+}
+
+TEST(test_ly_wait_reg_jr_z_over_153)
+{
+    // Pokemon's raster scroll guard: cp h with h=160 while LY is 64.
+    // LY can never equal 160, so this must fall through immediately -
+    // fusing it into a wait used to eat a frame and flicker the scroll
+    uint8_t rom[] = {
+        0x26, 0xa0,       // ld h, 160
+        0xf0, 0x44,       // ldh a, ($ff44)
+        0xbc,             // cp h
+        0x28, 0xfb,       // jr z, -5
+        0x10              // stop
+    };
+    run_block_with_frame_cycles(rom, 64 * 456 + 100);
+    ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 64);
+    ASSERT_EQ(get_cycle_count(), 32);
+    ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0x05, 0x01);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 7);
 }
 
 TEST(test_ly_wait_reg_jr_c)
@@ -362,9 +535,8 @@ TEST(test_ly_wait_reg_mid_frame)
 
 TEST(test_ly_wait_reg_past_target)
 {
-    // Wait for LY=50, but frame_cycles already past that
-    // target = 50*456 = 22800, frame_cycles = 30000
-    // Wait until next frame
+    // Wait for LY=50, but frame_cycles=30000 is already past line 50:
+    // advance at deadline pace and exit at the loop head
     uint8_t rom[] = {
         0x1e, 0x32,       // ld e, 50
         0xf0, 0x44,       // ldh a, ($ff44)
@@ -373,8 +545,56 @@ TEST(test_ly_wait_reg_past_target)
         0x10              // stop
     };
     run_block_with_frame_cycles(rom, 30000);
+    ASSERT_EQ(get_cycle_count(), 65664 - 30000);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 2);
+}
+
+TEST(test_ly_wait_reg_on_target_line)
+{
+    // already on line 50: the loop exits on the first pass with A = N
+    uint8_t rom[] = {
+        0x1e, 0x32,       // ld e, 50
+        0xf0, 0x44,       // ldh a, ($ff44)
+        0xbb,             // cp e
+        0x20, 0xfb,       // jr nz, -5
+        0x10              // stop
+    };
+    run_block_with_frame_cycles(rom, 50 * 456 + 60);
     ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 50);
-    ASSERT_EQ(get_cycle_count(), 70224 + 50 * 456 - 30000);
+    ASSERT_EQ(get_cycle_count(), 32);
+    ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0x05, 0x04);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 7);
+}
+
+TEST(test_ly_wait_reg_unreachable_target)
+{
+    // cp b with b=200: LY can never reach it, idle at deadline pace
+    uint8_t rom[] = {
+        0x06, 0xc8,       // ld b, 200
+        0xf0, 0x44,       // ldh a, ($ff44)
+        0xb8,             // cp b
+        0x20, 0xfb,       // jr nz, -5
+        0x10              // stop
+    };
+    run_block_with_frame_cycles(rom, 10000);
+    ASSERT_EQ(get_cycle_count(), 65664 - 10000);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 2);
+}
+
+TEST(test_ly_wait_reg_clamped_by_wake_limit)
+{
+    // a deadline before the target line stops the wait at the loop head
+    uint8_t rom[] = {
+        0x06, 0x5a,       // ld b, 90
+        0xf0, 0x44,       // ldh a, ($ff44)
+        0xb8,             // cp b
+        0x20, 0xfb,       // jr nz, -5
+        0x10              // stop
+    };
+    set_wake_limit(5000);
+    run_block_with_frame_cycles(rom, 0);
+    ASSERT_EQ(get_cycle_count(), 5000);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 2);
 }
 
 // ============================================================================
@@ -385,8 +605,9 @@ TEST(test_ly_wait_reg_past_target)
 
 TEST(test_ly_wait_and_a_jr_nz)
 {
-    // jr nz: loop while LY != 0, exit when LY == 0
-    // from frame_cycles=20000 that means the start of the next frame
+    // jr nz: loop while LY != 0. Line 0 is behind the vblank deadline,
+    // so the wait advances at deadline pace and re-enters at the loop
+    // head (the vblank handler gets to run at its real time)
     uint8_t rom[] = {
         0xf0, 0x44,       // ldh a, ($ff44)
         0xa7,             // and a
@@ -394,15 +615,13 @@ TEST(test_ly_wait_and_a_jr_nz)
         0x10              // stop (not reached, pattern is fused)
     };
     run_block_with_frame_cycles(rom, 20000);
-    ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 0);
-    ASSERT_EQ(get_cycle_count(), 70224 - 20000);
-    // and a with A == 0: Z set, C clear
-    ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0x05, 0x04);
+    ASSERT_EQ(get_cycle_count(), 65664 - 20000);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 0);
 }
 
 TEST(test_ly_wait_or_a_jr_nz)
 {
-    // same loop with or a
+    // same loop with or a, already on line 0: first-pass exit
     uint8_t rom[] = {
         0xf0, 0x44,       // ldh a, ($ff44)
         0xb7,             // or a
@@ -411,7 +630,9 @@ TEST(test_ly_wait_or_a_jr_nz)
     };
     run_block_with_frame_cycles(rom, 0);
     ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 0);
-    ASSERT_EQ(get_cycle_count(), 70224);
+    ASSERT_EQ(get_cycle_count(), 24);
+    ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0x05, 0x04);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 5);
 }
 
 TEST(test_ly_wait_and_a_jr_z)
@@ -430,9 +651,25 @@ TEST(test_ly_wait_and_a_jr_z)
     ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0x05, 0);
 }
 
+TEST(test_ly_wait_and_a_jr_z_off_line_0)
+{
+    // LY is 43, not 0: first-pass exit with A = actual LY
+    uint8_t rom[] = {
+        0xf0, 0x44,       // ldh a, ($ff44)
+        0xa7,             // and a
+        0x28, 0xfb,       // jr z, -5
+        0x10              // stop
+    };
+    run_block_with_frame_cycles(rom, 20000);
+    ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 43);
+    ASSERT_EQ(get_cycle_count(), 24);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 5);
+}
+
 TEST(test_ly_wait_and_a_during_vblank)
 {
-    // already in vblank: LY 0 is 70224 - frame_cycles away
+    // already in vblank: the wake lands on the frame wrap, then the
+    // re-entered loop sees line 0
     uint8_t rom[] = {
         0xf0, 0x44,       // ldh a, ($ff44)
         0xa7,             // and a
@@ -440,8 +677,8 @@ TEST(test_ly_wait_and_a_during_vblank)
         0x10              // stop
     };
     run_block_with_frame_cycles(rom, 68000);
-    ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 0);
     ASSERT_EQ(get_cycle_count(), 70224 - 68000);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 0);
 }
 
 // ============================================================================
@@ -698,10 +935,17 @@ void register_timing_tests(void)
     RUN_TEST(test_ly_wait_jr_nz_ly144);
     RUN_TEST(test_ly_wait_jr_nz_past_target);
     RUN_TEST(test_ly_wait_jr_z_ly90);
+    RUN_TEST(test_ly_wait_jr_z_ly90_on_line);
     RUN_TEST(test_ly_wait_jr_z_ly153);
+    RUN_TEST(test_ly_wait_jr_z_ly153_on_line);
     RUN_TEST(test_ly_wait_jr_c_ly100);
+    RUN_TEST(test_ly_wait_jr_c_already_past);
+    RUN_TEST(test_ly_wait_jr_c_exactly_on);
     RUN_TEST(test_ly_wait_mid_frame);
     RUN_TEST(test_ly_wait_exact_target);
+    RUN_TEST(test_ly_wait_unreachable_target);
+    RUN_TEST(test_ly_wait_clamped_by_wake_limit);
+    RUN_TEST(test_ly_wait_deadline_on_target_line);
 
     printf("\nLY wait register pattern tests:\n");
     RUN_TEST(test_ly_wait_reg_cp_b);
@@ -709,15 +953,22 @@ void register_timing_tests(void)
     RUN_TEST(test_ly_wait_reg_cp_h);
     RUN_TEST(test_ly_wait_reg_cp_l);
     RUN_TEST(test_ly_wait_reg_jr_z);
+    RUN_TEST(test_ly_wait_reg_jr_z_on_line);
     RUN_TEST(test_ly_wait_reg_jr_z_wrap);
+    RUN_TEST(test_ly_wait_reg_jr_z_wrap_on_line);
+    RUN_TEST(test_ly_wait_reg_jr_z_over_153);
     RUN_TEST(test_ly_wait_reg_jr_c);
     RUN_TEST(test_ly_wait_reg_mid_frame);
     RUN_TEST(test_ly_wait_reg_past_target);
+    RUN_TEST(test_ly_wait_reg_on_target_line);
+    RUN_TEST(test_ly_wait_reg_unreachable_target);
+    RUN_TEST(test_ly_wait_reg_clamped_by_wake_limit);
 
     printf("\nLY wait and/or pattern tests:\n");
     RUN_TEST(test_ly_wait_and_a_jr_nz);
     RUN_TEST(test_ly_wait_or_a_jr_nz);
     RUN_TEST(test_ly_wait_and_a_jr_z);
+    RUN_TEST(test_ly_wait_and_a_jr_z_off_line_0);
     RUN_TEST(test_ly_wait_and_a_during_vblank);
 
     printf("\nFast-forward wake limit tests:\n");

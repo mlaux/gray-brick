@@ -11,12 +11,15 @@
 #define GB_REG_HL   6
 
 // synthesize wait for LY to reach target value
-// detects ldh a, [$44]; cp N; jr cc, back
+// detects ldh a, [$44]; cp N; jr cc, back to the ldh (loop_pc).
+// tail_cycles = compare + untaken jr cost; the ldh is already counted
 void compile_ly_wait(
     struct code_block *block,
     uint8_t target_ly,
     uint8_t jr_opcode,
-    uint16_t next_pc
+    uint16_t next_pc,
+    uint16_t loop_pc,
+    int tail_cycles
 );
 
 void compile_get_gb_reg_d0(struct code_block *block, int gb_reg);
@@ -25,7 +28,9 @@ void compile_ly_wait_reg(
     struct code_block *block,
     int gb_reg,
     uint8_t jr_opcode,
-    uint16_t next_pc
+    uint16_t next_pc,
+    uint16_t loop_pc,
+    int tail_cycles
 );
 
 void compile_halt(struct code_block *block, int next_pc);
