@@ -344,16 +344,17 @@ int jit_run(struct dmg *dmg)
     // trampolines, HRAM routines). remember which bytes hold compiled
     // code and unmap fast writes for those pages so dmg_write_slow can
     // catch the modification and invalidate
-    if (jit_regs.d3 >= 0x8000) {
+    if ((u16) jit_regs.d3 >= 0x8000) {
       int p;
+      u16 pc = (u16) jit_regs.d3;
       u32 last = block->end_address;
-      if (last <= jit_regs.d3) {
+      if (last <= pc) {
         last = 0x10000; // block ran to the top of the address space
       }
       last--;
 
-      cache_mark_upper_range(jit_regs.d3, last);
-      for (p = (jit_regs.d3 >> 8); p <= (int) (last >> 8); p++) {
+      cache_mark_upper_range(pc, last);
+      for (p = (pc >> 8); p <= (int) (last >> 8); p++) {
         if (dmg->write_page[p] && !dmg->saved_write_page[p - 0x80]) {
           dmg->saved_write_page[p - 0x80] = dmg->write_page[p];
           dmg->write_page[p] = 0;

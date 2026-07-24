@@ -525,6 +525,9 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
 
         case 0xe9: // jp (hl)
             flush_cycles(block);
+            // d3 can end up with a host pointer from an inlined memory access,
+            // so clear upper 16 bits
+            emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
             emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_NEXT_PC);
             emit_dispatch_jump(block);
             done = 1;

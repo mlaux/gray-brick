@@ -706,6 +706,13 @@ enter:
         return 0;
     }
 
+    if (d3 >> 16) {
+        int h = (pc_history_idx + PC_HISTORY_SIZE - 1) % PC_HISTORY_SIZE;
+        fprintf(stderr, "gb6run: DIRTY D3 %08x after block %02x:%04x "
+                "frame %u\n", d3, jit_ctx.current_rom_bank,
+                pc_history[h], host_frames());
+    }
+
     // mimic the Mac's native chaining (dispatcher asm + patched exits):
     // follow cached successors without hardware sync until the budget
     // expires, a block misses, or the exit was a plain-rts fast-forward

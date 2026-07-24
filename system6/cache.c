@@ -61,6 +61,9 @@ void cache_mark_upper_range(u16 start, u16 end)
     int p;
     for (p = (start >> 8); p <= (end >> 8); p++) {
         int idx = p - 0x80;
+        if (idx < 0) {
+            continue;
+        }
         u8 lo = (p == (start >> 8)) ? (start & 0xff) : 0;
         u8 hi = (p == (end >> 8)) ? (end & 0xff) : 0xff;
         if (lo < upper_page_lo[idx]) {

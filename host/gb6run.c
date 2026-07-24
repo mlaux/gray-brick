@@ -55,6 +55,7 @@ static int opt_dump_state;
 static int opt_log_raster;
 static int opt_scx_stats;
 static int opt_dirty_stats;
+static int opt_mac_sim;
 static int opt_exit_stats;
 static const char *opt_insn_log;
 
@@ -208,6 +209,98 @@ static void dirty_stats_summary(FILE *out)
             dr_mismatches);
 }
 
+// mac blitter simulation (--mac-sim): replay lcd_mac_cgb.c exactly
+static u16 ms_lut[16][4];
+static u16 ms_off[168 * 144];
+static u16 ms_screen[160 * 144];
+static int ms_valid;
+static u32 ms_bad_frames, ms_bad_rows;
+
+static void mac_sim_frame(struct lcd *l)
+{
+    int all = !ms_valid;
+    int bad = 0;
+    int y, x, k;
+
+    if (all || l->frame_dirty) {
+        u32 bg_dirty = l->bg_palette_dirty;
+        u32 obj_dirty = l->obj_palette_dirty;
+
+        if (bg_dirty || obj_dirty) {
+            for (k = 0; k < 32; k++) {
+                if (bg_dirty & (1UL << k)) {
+                    ms_lut[k >> 2][k & 3] = l->bg_palette_ram[k * 2]
+                            | (l->bg_palette_ram[k * 2 + 1] << 8);
+                }
+                if (obj_dirty & (1UL << k)) {
+                    ms_lut[8 + (k >> 2)][k & 3] = l->obj_palette_ram[k * 2]
+                            | (l->obj_palette_ram[k * 2 + 1] << 8);
+                }
+            }
+            l->bg_palette_dirty = 0;
+            l->obj_palette_dirty = 0;
+        }
+
+        for (y = 0; y < 144; y++) {
+            if (!all && !(l->row_dirty[y] & ROW_DIRTY_CONTENT)) {
+                continue;
+            }
+            for (x = 0; x < 168; x++) {
+                int shade = (l->pixels[y * 42 + (x >> 2)]
+                        >> (6 - 2 * (x & 3))) & 3;
+                u8 attr = l->attrs[y * 168 + x];
+                int lut = ((attr >> 1) & 0x08) | (attr & 0x07);
+                ms_off[y * 168 + x] = ms_lut[lut][shade];
+            }
+        }
+
+        for (y = 0; y < 144; y++) {
+            if (!all && !l->row_dirty[y]) {
+                continue;
+            }
+            for (x = 0; x < 160; x++) {
+                ms_screen[y * 160 + x] = ms_off[y * 168 + l->row_scx[y] + x];
+            }
+        }
+    }
+    ms_valid = 1;
+
+    // reference: fresh conversion straight from current state, like
+    // extract_frame but kept as rgb555
+    for (y = 0; y < 144; y++) {
+        int row_bad = 0;
+        for (x = 0; x < 160; x++) {
+            int px = x + l->row_scx[y];
+            int shade = (l->pixels[y * 42 + (px >> 2)]
+                    >> (6 - 2 * (px & 3))) & 3;
+            u8 attr = l->attrs[y * 168 + px];
+            const u8 *ram = (attr & ATTR_IS_SPRITE) ? l->obj_palette_ram
+                                                    : l->bg_palette_ram;
+            int ci = ((attr & 7) * 4 + shade) * 2;
+            u16 want = ram[ci] | (ram[ci + 1] << 8);
+
+            if (ms_screen[y * 160 + x] != want) {
+                if (!bad && !row_bad) {
+                    fprintf(stderr, "mac-sim: frame %u row %d x %d "
+                            "got %04x want %04x (attr %02x shade %d "
+                            "dirty %02x)\n",
+                            host_frames_drawn, y, x,
+                            ms_screen[y * 160 + x], want, attr, shade,
+                            l->row_dirty[y]);
+                }
+                row_bad = 1;
+            }
+        }
+        if (row_bad) {
+            ms_bad_rows++;
+            bad = 1;
+        }
+    }
+    if (bad) {
+        ms_bad_frames++;
+    }
+}
+
 static void frame_hook(struct lcd *l)
 {
     size_t n = extract_frame(l);
@@ -218,6 +311,10 @@ static void frame_hook(struct lcd *l)
 
     if (opt_dirty_stats) {
         dirty_stats_frame(l, n);
+    }
+
+    if (opt_mac_sim) {
+        mac_sim_frame(l);
     }
 
     // where in the frame the snapshot render actually fired, and the reg
@@ -605,6 +702,11 @@ int main(int argc, char *argv[])
             opt_scx_stats = 1;
         } else if (!strcmp(argv[k], "--dirty-stats")) {
             opt_dirty_stats = 1;
+        } else if (!strcmp(argv[k], "--mac-sim")) {
+            opt_mac_sim = 1;
+        } else if (!strcmp(argv[k], "--frame-skip") && k + 1 < argc) {
+            extern int frame_skip;
+            frame_skip = atoi(argv[++k]);
         } else if (!strcmp(argv[k], "--exit-stats")) {
             opt_exit_stats = 1;
         } else if (!strcmp(argv[k], "--insn-log") && k + 1 < argc) {
@@ -737,6 +839,10 @@ int main(int argc, char *argv[])
     }
     if (opt_dirty_stats) {
         dirty_stats_summary(stderr);
+    }
+    if (opt_mac_sim) {
+        fprintf(stderr, "mac-sim: %u bad frames, %u bad rows\n",
+                ms_bad_frames, ms_bad_rows);
     }
 
     fprintf(stderr,
