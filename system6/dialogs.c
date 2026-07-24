@@ -315,47 +315,42 @@ void LoadPreferences(void)
 {
   Handle h;
   int *prefs;
-  int incompatibleDirect, incompatibleIndexed;
+  int incompatibleMode;
 
   h = GetResource(RES_PREFS_TYPE, RES_PREFS_ID);
-  if (h != nil && GetHandleSize(h) >= sizeof(int) * 10) {
+  if (h != nil && GetHandleSize(h) >= sizeof(int) * 9) {
     prefs = (int *) *h;
-    frame_skip = prefs[1];
-    video_mode = prefs[2];
-    screen_scale = prefs[3];
-    sound_enabled = prefs[4];
-    limit_fps = prefs[5];
-    current_palette = prefs[6];
+    frame_skip = prefs[0];
+    video_mode = prefs[1];
+    screen_scale = prefs[2];
+    sound_enabled = prefs[3];
+    limit_fps = prefs[4];
+    current_palette = prefs[5];
     if (current_palette < 0 || current_palette >= gb_palette_count) {
       current_palette = 0;
     }
-    gbc_enabled = prefs[7];
-    ignore_double_speed = prefs[8];
-    stat_ints_enabled = prefs[9];
+    gbc_enabled = prefs[6];
+    ignore_double_speed = prefs[7];
+    stat_ints_enabled = prefs[8];
   } else {
     frame_skip = 4;
+    if (screen_depth >= 8) {
+      video_mode = VIDEO_INDEXED;
+      screen_scale = 1;
+    } else {
+      video_mode = VIDEO_BW;
+      screen_scale = 2;
+    }
     sound_enabled = 0;
     limit_fps = 0;
     current_palette = 0;
     gbc_enabled = 1;
     ignore_double_speed = 0;
     stat_ints_enabled = 1;
-    if (screen_depth >= 8) {
-      video_mode = VIDEO_INDEXED;
-      screen_scale = 1;
-    } else {
-      video_mode = VIDEO_DITHER_COPYBITS;
-      screen_scale = 2;
-    }
   }
 
-  // validate video_mode for current screen depth
-  incompatibleDirect =
-    video_mode == VIDEO_DITHER_DIRECT && screen_depth > 1;
-  incompatibleIndexed =
-    video_mode == VIDEO_INDEXED && screen_depth == 1;
-  if (incompatibleDirect || incompatibleIndexed) {
-    video_mode = VIDEO_DITHER_COPYBITS;
+  if (video_mode == VIDEO_INDEXED && screen_depth == 1) {
+    video_mode = VIDEO_BW;
   }
 }
 
@@ -377,16 +372,15 @@ void SavePreferences(void)
   }
 
   prefs = (int *) *h;
-  prefs[0] = 0;  // reserved (was cycles_per_exit)
-  prefs[1] = frame_skip;
-  prefs[2] = video_mode;
-  prefs[3] = screen_scale;
-  prefs[4] = sound_enabled;
-  prefs[5] = limit_fps;
-  prefs[6] = current_palette;
-  prefs[7] = gbc_enabled;
-  prefs[8] = ignore_double_speed;
-  prefs[9] = stat_ints_enabled;
+  prefs[0] = frame_skip;
+  prefs[1] = video_mode;
+  prefs[2] = screen_scale;
+  prefs[3] = sound_enabled;
+  prefs[4] = limit_fps;
+  prefs[5] = current_palette;
+  prefs[6] = gbc_enabled;
+  prefs[7] = ignore_double_speed;
+  prefs[8] = stat_ints_enabled;
   ChangedResource(h);
   WriteResource(h);
 }
@@ -533,6 +527,8 @@ static void SetRadioGroup(DialogPtr dp, int first, int last, int selected)
   }
 }
 
+// This is no longer used in 2.0.0 but i'm keeping it in case it ever
+// comes back and to use as an example
 void ShowPreferencesDialog(void)
 {
   DialogPtr dp;

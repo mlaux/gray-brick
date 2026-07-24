@@ -385,10 +385,11 @@ static void CheckPendingTasks(void)
   }
 }
 
-// called on init, on emulation start, on scale change, and on emulation stop
+// called on init, on emulation start, on scale/skip change, and on emulation stop
 static void UpdateMenuItems(void)
 {
   MenuHandle menu;
+  int k, num_skips = EDIT_SKIP_4 - EDIT_SKIP_OFF + 1;
 
   menu = GetMenuHandle(MENU_FILE);
   if (g_wp) {
@@ -407,11 +408,14 @@ static void UpdateMenuItems(void)
 
   menu = GetMenuHandle(MENU_EDIT);
   CheckItem(menu, EDIT_SOUND, sound_enabled);
+  CheckItem(menu, EDIT_STAT_INTS, stat_ints_enabled);
   CheckItem(menu, EDIT_LIMIT_FPS, limit_fps);
+  for (k = 0; k < num_skips; k++) {
+    CheckItem(menu, EDIT_SKIP_OFF + k, frame_skip == k);
+  }
   CheckItem(menu, EDIT_SCALE_1X, screen_scale == 1);
   CheckItem(menu, EDIT_SCALE_2X, screen_scale == 2);
   CheckItem(menu, EDIT_IGNORE_DOUBLE_SPEED, ignore_double_speed);
-  CheckItem(menu, EDIT_STAT_INTS, stat_ints_enabled);
   if (g_wp) {
     int supports_cgb = rom.cgb_flag & 0xc0;
     if (!supports_cgb) {
@@ -502,6 +506,13 @@ void SetScreenScale(int scale)
   }
 
   lcd_mac_invalidate();
+  UpdateMenuItems();
+  SavePreferences();
+}
+
+void SetFrameSkip(int skip)
+{
+  frame_skip = skip;
   UpdateMenuItems();
   SavePreferences();
 }
@@ -657,6 +668,10 @@ void OnMenuAction(long action)
       }
       CheckItem(GetMenuHandle(MENU_EDIT), EDIT_SOUND, sound_enabled);
       SavePreferences();
+    } else if (item == EDIT_STAT_INTS) {
+      stat_ints_enabled = !stat_ints_enabled;
+      CheckItem(GetMenuHandle(MENU_EDIT), EDIT_STAT_INTS, stat_ints_enabled);
+      SavePreferences();
     } else if (item == EDIT_LIMIT_FPS) {
       limit_fps = !limit_fps;
       if (limit_fps) {
@@ -666,14 +681,14 @@ void OnMenuAction(long action)
       }
       CheckItem(GetMenuHandle(MENU_EDIT), EDIT_LIMIT_FPS, limit_fps);
       SavePreferences();
+    } else if (item >= EDIT_SKIP_OFF && item <= EDIT_SKIP_4) {
+      SetFrameSkip(item - EDIT_SKIP_OFF);
     } else if (item == EDIT_SCALE_1X) {
       SetScreenScale(1);
     } else if (item == EDIT_SCALE_2X) {
       SetScreenScale(2);
     } else if (item == EDIT_KEY_MAPPINGS) {
       ShowKeyMappingsDialog();
-    } else if (item == EDIT_PREFERENCES) {
-      ShowPreferencesDialog();
     } else if (item == EDIT_GBC_MODE) {
       gbc_enabled = !gbc_enabled;
       CheckItem(GetMenuHandle(MENU_EDIT), EDIT_GBC_MODE, gbc_enabled);
@@ -681,10 +696,6 @@ void OnMenuAction(long action)
     } else if (item == EDIT_IGNORE_DOUBLE_SPEED) {
       ignore_double_speed = !ignore_double_speed;
       CheckItem(GetMenuHandle(MENU_EDIT), EDIT_IGNORE_DOUBLE_SPEED, ignore_double_speed);
-      SavePreferences();
-    } else if (item == EDIT_STAT_INTS) {
-      stat_ints_enabled = !stat_ints_enabled;
-      CheckItem(GetMenuHandle(MENU_EDIT), EDIT_STAT_INTS, stat_ints_enabled);
       SavePreferences();
     }
   }

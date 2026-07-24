@@ -195,7 +195,7 @@ static void lcd_blit_bw_bands(struct lcd *lcd_ptr, int scale, int all)
 }
 
 // 1x rendering, >= 2 is black, doesn't look great but it's fine
-static void lcd_draw_1x_copybits(struct lcd *lcd_ptr)
+static void lcd_draw_1x_bw(struct lcd *lcd_ptr)
 {
   int gy;
   unsigned char *src = lcd_ptr->pixels;
@@ -219,11 +219,6 @@ static void lcd_draw_1x_copybits(struct lcd *lcd_ptr)
   }
 
   lcd_blit_bw_bands(lcd_ptr, 1, force_all);
-}
-
-static void lcd_draw_1x_direct(struct lcd *lcd_ptr)
-{
-  // TODO REMOVE
 }
 
 static void lcd_draw_1x_indexed(struct lcd *lcd_ptr)
@@ -255,7 +250,7 @@ static void lcd_draw_1x_indexed(struct lcd *lcd_ptr)
   lcd_blit_color_bands(lcd_ptr, 1, force_all);
 }
 
-static void lcd_draw_2x_copybits(struct lcd *lcd_ptr)
+static void lcd_draw_2x_bw(struct lcd *lcd_ptr)
 {
   int gy;
   unsigned char *src = lcd_ptr->pixels;
@@ -288,12 +283,6 @@ static void lcd_draw_2x_copybits(struct lcd *lcd_ptr)
   }
 
   lcd_blit_bw_bands(lcd_ptr, 2, force_all);
-}
-
-// faster on plus/SE etc
-static void lcd_draw_2x_direct(struct lcd *lcd_ptr)
-{
-  // TODO REMOVE
 }
 
 static void lcd_draw_2x_indexed(struct lcd *lcd_ptr)
@@ -345,9 +334,9 @@ static void lcd_draw_2x_indexed(struct lcd *lcd_ptr)
   lcd_blit_color_bands(lcd_ptr, 2, force_all);
 }
 
-void (*draw_funcs[2][3])(struct lcd *) = {
-  { lcd_draw_1x_copybits, lcd_draw_1x_direct, lcd_draw_1x_indexed },
-  { lcd_draw_2x_copybits, lcd_draw_2x_direct, lcd_draw_2x_indexed },
+void (*draw_funcs[2][2])(struct lcd *) = {
+  { lcd_draw_1x_bw, lcd_draw_1x_indexed },
+  { lcd_draw_2x_bw, lcd_draw_2x_indexed },
 };
 
 // lcd_mac_cgb.c

@@ -10,8 +10,7 @@ extern unsigned char gbc_enabled;
 extern unsigned char ignore_double_speed;
 extern unsigned char stat_ints_enabled;
 
-#define VIDEO_DITHER_COPYBITS 0
-#define VIDEO_DITHER_DIRECT 1
-#define VIDEO_INDEXED 2
+#define VIDEO_BW 0
+#define VIDEO_INDEXED 1
 
 #endif
