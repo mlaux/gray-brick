@@ -345,7 +345,7 @@ void lcd_draw_cgb(struct lcd *lcd_ptr, int all);
 // called by dmg_step at vblank
 void lcd_draw(struct lcd *lcd_ptr)
 {
-  int video_mode = screen_depth >= 8 : VIDEO_INDEXED : VIDEO_BW;
+  int video_mode = screen_depth >= 8 ? VIDEO_INDEXED : VIDEO_BW;
   if (dmg.cgb && dmg.cgb->mode && screen_depth > 1) {
     lcd_draw_cgb(lcd_ptr, force_all);
     force_all = 0;

@@ -12,7 +12,7 @@ I have tested this on a Mac Plus with System 6.0.8, a Mac SE/30 with 7.1, and a
 Mac IIfx with 7.5.3. A mid-range 68030 can get around 30 FPS with no sound and
 frame skip, and a fast 68030 or 68040 can achieve real-time speeds with sound
 enabled (and frame skip still on), depending on video settings. Original 8 MHz
-68000 Macs get around 5 FPS :( but this is still better than my original
+68000 Macs get around 8 FPS :( but this is still better than my original
 interpreter version which completed one frame every 5-6 seconds.
 
 My goal with this project was to give vintage Mac enthusiasts another fun app
@@ -28,7 +28,7 @@ to check out.
 
 This is a memory-intensive application, and the amount of memory required depends
 on how big the games you want to play are. The simplest games require around 
-2 MB, with larger games like Pokémon requiring 16 MB for the best performance.
+2 MB, with larger games like Pokémon requiring 8 MB for the best performance.
 
 If the emulator runs out of RAM, it will clear all compiled code and try again.
 Since each code path is only compiled as it is reached, this gives things like
@@ -62,16 +62,38 @@ customize in the Key Mappings dialog.
 
 ### Games
 
+I've listed a game as "works" if I can run it and play through the first couple
+minutes at a reasonable frame rate.
+
+#### Game Boy
+
 | Game | Status |
 | - | - |
 | Tetris | Works |
 | Dr. Mario | Works |
+| Alleyway | Works |
 | Pokémon Red/Blue | Works |
-| Pokémon Gold/Silver | Works (DMG mode) |
 | Link's Awakening | Works |
-| Link's Awakening DX | Works (DMG mode) |
+| Kaeru no Tame ni Kane wa Naru | Works (disable STAT interrupts for slow parts) |
 | Super Mario Land | Works |
-| Super Mario Land 2 | Crashes |
+| Super Mario Land 2 | Works |
+| Metroid II | Works |
+| Donkey Kong '94 | Works |
+| Final Fantasy Legend | Works |
+| Final Fantasy Adventure | Works |
+| Everything else | No idea |
+
+#### Game Boy Color
+
+| Game | Status |
+| - | - |
+| Tetris DX | Works |
+| Pokémon Gold/Silver | Works (disable STAT interrupts) |
+| Pokémon Crystal | Works (disable STAT interrupts) |
+| Link's Awakening DX | Works |
+| Dragon Warrior I & II | Works |
+| Dragon Warrior III | Works |
+| Super Mario Bros. Deluxe | Works |
 | Everything else | No idea |
 
 If you try a game, please report whether it works (playable/unplayable but no
@@ -93,13 +115,27 @@ matching the internal ROM name (for example, "ZELDA" for Link's Awakening).
     anyway
 * Memory management could be better
   - Clear unused blocks instead of everything
-* LCD rendering is... yeah (see below)
+* ~~LCD rendering is... yeah (see below)~~ this is better now in 2.0.0!
 
-## Preferences
+## Options
 
-![screenshot of preferences dialog](screenshots/2.png) ![screenshot of key mappings dialog](screenshots/3.png)
+![screenshot of options menu](screenshots/4.png) ![screenshot of key mappings dialog](screenshots/3.png)
 
-### Background info on rendering
+### Enable Audio
+
+I would say a 68030 at 25 MHz is the minimum requirement for smooth audio
+emulation.
+
+This option requires either Sound Manager 3.0 (best) or the "enhanced Sound Manager",
+and an Apple Sound Chip. Pretty much all Macs except the original compacts have the ASC. 
+System 6, 7.0, and 7.1 come with the "enhanced Sound Manager" which in my experience
+leads to a lot of clicking in the audio. If you're getting clicking, install
+the Sound Manager 3.0 extension and it should sound better. System 7.5 and up
+already have Sound Manager 3.0.
+
+### Enable STAT Interrupts
+
+#### Background info on rendering
 
 A real Game Boy is constantly visiting each pixel on the screen, reading the
 state of video RAM and hardware registers at the moment that pixel is reached,
@@ -109,52 +145,26 @@ transfer new image data to video RAM and move sprites around before the drawing
 process starts again. When this period starts, the program is interrupted
 and the CPU jumps to an interrupt handler where it makes its updates.
 
-This process is prohibitively slow on a 68k Mac, so instead, the entire LCD is
-rendered all at once based on how the registers are set either at the halfway
-point (Y=72) or the bottom (Y=144) of the screen, depending on how the "check for
-interrupts" preference is set and whether or not the game uses the HALT instruction.
+This process is prohibitively slow on a 68k Mac, so instead, a log is kept of
+each time the LCD parameters (scroll, palettes, etc.) are changed throughout
+the frame, then rendered all at once at the end based on how the registers
+were set at each logged point.
 
-### Check for interrupts
+#### So what
 
-This preference controls how often the emulator exits compiled code and checks for
-interrupts. Two options are available to choose from depending on the speed of
-your Mac: every 16 lines (more compatible) and every frame
-(fastest). "Every frame" is usually good enough for RPGs, while platform games
-with status bars usually need "every 16 lines".
+Games that update the LCD parameters mid-frame (usually for status bars or
+special effects) use STAT interrupts to achieve this. This increases the
+amount of work the emulator has to do.
 
-Checking more frequently than every frame enables the emulator to draw the LCD
-at its midpoint, which has the best chance of avoiding glitches due to status
-bars at the top or bottom.
+Leave this option on by default and turn it off if the frame rate tanks.
+In the worst case, some games (Pokémon GSC is an example) fire STAT
+interrupts on every line (144 times per frame), even when no special effect
+is active, which is way too slow on 68k. You'll want to turn this option off
+for games that do this.
 
-#### HALT
+### Limit to 60 FPS
 
-The HALT instruction stops execution of the program until an interrupt is
-received. On a real Game Boy, this conserves battery. In the emulator, this
-enables "advancing time" to the next interrupt, which avoids busy waiting and
-leaves more Mac CPU time for drawing the screen. 
-
-This interacts with the "check for interrupts" preference in an interesting way. Since
-HALT skips directly to the next interrupt (bottom of the screen), interrupts are
-checked according to the setting until a HALT is reached, at which point they
-won't be checked again until the bottom. This causes rendering to happen at the
-bottom of the screen instead of the middle.
-
-### Display mode
-
-This preference allows you to choose how the Game Boy screen is displayed on your
-monitor. The dithered options use ordered dithering patterns to draw the screen
-in black-and-white at 2x scale, while the color option uses a nice palette
-(which will be configurable in the future?)
-
-* **Dithered (CopyBits)** uses the `CopyBits()` QuickDraw function to copy the image
-  data to your Mac's video RAM.
-* **Dithered (direct)** writes video RAM directly. In my experiments, this is faster
-  on B&W Macs, but actually slower on Macs with more advanced video hardware.
-  Don't move the window offscreen when using this option... there are currently
-  no checks on writing out-of-bounds. This option is unavailable when your display
-  is set to color.
-* **Color** uses Color QuickDraw. This option is unavailable on B&W Macs
-  and when your color display is set to B&W.
+This is pretty much for 68040s only :)
 
 ### Frame skip
 
@@ -162,6 +172,15 @@ Copying the Game Boy pixels to your Mac's screen is a pretty expensive operation
 This preference allows one in every 2, 3, 4, or 5 frames to actually be drawn
 to the screen. Skipped frames are still emulated - only the actual drawing is
 skipped. This can drastically increase performance on slow machines.
+
+### Scale
+
+Choose between 1x or 2x rendering based on your preference, 2x is slower.
+
+### Run as GBC
+
+For games that support both the original Game Boy and the Game Boy Color, this
+option allows you to choose which system you want to run it as. 
 
 ## Building
 
@@ -211,6 +230,13 @@ interpreter version of the emulator.
 I used Claude Code to generate compiler tests, quickly generate 68k instruction
 emitter functions, and heavily comment my emitted instruction sequences with
 the corresponding assembly syntax and offsets, because they're confusing.
+
+All LLM usage was done by individually reviewing every edit before accepting,
+there was no use of autonomous agents or vibe coding.
+
+* `src/`, `system6/`, and `compiler/` (main app) are ~0% generated
+* `compiler/tests/` is ~80% generated
+* `host/` (test harness for running on modern machines) is ~100% generated
 
 ## License
 
