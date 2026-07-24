@@ -19,7 +19,6 @@ static short gSelectedSlot = -1;
 int keyMappings[8];
 
 int frame_skip;
-int video_mode;
 int screen_scale;
 
 const char *keyNames[128] = {
@@ -321,24 +320,21 @@ void LoadPreferences(void)
   if (h != nil && GetHandleSize(h) >= sizeof(int) * 9) {
     prefs = (int *) *h;
     frame_skip = prefs[0];
-    video_mode = prefs[1];
-    screen_scale = prefs[2];
-    sound_enabled = prefs[3];
-    limit_fps = prefs[4];
-    current_palette = prefs[5];
+    screen_scale = prefs[1];
+    sound_enabled = prefs[2];
+    limit_fps = prefs[3];
+    current_palette = prefs[4];
     if (current_palette < 0 || current_palette >= gb_palette_count) {
       current_palette = 0;
     }
-    gbc_enabled = prefs[6];
-    ignore_double_speed = prefs[7];
-    stat_ints_enabled = prefs[8];
+    gbc_enabled = prefs[5];
+    ignore_double_speed = prefs[6];
+    stat_ints_enabled = prefs[7];
   } else {
     frame_skip = 4;
     if (screen_depth >= 8) {
-      video_mode = VIDEO_INDEXED;
       screen_scale = 1;
     } else {
-      video_mode = VIDEO_BW;
       screen_scale = 2;
     }
     sound_enabled = 0;
@@ -347,10 +343,6 @@ void LoadPreferences(void)
     gbc_enabled = 1;
     ignore_double_speed = 0;
     stat_ints_enabled = 1;
-  }
-
-  if (video_mode == VIDEO_INDEXED && screen_depth == 1) {
-    video_mode = VIDEO_BW;
   }
 }
 
@@ -373,14 +365,13 @@ void SavePreferences(void)
 
   prefs = (int *) *h;
   prefs[0] = frame_skip;
-  prefs[1] = video_mode;
-  prefs[2] = screen_scale;
-  prefs[3] = sound_enabled;
-  prefs[4] = limit_fps;
-  prefs[5] = current_palette;
-  prefs[6] = gbc_enabled;
-  prefs[7] = ignore_double_speed;
-  prefs[8] = stat_ints_enabled;
+  prefs[1] = screen_scale;
+  prefs[2] = sound_enabled;
+  prefs[3] = limit_fps;
+  prefs[4] = current_palette;
+  prefs[5] = gbc_enabled;
+  prefs[6] = ignore_double_speed;
+  prefs[7] = stat_ints_enabled;
   ChangedResource(h);
   WriteResource(h);
 }
@@ -540,7 +531,7 @@ void ShowPreferencesDialog(void)
   short type;
 
   // map current settings to dialog items
-  videoModeItem = 5 + video_mode;
+  //videoModeItem = 5 + video_mode;
   frameSkipItem = 8 + frame_skip;
 
   CenterDialog(GetResource('DLOG', DLOG_PREFERENCES));
@@ -578,7 +569,7 @@ void ShowPreferencesDialog(void)
   } while (itemHit != ok && itemHit != cancel);
 
   if (itemHit == ok) {
-    video_mode = videoModeItem - 5;
+    //video_mode = videoModeItem - 5;
     frame_skip = frameSkipItem - 8;
     lcd_mac_invalidate();
     SavePreferences();

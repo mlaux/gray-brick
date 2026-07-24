@@ -14,7 +14,6 @@
 
 // settings normally loaded from Mac prefs (dialogs.c / emulator.c)
 int frame_skip;
-int video_mode;
 int screen_scale = 1;
 unsigned char sound_enabled;
 unsigned char limit_fps;

@@ -2,7 +2,6 @@
 #define _SETTINGS_H
 
 extern int frame_skip;
-extern int video_mode;
 extern int screen_scale;
 extern unsigned char sound_enabled;
 extern unsigned char limit_fps;
