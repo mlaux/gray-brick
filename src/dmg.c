@@ -793,7 +793,7 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
         return;
     }
     if (address >= 0xff10 && address <= 0xff3f) {
-        audio_write(dmg->audio, address, data);
+        audio_mac_write(dmg->audio, address, data);
         return;
     }
     if (address == 0xff0f) {

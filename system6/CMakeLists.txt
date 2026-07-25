@@ -56,7 +56,7 @@ target_compile_options(Gray_Brick PRIVATE
 target_compile_definitions(Gray_Brick PRIVATE BG_TILES_IN_ASM)
 
 # remove for release builds
-target_compile_definitions(Gray_Brick PRIVATE GB6_PROFILING)
+# target_compile_definitions(Gray_Brick PRIVATE GB6_PROFILING)
 
 target_link_options(Gray_Brick PRIVATE
     "-Wl,--gc-sections"

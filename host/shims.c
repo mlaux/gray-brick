@@ -8,6 +8,7 @@
 
 #include "types.h"
 #include "lcd.h"
+#include "audio.h"
 #include "../system6/jit.h"
 #include "../system6/settings.h"
 #include "host.h"
@@ -51,6 +52,12 @@ void lcd_draw(struct lcd *lcd)
 void audio_mac_sync(int cycles)
 {
     (void) cycles;
+}
+
+// no interrupt-time generation on the host, apply writes directly
+void audio_mac_write(struct audio *audio, u16 addr, u8 value)
+{
+    audio_write(audio, addr, value);
 }
 
 // seconds since Jan 1 1904, as GetDateTime returns on a real Mac.

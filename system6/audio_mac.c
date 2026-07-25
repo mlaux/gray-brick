@@ -1,9 +1,11 @@
 /* Game Boy emulator for 68k Macs
    audio_mac.c - Sound Manager integration using SndPlayDoubleBuffer */
 
-// audio samples are generated synchronized to GB execution via audio_mac_sync(),
-// which is called from dmg_sync_hw. Samples accumulate in a ring buffer. the
-// Sound Manager callback reads from the ring buffer at interrupt time
+// The Sound Manager callback generates samples from the current APU state at
+// interrupt time, so playback never introduces gaps when emulation falls
+// behind real time. Register writes are queued with emulated-time stamps
+// and applied at their exact sample offsets during generation, which keeps
+// note timing accurate at full speed
 
 #include <Sound.h>
 #include <Memory.h>
@@ -14,26 +16,45 @@
 #include "../src/audio.h"
 #include "../src/prof.h"
 
-// 1 frame worth of samples at 11127 Hz / 60 fps
+// 4194304 / 11127 = about 377
+#define CYCLES_PER_SAMPLE 377
+
+// each buffer has ~46 ms of samples
 #define BUFFER_SAMPLES 512
 #define SAMPLE_RATE_FIXED 0x2b7745d1
 
-// ring buffer - must be power of 2 for masking
-#define RING_SIZE 1024
-#define RING_MASK (RING_SIZE - 1)
+// how far emulated time can get ahead before the frame limiter blocks
+#define MAX_LEAD_SAMPLES 768
 
-static unsigned char ring_buffer[RING_SIZE];
-static volatile int ring_write;  // main loop writes here
-static volatile int ring_read;   // interrupt reads here
+// turn off the audio if real time > this period (if the user opens a menu)
+#define STALL_SAMPLES 1024
 
-// cycles per sample: 4194304 / 11127 = about 377
-#define CYCLES_PER_SAMPLE 377
+// how far sample generation can get ahead when the frame limiter is off
+#define MAX_BANK_SAMPLES 2048
 
 static int cycle_accum;
+static u32 emu_samples;          // emulated time in samples, main loop owns
+static volatile u32 samples_out; // real time: samples handed to Sound Manager
+
+// APU register writes waiting to be applied during generation.
+// main loop produces, interrupt gets
+struct apu_event {
+    u32 t;
+    u16 addr;
+    u8 value;
+};
+
+#define EVQ_SIZE 512
+#define EVQ_MASK (EVQ_SIZE - 1)
+
+static struct apu_event evq[EVQ_SIZE];
+static volatile int evq_write;
+static volatile int evq_read;
 
 static SndChannelPtr snd_channel;
 static struct audio *g_audio;
 static int audio_inited;
+static volatile int snd_running;
 
 typedef struct {
     long dbNumFrames;
@@ -84,82 +105,105 @@ int audio_mac_available(void)
     return HasSndPlayDoubleBuffer();
 }
 
-// called from main loop (dmg_sync_hw) to generate samples into ring buffer
+// called from main loop to advance the emulated-time clock
 void audio_mac_sync(int cycles)
 {
-    int samples_needed, avail, chunk;
+    u32 out;
 
-    if (!g_audio || !audio_inited)
+    if (!audio_inited)
         return;
 
     cycle_accum += cycles;
-    samples_needed = cycle_accum / CYCLES_PER_SAMPLE;
-
-    if (samples_needed == 0)
-        return;
-
-    cycle_accum -= samples_needed * CYCLES_PER_SAMPLE;
-
-    // check available space in ring buffer
-    avail = (ring_read - ring_write - 1) & RING_MASK;
-    if (samples_needed > avail)
-        samples_needed = avail; // drop excess rather than overwrite
-
-    if (samples_needed == 0)
-        return;
-
-    // generate in up to 2 chunks to handle wrap-around
-    chunk = RING_SIZE - ring_write;
-    if (chunk > samples_needed)
-        chunk = samples_needed;
-
-    PROF_SET(PROF_AUDIO);
-    audio_generate(g_audio, &ring_buffer[ring_write], chunk);
-    ring_write = (ring_write + chunk) & RING_MASK;
-
-    if (chunk < samples_needed) {
-        audio_generate(g_audio, ring_buffer, samples_needed - chunk);
-        ring_write = samples_needed - chunk;
+    if (cycle_accum >= CYCLES_PER_SAMPLE) {
+        emu_samples += cycle_accum / CYCLES_PER_SAMPLE;
+        cycle_accum %= CYCLES_PER_SAMPLE;
     }
-    PROF_SET(PROF_SYNC);
+
+    // if emulation fell behind real time, snap forward
+    out = samples_out;
+    if ((s32) (emu_samples - out) < 0)
+        emu_samples = out;
+    else if ((s32) (emu_samples - out) > MAX_BANK_SAMPLES)
+        emu_samples = out + MAX_BANK_SAMPLES;
 }
 
-// read samples from ring buffer into Sound Manager buffer (interrupt time)
-static void FillBuffer(unsigned char *p)
+void audio_mac_write(struct audio *audio, u16 addr, u8 value)
 {
-    int avail, k;
+    int w, next;
 
-    for (k = 0; k < BUFFER_SAMPLES; k++) {
-        avail = (ring_write - ring_read) & RING_MASK;
-        if (avail > 0) {
-            p[k] = ring_buffer[ring_read];
-            ring_read = (ring_read + 1) & RING_MASK;
-        } else {
-            // underrun - output silence
-            p[k] = 0x80;
+    if (!snd_running) {
+        audio_write(audio, addr, value);
+        return;
+    }
+
+    // mirror the raw byte now so register readback doesn't see stale values
+    if (addr >= 0xff10 && addr <= 0xff3f) {
+        audio->regs[addr - 0xff10] = value;
+        if (addr >= REG_WAVE_START)
+            audio->wave_ram[addr - REG_WAVE_START] = value;
+    }
+
+    w = evq_write;
+    next = (w + 1) & EVQ_MASK;
+    if (next == evq_read) {
+        // queue full, just write it out of order so it's not lost
+        audio_write(audio, addr, value);
+        return;
+    }
+
+    evq[w].t = emu_samples;
+    evq[w].addr = addr;
+    evq[w].value = value;
+    evq_write = next;
+}
+
+// generate one buffer, applying queued register writes at their offsets
+static void gen_samples(unsigned char *p)
+{
+    int done = 0;
+
+    while (done < BUFFER_SAMPLES) {
+        int n = BUFFER_SAMPLES - done;
+
+        if (evq_read != evq_write) {
+            struct apu_event *e = &evq[evq_read];
+            s32 off = (s32) (e->t - samples_out) - done;
+
+            if (off <= 0) {
+                audio_write(g_audio, e->addr, e->value);
+                evq_read = (evq_read + 1) & EVQ_MASK;
+                continue;
+            }
+            if (off < n)
+                n = off;
         }
+
+        audio_generate(g_audio, p + done, n);
+        done += n;
     }
 }
 
 // called at interrupt time when a buffer is exhausted
 static pascal void DoubleBackProc(SndChannelPtr chan, SndDoubleBufferPtr buf)
 {
-    // u16 t0, t1, delta;
+#ifdef GB6_PROFILING
+    unsigned char prev_phase = prof_phase;
+    PROF_SET(PROF_AUDIO);
+#endif
 
-    // t0 = read_via_t1();
-    FillBuffer(buf->dbSoundData);
+    if (!g_audio || (s32) (samples_out - emu_samples) > STALL_SAMPLES) {
+        memset(buf->dbSoundData, 0x80, BUFFER_SAMPLES);
+    } else {
+        gen_samples(buf->dbSoundData);
+    }
+
+    samples_out += BUFFER_SAMPLES;
     buf->dbNumFrames = BUFFER_SAMPLES;
     buf->dbFlags |= dbBufferReady;
-    // t1 = read_via_t1();
-    // if (t0 >= t1) {
-    //     delta = t0 - t1;
-    // } else {
-    //     // wrapped - t0 was near 0, t1 is near latch value after reload
-    //     // latch is roughly 13050 for 60Hz tick rate
-    //     delta = t0 + (13050 - t1);
-    // }
-    // audio_timer_accum += delta;
-    // audio_calls++;
+
+#ifdef GB6_PROFILING
+    PROF_SET(prev_phase);
+#endif
 }
 
 int audio_mac_init(struct audio *audio)
@@ -169,7 +213,7 @@ int audio_mac_init(struct audio *audio)
 
     if (!audio_mac_available()) {
         return 0;
-    } 
+    }
 
     if (audio_inited) {
         return 1;
@@ -209,18 +253,25 @@ int audio_mac_init(struct audio *audio)
 
 void audio_mac_start(void)
 {
+    int k;
+
     if (!audio_inited || !snd_channel)
         return;
 
-    // reset ring buffer state
-    ring_read = 0;
-    ring_write = 0;
     cycle_accum = 0;
+    emu_samples = 0;
+    samples_out = 0;
+    evq_read = 0;
+    evq_write = 0;
 
-    // pre-fill both buffers with silence (ring buffer is empty at start)
-    memset(dbl_buffers[0].dbSoundData, 0x80, BUFFER_SAMPLES);
-    memset(dbl_buffers[1].dbSoundData, 0x80, BUFFER_SAMPLES);
+    // pre-fill both buffers with silence
+    for (k = 0; k < 2; k++) {
+        memset(dbl_buffers[k].dbSoundData, 0x80, BUFFER_SAMPLES);
+        dbl_buffers[k].dbNumFrames = BUFFER_SAMPLES;
+        dbl_buffers[k].dbFlags = dbBufferReady;
+    }
 
+    snd_running = 1;
     SndPlayDoubleBuffer(snd_channel, &dbl_header);
 }
 
@@ -230,6 +281,8 @@ void audio_mac_stop(void)
 
     if (!snd_channel)
         return;
+
+    snd_running = 0;
 
     cmd.cmd = quietCmd;
     cmd.param1 = 0;
@@ -242,17 +295,11 @@ void audio_mac_stop(void)
 
 void audio_mac_wait_if_ahead(void)
 {
-    int fill;
-
-    if (!audio_inited)
+    if (!snd_running)
         return;
 
-    // wait while buffer is more than 3/4 full
-    while (1) {
-        fill = (ring_write - ring_read) & RING_MASK;
-        if (fill < RING_SIZE * 3 / 4)
-            break;
-    }
+    while ((s32) (emu_samples - samples_out) > MAX_LEAD_SAMPLES)
+        ;
 }
 
 void audio_mac_shutdown(void)

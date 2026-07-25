@@ -839,7 +839,7 @@ static int CheckFinderFiles(void)
 
 int main(int argc, char *argv[])
 {
-  int finderResult;
+  int finderResult, last_process;
 
   InitToolbox();
   DetectScreenDepth();
@@ -861,6 +861,7 @@ int main(int argc, char *argv[])
   }
 
   last_frame_count = 0;
+  last_process = TickCount();
 
   while (app_running) {
     if (!ProcessEvents()) {
