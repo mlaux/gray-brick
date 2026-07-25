@@ -12,6 +12,7 @@
 
 #include "audio_mac.h"
 #include "../src/audio.h"
+#include "../src/prof.h"
 
 // 1 frame worth of samples at 11127 Hz / 60 fps
 #define BUFFER_SAMPLES 512
@@ -112,6 +113,7 @@ void audio_mac_sync(int cycles)
     if (chunk > samples_needed)
         chunk = samples_needed;
 
+    PROF_SET(PROF_AUDIO);
     audio_generate(g_audio, &ring_buffer[ring_write], chunk);
     ring_write = (ring_write + chunk) & RING_MASK;
 
@@ -119,6 +121,7 @@ void audio_mac_sync(int cycles)
         audio_generate(g_audio, ring_buffer, samples_needed - chunk);
         ring_write = samples_needed - chunk;
     }
+    PROF_SET(PROF_SYNC);
 }
 
 // read samples from ring buffer into Sound Manager buffer (interrupt time)

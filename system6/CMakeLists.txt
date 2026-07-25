@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.13)
 project("Gray Brick")
+enable_language(ASM)
 
 include(add_application.cmake)
 
@@ -34,6 +35,7 @@ add_application("Gray Brick"
     dispatcher_asm.c
     jit.c
     input.c
+    lcd_render_bg.s
     lcd_mac.c
     lcd_mac_cgb.c
     cache.c
@@ -41,6 +43,7 @@ add_application("Gray Brick"
     emulator.c
     palette_menu.c
     gb_palettes.c
+    prof.c
     resources.r
 )
 
@@ -49,6 +52,11 @@ target_compile_options(Gray_Brick PRIVATE
     -ffunction-sections
     -fdata-sections
 )
+
+target_compile_definitions(Gray_Brick PRIVATE BG_TILES_IN_ASM)
+
+# remove for release builds
+target_compile_definitions(Gray_Brick PRIVATE GB6_PROFILING)
 
 target_link_options(Gray_Brick PRIVATE
     "-Wl,--gc-sections"

@@ -19,6 +19,7 @@
 #include "debug.h"
 #include "arena.h"
 #include "cpu_cache.h"
+#include "prof.h"
 
 // Debug: ring buffer of last 16 PCs executed
 #define PC_HISTORY_SIZE 16
@@ -26,8 +27,6 @@ static u32 pc_history[PC_HISTORY_SIZE];
 static u8 op_history[PC_HISTORY_SIZE];  // first opcode of each block
 static int pc_history_idx = 0;
 
-static u32 time_in_jit = 0;
-static u32 time_in_sync = 0;
 static u32 call_count = 0;
 static u32 last_report_tick = 0;
 
@@ -243,27 +242,46 @@ static void check_interrupts(struct dmg *dmg)
 static void update_profiling_status_bar(u32 frames_now)
 {
   char buf[64];
-  static u32 last_jit = 0, last_sync = 0, last_frames_rendered = 0;
+  static u32 last_frames_rendered = 0;
 
   u32 now = TickCount();
   u32 elapsed = now - last_report_tick;
-  u32 exits_per_sec = elapsed > 0 ? (100 * 60) / elapsed : 0;
-
-  u32 d_jit = time_in_jit - last_jit;
-  u32 d_sync = time_in_sync - last_sync;
-
-  u32 pct_jit = elapsed > 0 ? (d_jit * 100) / elapsed : 0;
-  u32 pct_sync = elapsed > 0 ? (d_sync * 100) / elapsed : 0;
 
   u32 frames_delta = frames_now - last_frames_rendered;
   u32 fps = elapsed > 0 ? (frames_delta * 60) / elapsed : 0;
   last_frames_rendered = frames_now;
-
-  last_jit = time_in_jit;
-  last_sync = time_in_sync;
   last_report_tick = now;
 
-  sprintf(buf, "%lu FPS (J: %lu, S: %lu)", fps, pct_jit, pct_sync);
+#ifdef GB6_PROFILING
+  {
+    // phase percentages from the 1 khz sampler since the last report
+    static u32 last_counts[PROF_NUM_PHASES];
+    u32 d[PROF_NUM_PHASES];
+    u32 total = 0;
+    int k;
+
+    for (k = 0; k < PROF_NUM_PHASES; k++) {
+      d[k] = prof_counts[k] - last_counts[k];
+      last_counts[k] = prof_counts[k];
+      total += d[k];
+    }
+    if (total > 0) {
+      sprintf(buf, "%lu FPS J%lu C%lu S%lu R%lu B%lu A%lu O%lu",
+          fps,
+          d[PROF_JIT] * 100 / total,
+          d[PROF_COMPILE] * 100 / total,
+          d[PROF_SYNC] * 100 / total,
+          d[PROF_RENDER] * 100 / total,
+          d[PROF_DRAW] * 100 / total,
+          d[PROF_AUDIO] * 100 / total,
+          d[PROF_OTHER] * 100 / total);
+      set_status_bar(buf);
+      return;
+    }
+  }
+#endif
+
+  sprintf(buf, "%lu FPS", fps);
   set_status_bar(buf);
 }
 
@@ -272,17 +290,16 @@ int jit_run(struct dmg *dmg)
   void *code;
   struct code_block *block;
   char buf[64];
-  u32 t0, t1, t2, t3;
 
   if (jit_halted) {
       return 0;
   }
 
   // look up or compile block
-  t0 = TickCount();
   code = cache_lookup(jit_regs.d3, jit_ctx.current_rom_bank);
 
   if (!code) {
+    PROF_SET(PROF_COMPILE);
     sprintf(buf, "$%02x:%04x %luk/%luk",
       jit_ctx.current_rom_bank,
       jit_regs.d3,
@@ -386,30 +403,26 @@ int jit_run(struct dmg *dmg)
   op_history[pc_history_idx] = dmg_read(dmg, jit_regs.d3);
   pc_history_idx = (pc_history_idx + 1) % PC_HISTORY_SIZE;
 
-  t1 = TickCount();
+  PROF_SET(PROF_JIT);
   enter_asm_world(code);
-  t2 = TickCount();
 
   // Get next PC from D3
   if (jit_regs.d3 == HALT_SENTINEL) {
+      PROF_SET(PROF_OTHER);
       set_status_bar("HALT");
       jit_halted = 1;
       return 0;
   }
 
   // sync hardware with cycles accumulated by compiled code
-  // sprintf(buf, "%lu %lu", dmg->frame_cycles, jit_regs.d2);
-  // set_status_bar(buf);
+  PROF_SET(PROF_SYNC);
   dmg_sync_hw(dmg, jit_regs.d2);
   if (dmg->interrupt_enable) {
     check_interrupts(dmg);
   }
   jit_regs.d2 = 0;
   update_wake_limit(dmg);
-
-  t3 = TickCount();
-  time_in_jit += t2 - t1;
-  time_in_sync += t3 - t2;
+  PROF_SET(PROF_OTHER);
 
   call_count++;
   if (call_count % 100 == 0) {

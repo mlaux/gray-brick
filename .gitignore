@@ -1,6 +1,7 @@
 *.swp
 emu
 *.gb
+*.gbc
 *.img
 vMac*
 .vscode

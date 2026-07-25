@@ -13,7 +13,7 @@
 // and leave it in dest_areg. table entries are biased so that
 // entry + (s16)gb_address = host pointer (see PAGE_BIAS in dmg.h), which
 // lets the full address in D1.w index the page directly with (An,Dn.w)
-// sign-extended addressing - no low-byte masking needed.
+// sign-extended addressing
 void compile_page_lookup(
     struct code_block *block,
     uint8_t table_areg,

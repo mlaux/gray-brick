@@ -8,6 +8,7 @@
 #include "cgb.h"
 #include "types.h"
 #include "audio.h"
+#include "prof.h"
 #include "../system6/jit.h"
 #include "../system6/audio_mac.h"
 #include "../system6/settings.h"
@@ -651,9 +652,7 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
         u8 *saved = dmg->saved_write_page[pidx];
 
         // a write that leaves the byte unchanged can't invalidate anything
-        // the compiler derived from it. FFL's engine passes arguments by
-        // rewriting its RAM stubs' instruction operands before every call,
-        // and a third of those writes store the value already there
+        // the compiler derived from it
         if (cache_upper_range_hit(address)
                 && (!saved || saved[(s16) address] != data)) {
             // self-modifying code - drop this page's compiled blocks
@@ -680,8 +679,7 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
 
     // scroll/window/palette/LCDC writes change how the rest of the frame
     // renders: log value changes against the beam position for the band
-    // replay at render time. the harness observation hook also watches
-    // OAM DMA and the CGB palette ports
+    // replay at render time
     if (address >= REG_LCDC && address <= REG_WX
             && ((0xfcd >> (address - REG_LCDC)) & 1)) {
         u8 old = lcd_read(dmg->lcd, address);
@@ -957,6 +955,7 @@ static void render_frame(struct dmg *dmg)
         return;
     }
 
+    PROF_SET(PROF_RENDER);
     lcd->window_line = 0;
     replay = lcd->raster_count && !lcd->raster_overflow;
     if (replay) {
@@ -1001,6 +1000,7 @@ static void render_frame(struct dmg *dmg)
     }
 
     lcd_draw(lcd);
+    PROF_SET(PROF_SYNC);
 }
 
 static void dmg_event_fire(struct dmg *dmg, int ev)
@@ -1092,12 +1092,8 @@ static void dmg_event_fire(struct dmg *dmg, int ev)
 
 // PPU cycles until the next deadline the CPU must observe. the JIT times
 // dispatcher exits and caps HALT/idle fast-forwards with this so handlers
-// run on the line they expect (FF Legend reads the joypad from its STAT
-// handler). interrupt sources count only when their IE bit is set (a
-// masked source can't wake anything, and a masked hot timer would thrash
-// exits); vblank-start counts unconditionally (HALT has always woken
-// there, and IF pollers expect the bit on time); the frame wrap is always
-// armed, so a bound always exists
+// run on the line they expect, interrupt sources count only when their 
+// IE bit is set, the frame wrap is always armed
 u32 dmg_cycles_to_next_event(struct dmg *dmg)
 {
     u8 ie = dmg->zero_page[0x7f];

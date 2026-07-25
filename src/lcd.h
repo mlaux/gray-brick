@@ -167,6 +167,21 @@ void lcd_draw(struct lcd *lcd);
 
 struct dmg;
 
+// render `count` aligned bg tile rows (2 packed bytes + 1 opacity byte
+// each), one 32-tile map row from tile_col with wraparound
+// tile_base = vram + tile data base + row_in_tile * 2
+// tile_col 0-31
+// count <= 21
+void lcd_render_bg_tiles(
+    const u8 *map_row,
+    const u8 *tile_base,
+    const u8 *lut,
+    u8 *row,
+    u8 *opac,
+    int tile_col,
+    int count,
+    int unsigned_mode);
+
 void lcd_render_band(
     struct dmg *dmg,
     int sy_start,

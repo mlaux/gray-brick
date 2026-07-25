@@ -26,12 +26,13 @@ static int dac_on(struct audio *audio, int ch)
     return (audio->regs[dac_reg_off[ch]] & dac_mask[ch]) != 0;
 }
 
-static const u8 duty_table[4] = {
-    0x01, // 00000001
-    0x03, // 00000011
-    0x0f, // 00001111
-    0xfc, // 11111100
-};
+// for regular square waves...
+// static const u8 duty_table[4] = {
+//     0x01, // 00000001
+//     0x03, // 00000011
+//     0x0f, // 00001111
+//     0xfc, // 11111100
+// };
 
 // for noise channel
 static const u8 divisor_table[8] = { 8, 16, 32, 48, 64, 80, 96, 112 };
@@ -42,55 +43,22 @@ static u8 lfsr7_bits[16]; // 128 bits for 7-bit mode
 
 // precomputed bandlimited square wave tables. this sounds better than the
 // basic square wave, but still not great because of the low sample rate.
-// [duty 0-3][band 0-3][sample 0-31]
+// premultiplied by volume so playback is one table read per sample
+// [volume 0-15][duty 0-3][band 0-3][sample 0-31]
 // band 0: divisor >= 512 (< 256 Hz), 21 harmonics
 // band 1: divisor 256-511 (256-512 Hz), 11 harmonics
 // band 2: divisor 128-255 (512-1024 Hz), 5 harmonics
 // band 3: divisor < 128 (> 1024 Hz), 3 harmonics
 #define BL_TABLE_SIZE 32
-#define BL_TABLE_SHIFT 11  // phase >> 11 gives 0-31 index
-static const s8 bl_square[4][4][BL_TABLE_SIZE] = {
-    { // duty 0 (12.5%)
-        {   0,  4, 15,  6,  5,  5,  3,  3,  4,  3,  3,  5,  5,  6, 15,  4,
-            0, -4,-15, -6, -5, -5, -3, -3, -4, -3, -3, -5, -5, -6,-15, -4 },
-        {   0,  7, 15, 11,  5,  6,  5,  4,  5,  4,  5,  6,  5, 11, 15,  7,
-            0, -7,-15,-11, -5, -6, -5, -4, -5, -4, -5, -6, -5,-11,-15, -7 },
-        {   0, 10, 15, 14,  9,  5,  4,  6,  6,  6,  4,  5,  9, 14, 15, 10,
-            0,-10,-15,-14, -9, -5, -4, -6, -6, -6, -4, -5, -9,-14,-15,-10 },
-        {   0,  9, 15, 15, 15, 13,  8,  4,  3,  4,  8, 13, 15, 15, 15,  9,
-            0, -9,-15,-15,-15,-13, -8, -4, -3, -4, -8,-13,-15,-15,-15, -9 }
-    },
-    { // duty 1 (25.0%)
-        {   0,  2,  4,  7, 15,  8,  7,  6,  6,  6,  7,  8, 15,  7,  4,  2,
-            0, -2, -4, -7,-15, -8, -7, -6, -6, -6, -7, -8,-15, -7, -4, -2 },
-        {   0,  3,  4, 10, 15, 11,  8,  7,  7,  7,  8, 11, 15, 10,  4,  3,
-            0, -3, -4,-10,-15,-11, -8, -7, -7, -7, -8,-11,-15,-10, -4, -3 },
-        {   0,  3,  7, 12, 15, 15, 12,  8,  6,  8, 12, 15, 15, 12,  7,  3,
-            0, -3, -7,-12,-15,-15,-12, -8, -6, -8,-12,-15,-15,-12, -7, -3 },
-        {   0,  6, 11, 14, 15, 14, 13, 11, 11, 11, 13, 14, 15, 14, 11,  6,
-            0, -6,-11,-14,-15,-14,-13,-11,-11,-11,-13,-14,-15,-14,-11, -6 }
-    },
-    { // duty 2 (50.0%)
-        {   0,  1,  2,  2,  3,  4,  6,  7, 15,  7,  6,  4,  3,  2,  2,  1,
-            0, -1, -2, -2, -3, -4, -6, -7,-15, -7, -6, -4, -3, -2, -2, -1 },
-        {   0,  1,  2,  2,  4,  5,  6, 11, 15, 11,  6,  5,  4,  2,  2,  1,
-            0, -1, -2, -2, -4, -5, -6,-11,-15,-11, -6, -5, -4, -2, -2, -1 },
-        {   0,  2,  3,  3,  3,  6, 10, 13, 15, 13, 10,  6,  3,  3,  3,  2,
-            0, -2, -3, -3, -3, -6,-10,-13,-15,-13,-10, -6, -3, -3, -3, -2 },
-        {   0,  0,  1,  3,  5,  9, 12, 14, 15, 14, 12,  9,  5,  3,  1,  0,
-            0,  0, -1, -3, -5, -9,-12,-14,-15,-14,-12, -9, -5, -3, -1,  0 }
-    },
-    { // duty 3 (75.0%)
-        {   0,  2,  4,  7, 15,  8,  7,  6,  6,  6,  7,  8, 15,  7,  4,  2,
-            0, -2, -4, -7,-15, -8, -7, -6, -6, -6, -7, -8,-15, -7, -4, -2 },
-        {   0,  3,  4, 10, 15, 11,  8,  7,  7,  7,  8, 11, 15, 10,  4,  3,
-            0, -3, -4,-10,-15,-11, -8, -7, -7, -7, -8,-11,-15,-10, -4, -3 },
-        {   0,  3,  7, 12, 15, 15, 12,  8,  6,  8, 12, 15, 15, 12,  7,  3,
-            0, -3, -7,-12,-15,-15,-12, -8, -6, -8,-12,-15,-15,-12, -7, -3 },
-        {   0,  6, 11, 14, 15, 14, 13, 11, 11, 11, 13, 14, 15, 14, 11,  6,
-            0, -6,-11,-14,-15,-14,-13,-11,-11,-11,-13,-14,-15,-14,-11, -6 }
-    }
-};
+// square/wave phase accumulators are pre-scaled by 32 so the sample index
+// us in bits 16-20, which gcc extracts with swap
+#define BL_TABLE_SHIFT 16
+#include "bl_tables.h"
+
+static void update_bl_table(struct audio_channel *ch)
+{
+    ch->bl_table = bl_square_vol[ch->volume][ch->duty][ch->band];
+}
 
 static void update_phase_inc(struct audio_channel *ch, int base)
 {
@@ -102,7 +70,7 @@ static void update_phase_inc(struct audio_channel *ch, int base)
     if (divisor == 0)
         divisor = 1;
 
-    ch->phase_inc = base / divisor;
+    ch->phase_inc = (base / divisor) << 5;
 
     // compute band from divisor
     // divisor >> 7: 0 = >1024Hz, 1 = 512-1024Hz, 2-3 = 256-512Hz, 4+ = <256Hz
@@ -117,6 +85,8 @@ static void update_phase_inc(struct audio_channel *ch, int base)
     } else {
         ch->band = 3;
     }
+
+    update_bl_table(ch);
 }
 
 static void update_phase_inc_noise(struct audio *audio)
@@ -138,6 +108,7 @@ static void trigger_non_wave(struct audio_channel *ch, int dac)
     ch->phase = 0;
     ch->volume = ch->env_initial;
     ch->env_timer = ch->env_pace;
+    update_bl_table(ch);
 }
 
 static void step_envelope(struct audio_channel *ch)
@@ -164,6 +135,7 @@ static void step_envelope(struct audio_channel *ch)
                 ch->volume--;
             }
         }
+        update_bl_table(ch);
     }
 }
 
@@ -221,6 +193,11 @@ void audio_init(struct audio *audio)
 
     memset(audio, 0, sizeof(*audio));
 
+    update_bl_table(&audio->ch1);
+    update_bl_table(&audio->ch2);
+    update_bl_table(&audio->ch3);
+    update_bl_table(&audio->ch4);
+
     // generate 15-bit LFSR output table (period 32767)
     memset(lfsr15_bits, 0, sizeof(lfsr15_bits));
     lfsr = 0x7fff;
@@ -266,6 +243,7 @@ void audio_write(struct audio *audio, u16 addr, u8 value)
     case 0xff11:    // NR11 - duty/length
         audio->ch1.duty = (value >> 6) & 0x03;
         audio->ch1.length_counter = value & 0x3f;
+        update_bl_table(&audio->ch1);
         break;
     case 0xff12:    // NR12 - envelope
         audio->ch1.env_initial = (value >> 4) & 0x0f;
@@ -297,6 +275,7 @@ void audio_write(struct audio *audio, u16 addr, u8 value)
     case 0xff16:    // NR21 - duty/length
         audio->ch2.duty = (value >> 6) & 0x03;
         audio->ch2.length_counter = value & 0x3f;
+        update_bl_table(&audio->ch2);
         break;
     case 0xff17:    // NR22 - envelope
         audio->ch2.env_initial = (value >> 4) & 0x0f;
@@ -419,32 +398,22 @@ u8 audio_read(struct audio *audio, u16 addr)
     return audio->regs[addr - 0xff10];
 }
 
-static s8 generate_square(struct audio_channel *ch /*, u8 duty_pattern */)
+static s8 generate_square(struct audio_channel *ch, u32 phase)
 {
-    if (!ch->enabled || ch->volume == 0)
+    if (!ch->enabled)
         return 0;
 
-    // int duty_pos = (ch->phase >> 13) & 0x07;
-    // int high = (duty_pattern >> (7 - duty_pos)) & 1;
-
-    // return high ? ch->volume : -(s8) ch->volume;
-    
-    // phase is 16.16 fixed point, use upper 5 bits for table index
-    int idx = (ch->phase >> BL_TABLE_SHIFT) & (BL_TABLE_SIZE - 1);
-    s8 sample = bl_square[ch->duty][ch->band][idx];
-
-    // scale by volume
-    return (sample * ch->volume) >> 4;
+    int idx = (phase >> BL_TABLE_SHIFT) & (BL_TABLE_SIZE - 1);
+    return ch->bl_table[idx];
 }
 
-static s8 generate_wave(struct audio *audio)
+static s8 generate_wave(struct audio *audio, u32 phase)
 {
     struct audio_channel *ch = &audio->ch3;
     if (!ch->enabled || ch->volume == 0)
         return 0;
 
-    // phase is 16.16 fixed point, use upper 5 bits of low 16 for sample index
-    int sample_idx = (ch->phase >> 11) & 0x1f;
+    int sample_idx = (phase >> BL_TABLE_SHIFT) & 0x1f;
     int byte_idx = sample_idx >> 1;
     int nibble = audio->wave_ram[byte_idx];
 
@@ -463,7 +432,8 @@ static s8 generate_wave(struct audio *audio)
     return (s8)((nibble - 8) >> shift);
 }
 
-static s8 generate_noise(struct audio *audio)
+// noise phase is not pre-scaled, it needs bits 16-30
+static s8 generate_noise(struct audio *audio, u32 phase)
 {
     struct audio_channel *ch = &audio->ch4;
     if (!ch->enabled || ch->volume == 0)
@@ -473,10 +443,10 @@ static s8 generate_noise(struct audio *audio)
     int pos, high;
     if (audio->lfsr_width) {
         // should be 0-126 but whatever, use & bc modulo is slow
-        pos = (audio->ch4.phase >> 16) & 0x7f;
+        pos = (phase >> 16) & 0x7f;
         high = (lfsr7_bits[pos >> 3] >> (pos & 7)) & 1;
     } else {
-        pos = (audio->ch4.phase >> 16) & 0x7fff;
+        pos = (phase >> 16) & 0x7fff;
         high = (lfsr15_bits[pos >> 3] >> (pos & 7)) & 1;
     }
 
@@ -496,23 +466,29 @@ void audio_generate(struct audio *audio, u8 *buffer, int samples)
     u8 pan = audio->panning;
     u8 audible = pan | (pan >> 4);
 
+    // keep the per-sample state in locals to avoid reloading it 11127x/sec
+    s16 master = ((audio->master_vol_left + audio->master_vol_right) >> 1) + 1;
+    u32 ph1 = audio->ch1.phase, inc1 = audio->ch1.phase_inc;
+    u32 ph2 = audio->ch2.phase, inc2 = audio->ch2.phase_inc;
+    u32 ph3 = audio->ch3.phase, inc3 = audio->ch3.phase_inc;
+    u32 ph4 = audio->ch4.phase, inc4 = audio->ch4.phase_inc;
+
     for (k = 0; k < samples; k++) {
         s16 mix = 0;
 
         if (audible & 0x01)
-            mix += generate_square(&audio->ch1 /* , duty_table[audio->ch1.duty] */);
+            mix += generate_square(&audio->ch1, ph1);
         if (audible & 0x02)
-            mix += generate_square(&audio->ch2 /* , duty_table[audio->ch1.duty] */);
+            mix += generate_square(&audio->ch2, ph2);
         if (audible & 0x04)
-            mix += generate_wave(audio);
+            mix += generate_wave(audio, ph3);
         if (audible & 0x08)
-            mix += generate_noise(audio);
+            mix += generate_noise(audio, ph4);
 
-        // advance phase accumulators
-        audio->ch1.phase += audio->ch1.phase_inc;
-        audio->ch2.phase += audio->ch2.phase_inc;
-        audio->ch3.phase += audio->ch3.phase_inc;
-        audio->ch4.phase += audio->ch4.phase_inc;
+        ph1 += inc1;
+        ph2 += inc2;
+        ph3 += inc3;
+        ph4 += inc4;
 
         // envelope tick at 64 Hz, 11127 / 64 = 174 samples
         audio->env_counter++;
@@ -528,6 +504,8 @@ void audio_generate(struct audio *audio, u8 *buffer, int samples)
         if (audio->sweep_counter >= 87) {
             audio->sweep_counter = 0;
             step_sweep(audio);
+            // sweep can retune ch1 mid-buffer
+            inc1 = audio->ch1.phase_inc;
         }
 
         // length tick at 256 Hz, 11127 / 256 = 43 samples
@@ -540,11 +518,16 @@ void audio_generate(struct audio *audio, u8 *buffer, int samples)
             step_length(&audio->ch4, 64);
         }
 
-        int master = ((audio->master_vol_left + audio->master_vol_right) >> 1) + 1;
         // >>3 would be "most correct" in terms of keeping the original scale
-        // but this scales to -106 - 104 to make it louder
-        mix = (mix * master) >> 2;
+        // but this scales to -106 - 104 to make it louder.
+        // product is at most +/-480 so a 16-bit multiply is enough
+        mix = (s16) (mix * master) >> 2;
         // direct to unsigned bc it's what sound manager wants
         buffer[k] = (u8) (mix + 128);
     }
+
+    audio->ch1.phase = ph1;
+    audio->ch2.phase = ph2;
+    audio->ch3.phase = ph3;
+    audio->ch4.phase = ph4;
 }

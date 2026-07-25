@@ -1,7 +1,5 @@
 build/
 gb6run
-make_smoke_rom
-smoke.gb
 *.dSYM
 frames_*/
 cpu_instrs/

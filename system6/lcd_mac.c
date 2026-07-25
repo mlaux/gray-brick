@@ -8,6 +8,7 @@
 #include "../src/lcd.h"
 #include "../src/dmg.h"
 #include "../src/cgb.h"
+#include "../src/prof.h"
 #include "emulator.h"
 #include "lcd_mac.h"
 #include "settings.h"
@@ -346,13 +347,18 @@ void lcd_draw_cgb(struct lcd *lcd_ptr, int all);
 void lcd_draw(struct lcd *lcd_ptr)
 {
   int video_mode = screen_depth >= 8 ? VIDEO_INDEXED : VIDEO_BW;
+
+  PROF_SET(PROF_DRAW);
+
   if (dmg.cgb && dmg.cgb->mode && screen_depth > 1) {
     lcd_draw_cgb(lcd_ptr, force_all);
     force_all = 0;
+    PROF_SET(PROF_RENDER);
     return;
   }
 
   // screen scale is 1 based, video mode is 0 based
   draw_funcs[screen_scale - 1][video_mode](lcd_ptr);
   force_all = 0;
+  PROF_SET(PROF_RENDER);
 }

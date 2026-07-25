@@ -41,16 +41,10 @@ $(BUILD)/host_%.o: %.c | $(BUILD)
 $(BUILD):
 	mkdir -p $(BUILD)
 
-make_smoke_rom: make_smoke_rom.c
-	$(CC) -Wall -Wextra -o $@ $<
-
-smoke.gb: make_smoke_rom
-	./make_smoke_rom $@
-
 -include $(ALL_OBJS:.o=.d)
 
 clean:
-	rm -rf $(BUILD) gb6run make_smoke_rom smoke.gb
+	rm -rf $(BUILD) gb6run
 
 # scoreboard: run the compat suite and diff against the committed baseline
 fetch-roms:

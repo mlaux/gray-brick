@@ -30,8 +30,7 @@ void compile_ld_sp_imm16(
         emit_move_l_dn_disp_an(block, REG_68K_D_SCRATCH_1, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
     } else if (ctx && ctx->wram_base && gb_sp >= 0xd000 && gb_sp <= 0xe000) {
         // Switchable WRAM ($D000-$DFFF): use page table for correct bank.
-        // resolve through the page of SP-1, the first byte a push writes:
-        // the stack descends, so SP itself may sit one past the region.
+        // resolve through the page of SP-1
         // SP = $e000 (top-of-WRAM stack) then resolves through page $df
         uint8_t page = (gb_sp - 1) >> 8;
         // D0 = page * 4 (index into page table)

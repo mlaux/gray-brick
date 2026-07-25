@@ -11,8 +11,10 @@
 
 struct audio_channel {
     u16 freq_reg;       // 11-bit frequency register value
-    u32 phase;          // 16.16 fixed point phase accumulator
+    u32 phase;          // phase accumulator; square/wave are pre-scaled by 32
+                        // so bits 16-20 give the 32-entry table index
     u32 phase_inc;      // phase increment per sample
+    const s8 *bl_table; // bl_square_vol row for volume/duty/band (squares)
     u8 volume;          // 4-bit volume (0-15)
     u8 duty;            // duty cycle (0-3)
     u8 band;            // bandlimit table index (0-3)

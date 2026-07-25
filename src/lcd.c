@@ -181,24 +181,26 @@ void lcd_diff_rows(struct lcd *lcd, int cgb)
     }
 
     for (y = 0; y < 144; y++) {
-        const u16 *row = (const u16 *) (lcd->pixels + y * 42);
-        u16 *prev = (u16 *) (prev_pixels + y * 42);
+        // rows are 2-byte aligned, which is fine for long access on 68k
+        const u32 *row = (const u32 *) (lcd->pixels + y * 42);
+        u32 *prev = (u32 *) (prev_pixels + y * 42);
         u8 dirty = 0;
         int k;
 
-        for (k = 0; k < 21; k++) {
-            if (row[k] != prev[k]) {
-                dirty = ROW_DIRTY_CONTENT;
-                memcpy(prev, row, 42);
+        for (k = 0; k < 10; k++) {
+            if (row[k] != prev[k])
                 break;
-            }
+        }
+        if (k < 10 || ((const u16 *) row)[20] != ((const u16 *) prev)[20]) {
+            dirty = ROW_DIRTY_CONTENT;
+            memcpy(prev, row, 42);
         }
         if (cgb) {
-            const u16 *arow = (const u16 *) (lcd->attrs + y * 168);
-            u16 *aprev = (u16 *) (prev_attrs + y * 168);
+            const u32 *arow = (const u32 *) (lcd->attrs + y * 168);
+            u32 *aprev = (u32 *) (prev_attrs + y * 168);
 
             if (!dirty) {
-                for (k = 0; k < 84; k++) {
+                for (k = 0; k < 42; k++) {
                     if (arow[k] != aprev[k]) {
                         dirty = ROW_DIRTY_CONTENT;
                         break;
@@ -217,16 +219,6 @@ void lcd_diff_rows(struct lcd *lcd, int cgb)
         dirty_all |= dirty;
     }
     lcd->frame_dirty = dirty_all;
-}
-
-// render 8 aligned pixels (full tile row) to packed output
-// writes 2 bytes: pixels 0-3 and pixels 4-7
-static inline void render_tile_row_packed(u8 *p, u8 data1, u8 data2)
-{
-    int idx_hi = (data1 & 0xf0) | (data2 >> 4);
-    int idx_lo = ((data1 & 0x0f) << 4) | (data2 & 0x0f);
-    p[0] = tile_decode_packed[idx_hi];
-    p[1] = tile_decode_packed[idx_lo];
 }
 
 // helper to extract single pixel from packed byte (pixel 0 is bits 7-6)
@@ -294,6 +286,116 @@ static inline void render_partial_opacity(
     }
 }
 
+// C version for host/gb6run
+#ifndef BG_TILES_IN_ASM
+void lcd_render_bg_tiles(
+    const u8 *map_row,
+    const u8 *tile_base,
+    const u8 *lut,
+    u8 *row,
+    u8 *opac,
+    int tile_col,
+    int count,
+    int unsigned_mode)
+{
+    int tile;
+
+    for (tile = 0; tile < count; tile++) {
+        int tile_idx = map_row[tile_col];
+        int tile_off = unsigned_mode
+            ? 16 * tile_idx
+            : 16 * (signed char) tile_idx;
+
+        u8 data1 = tile_base[tile_off];
+        u8 data2 = tile_base[tile_off + 1];
+
+        int idx_hi = (data1 & 0xf0) | (data2 >> 4);
+        int idx_lo = ((data1 & 0x0f) << 4) | (data2 & 0x0f);
+        row[0] = lut[idx_hi];
+        row[1] = lut[idx_lo];
+        row += 2;
+
+        *opac++ = data1 | data2;
+        tile_col = (tile_col + 1) & 31;
+    }
+}
+#endif
+
+// window overlay slow path: the window starts mid-line, so its tiles
+// land misaligned in the buffer and shift-merge across byte boundaries
+static void render_window_line(
+    u8 *vram,
+    u8 *row,
+    u8 *opac,
+    int win_map_off,
+    int tile_base_off,
+    int unsigned_mode,
+    int win_y,
+    int win_start,
+    int win_end)
+{
+    int win_tile_row = win_y >> 3;
+    int win_row_in_tile = win_y & 7;
+    int win_x = 0;
+
+    while (win_start < win_end) {
+        int tile_col = (win_x >> 3) & 31;
+        int pixel_in_tile = win_x & 7;
+        int tile_idx = vram[win_map_off + win_tile_row * 32 + tile_col];
+        int tile_off = unsigned_mode
+            ? tile_base_off + 16 * tile_idx
+            : tile_base_off + 16 * (signed char) tile_idx;
+
+        u8 data1 = vram[tile_off + win_row_in_tile * 2];
+        u8 data2 = vram[tile_off + win_row_in_tile * 2 + 1];
+
+        if (pixel_in_tile == 0 && win_start + 8 <= win_end) {
+            // full tile - decode with LUT then write (possibly misaligned)
+            int idx_hi = (data1 & 0xf0) | (data2 >> 4);
+            int idx_lo = ((data1 & 0x0f) << 4) | (data2 & 0x0f);
+            u8 tile0 = tile_decode_packed[idx_hi];
+            u8 tile1 = tile_decode_packed[idx_lo];
+
+            int byte_idx = win_start >> 2;
+            int off = win_start & 3;
+
+            if (off == 0) {
+                // aligned: direct write
+                row[byte_idx] = tile0;
+                row[byte_idx + 1] = tile1;
+            } else {
+                // misaligned: shift and merge across 3 bytes
+                int shift = off * 2;
+                row[byte_idx] = (row[byte_idx] & (0xff << (8 - shift))) | (tile0 >> shift);
+                row[byte_idx + 1] = (tile0 << (8 - shift)) | (tile1 >> shift);
+                row[byte_idx + 2] = (row[byte_idx + 2] & (0xff >> shift)) | (tile1 << (8 - shift));
+            }
+
+            // window replaces bg opacity across two bytes
+            int oi = win_start >> 3;
+            int os = win_start & 7;
+            int ow = (data1 | data2) << (8 - os);
+            int om = 0xff00 >> os;
+
+            opac[oi] = (opac[oi] & ~(om >> 8)) | (ow >> 8);
+            opac[oi + 1] = (opac[oi + 1] & ~om) | ow;
+
+            win_start += 8;
+            win_x += 8;
+        } else {
+            // partial tile (start or end of window, or mid-tile start)
+            int pixels_to_draw = 8 - pixel_in_tile;
+            if (win_start + pixels_to_draw > win_end) {
+                pixels_to_draw = win_end - win_start;
+            }
+            render_partial_start(row, data1, data2, pixel_in_tile, pixels_to_draw, win_start);
+            render_partial_opacity(opac, data1 | data2, pixel_in_tile, pixels_to_draw, win_start);
+            win_start += pixels_to_draw;
+            win_x += pixels_to_draw;
+        }
+    }
+}
+
 // render scanlines [sy_start, sy_end) of the background and window from
 // one register state
 void lcd_render_band(
@@ -341,119 +443,63 @@ void lcd_render_band(
 
     // before window: render all 21 BG tiles, no window overlay
     for (sy = sy_start; sy < sy_limit; sy++) {
-        u8 *row = out + sy * 42;
-        u8 *opac = bg_opacity + sy * 21;
         int bg_y = (sy + scy) & 0xff;
-        int tile_row = bg_y >> 3;
-        int row_in_tile = bg_y & 7;
-        int bg_x = scx & ~7;
 
-        int tile;
-        for (tile = 0; tile < 21; tile++) {
-            int tile_col = (bg_x >> 3) & 31;
-            int tile_idx = vram[bg_map_off + tile_row * 32 + tile_col];
-            int tile_off = unsigned_mode
-                ? tile_base_off + 16 * tile_idx
-                : tile_base_off + 16 * (signed char) tile_idx;
-
-            u8 data1 = vram[tile_off + row_in_tile * 2];
-            u8 data2 = vram[tile_off + row_in_tile * 2 + 1];
-
-            render_tile_row_packed(row + tile * 2, data1, data2);
-            opac[tile] = data1 | data2;
-            bg_x = (bg_x + 8) & 0xff;
-        }
+        lcd_render_bg_tiles(
+            vram + bg_map_off + (bg_y >> 3) * 32,
+            vram + tile_base_off + (bg_y & 7) * 2,
+            tile_decode_packed,
+            out + sy * 42,
+            bg_opacity + sy * 21,
+            (scx >> 3) & 31,
+            21,
+            unsigned_mode);
     }
 
-    // lines with window: render only visible BG tiles, then window overlay
+    // lines with window
     for (sy = sy_limit; sy < sy_end; sy++) {
         u8 *row = out + sy * 42;
         u8 *opac = bg_opacity + sy * 21;
-        int bg_y = (sy + scy) & 0xff;
-        int tile_row = bg_y >> 3;
-        int row_in_tile = bg_y & 7;
-        int bg_x = scx & ~7;
-
-        int tile;
-        for (tile = 0; tile < bg_tile_limit; tile++) {
-            int tile_col = (bg_x >> 3) & 31;
-            int tile_idx = vram[bg_map_off + tile_row * 32 + tile_col];
-            int tile_off = unsigned_mode
-                ? tile_base_off + 16 * tile_idx
-                : tile_base_off + 16 * (signed char) tile_idx;
-
-            u8 data1 = vram[tile_off + row_in_tile * 2];
-            u8 data2 = vram[tile_off + row_in_tile * 2 + 1];
-
-            render_tile_row_packed(row + tile * 2, data1, data2);
-            opac[tile] = data1 | data2;
-            bg_x = (bg_x + 8) & 0xff;
-        }
-
-        // Window overlay
         int win_y = dmg->lcd->window_line++;
-        int win_tile_row = win_y >> 3;
-        int win_row_in_tile = win_y & 7;
-        int win_start = (wx > 0 ? wx : 0) + scx_offset;
-        int win_end = 160 + scx_offset;
-        int win_x = wx < 0 ? -wx : 0;
 
-        while (win_start < win_end) {
-            int tile_col = (win_x >> 3) & 31;
-            int pixel_in_tile = win_x & 7;
-            int tile_idx = vram[win_map_off + win_tile_row * 32 + tile_col];
-            int tile_off = unsigned_mode
-                ? tile_base_off + 16 * tile_idx
-                : tile_base_off + 16 * (signed char) tile_idx;
-
-            u8 data1 = vram[tile_off + win_row_in_tile * 2];
-            u8 data2 = vram[tile_off + win_row_in_tile * 2 + 1];
-
-            if (pixel_in_tile == 0 && win_start + 8 <= win_end) {
-                // full tile - decode with LUT then write (possibly misaligned)
-                int idx_hi = (data1 & 0xf0) | (data2 >> 4);
-                int idx_lo = ((data1 & 0x0f) << 4) | (data2 & 0x0f);
-                u8 tile0 = tile_decode_packed[idx_hi];
-                u8 tile1 = tile_decode_packed[idx_lo];
-
-                int byte_idx = win_start >> 2;
-                int off = win_start & 3;
-
-                if (off == 0) {
-                    // aligned: direct write
-                    row[byte_idx] = tile0;
-                    row[byte_idx + 1] = tile1;
-                } else {
-                    // misaligned: shift and merge across 3 bytes
-                    int shift = off * 2;
-                    row[byte_idx] = (row[byte_idx] & (0xff << (8 - shift))) | (tile0 >> shift);
-                    row[byte_idx + 1] = (tile0 << (8 - shift)) | (tile1 >> shift);
-                    row[byte_idx + 2] = (row[byte_idx + 2] & (0xff >> shift)) | (tile1 << (8 - shift));
-                }
-
-                // window replaces bg opacity across two bytes
-                int oi = win_start >> 3;
-                int os = win_start & 7;
-                int ow = (data1 | data2) << (8 - os);
-                int om = 0xff00 >> os;
-
-                opac[oi] = (opac[oi] & ~(om >> 8)) | (ow >> 8);
-                opac[oi + 1] = (opac[oi + 1] & ~om) | ow;
-
-                win_start += 8;
-                win_x += 8;
-            } else {
-                // partial tile (start or end of window, or mid-tile start)
-                int pixels_to_draw = 8 - pixel_in_tile;
-                if (win_start + pixels_to_draw > win_end) {
-                    pixels_to_draw = win_end - win_start;
-                }
-                render_partial_start(row, data1, data2, pixel_in_tile, pixels_to_draw, win_start);
-                render_partial_opacity(opac, data1 | data2, pixel_in_tile, pixels_to_draw, win_start);
-                win_start += pixels_to_draw;
-                win_x += pixels_to_draw;
-            }
+        if (wx <= 0) {
+            // window covers the whole line and ignores scx
+            // render its tiles aligned and row_scx places it
+            dmg->lcd->row_scx[sy] = -wx;
+            lcd_render_bg_tiles(
+                vram + win_map_off + (win_y >> 3) * 32,
+                vram + tile_base_off + (win_y & 7) * 2,
+                tile_decode_packed,
+                row,
+                opac,
+                0,
+                21,
+                unsigned_mode);
+            continue;
         }
+
+        int bg_y = (sy + scy) & 0xff;
+
+        lcd_render_bg_tiles(
+            vram + bg_map_off + (bg_y >> 3) * 32,
+            vram + tile_base_off + (bg_y & 7) * 2,
+            tile_decode_packed,
+            row,
+            opac,
+            (scx >> 3) & 31,
+            bg_tile_limit,
+            unsigned_mode);
+
+        render_window_line(
+            vram,
+            row,
+            opac,
+            win_map_off,
+            tile_base_off,
+            unsigned_mode,
+            win_y,
+            wx + scx_offset,
+            160 + scx_offset);
     }
 }
 
@@ -504,6 +550,61 @@ void lcd_select_objs(
     }
 }
 
+// mask of bg-transparent pixels under a sprite row, pixel 0 in the msb
+static int obj_behind_mask(int row_y, int pos0)
+{
+    const u8 *ob = bg_opacity + row_y * 21;
+    int oidx = pos0 >> 3;
+    int osh = pos0 & 7;
+    int bg = ob[oidx + 1];
+
+    if (oidx >= 0) {
+        bg |= ob[oidx] << 8;
+    }
+    return ~(bg >> (8 - osh));
+}
+
+// decode one sprite row and merge its masked pixels into the buffer
+// 16 packed color bits and the expanded mask across at most 3 bytes
+static void obj_merge_row(
+    u8 *row,
+    const u8 *lut,
+    u8 data1,
+    u8 data2,
+    int mask8,
+    int pos)
+{
+    int idx_hi = (data1 & 0xf0) | (data2 >> 4);
+    int idx_lo = ((data1 & 0x0f) << 4) | (data2 & 0x0f);
+    u32 bits = (lut[idx_hi] << 8) | lut[idx_lo];
+    u32 mask = mask_expand[mask8];
+
+    if (pos < 0) {
+        bits <<= -pos * 2;
+        mask <<= -pos * 2;
+        pos = 0;
+    }
+
+    u8 *p = row + (pos >> 2);
+    int sh = 8 - (pos & 3) * 2;
+    u32 wbits = bits << sh;
+    u32 wmask = mask << sh;
+    u8 m;
+
+    m = (u8) (wmask >> 16);
+    if (m) {
+        p[0] = (p[0] & ~m) | ((u8) (wbits >> 16) & m);
+    }
+    m = (u8) (wmask >> 8);
+    if (m) {
+        p[1] = (p[1] & ~m) | ((u8) (wbits >> 8) & m);
+    }
+    m = (u8) wmask;
+    if (m) {
+        p[2] = (p[2] & ~m) | ((u8) wbits & m);
+    }
+}
+
 // render sprites with rows in [sy_start, sy_end) from one register state
 void lcd_render_objs_band(
     struct dmg *dmg,
@@ -517,8 +618,8 @@ void lcd_render_objs_band(
     u8 *vram = dmg->video_ram;
     u8 *pixels = dmg->lcd->pixels;
 
-    // sprites are rendered at screen position + scx offset within the wider buffer
-    int scx_offset = regs->scx & 7;
+    // sprites render at screen position + each row's buffer alignment
+    const u8 *row_scx = dmg->lcd->row_scx;
 
     u16 sel[40];
     u8 order[40];
@@ -571,10 +672,6 @@ void lcd_render_objs_band(
             clip &= (0xff << (lcd_x - 152)) & 0xff;
         }
 
-        int pos0 = lcd_x + scx_offset;
-        int oidx = pos0 >> 3;
-        int osh = pos0 & 7;
-
         int b;
         for (b = 0; b < tile_bytes; b += 2) {
             int row_y = lcd_y + (b >> 1);
@@ -591,52 +688,18 @@ void lcd_render_objs_band(
                 data2 = hflip_lut[data2];
             }
 
+            // full-line window rows at the window offset, everything else at scx & 7
+            int pos0 = lcd_x + row_scx[row_y];
+
             int mask8 = (data1 | data2) & clip;
             if (behind) {
-                const u8 *ob = bg_opacity + row_y * 21;
-                int bg = ob[oidx + 1];
-
-                if (oidx >= 0) {
-                    bg |= ob[oidx] << 8;
-                }
-                mask8 &= ~(bg >> (8 - osh));
+                mask8 &= obj_behind_mask(row_y, pos0);
             }
             if (!mask8) {
                 continue;
             }
 
-            // whole row at once: 16 packed color bits and the opacity
-            // mask, merged into at most 3 buffer bytes
-            int idx_hi = (data1 & 0xf0) | (data2 >> 4);
-            int idx_lo = ((data1 & 0x0f) << 4) | (data2 & 0x0f);
-            u32 bits = (lut[idx_hi] << 8) | lut[idx_lo];
-            u32 mask = mask_expand[mask8];
-
-            int pos = pos0;
-            if (pos < 0) {
-                bits <<= -pos * 2;
-                mask <<= -pos * 2;
-                pos = 0;
-            }
-
-            u8 *p = pixels + row_y * 42 + (pos >> 2);
-            int sh = 8 - (pos & 3) * 2;
-            u32 wbits = bits << sh;
-            u32 wmask = mask << sh;
-            u8 m;
-
-            m = (u8) (wmask >> 16);
-            if (m) {
-                p[0] = (p[0] & ~m) | ((u8) (wbits >> 16) & m);
-            }
-            m = (u8) (wmask >> 8);
-            if (m) {
-                p[1] = (p[1] & ~m) | ((u8) (wbits >> 8) & m);
-            }
-            m = (u8) wmask;
-            if (m) {
-                p[2] = (p[2] & ~m) | ((u8) wbits & m);
-            }
+            obj_merge_row(pixels + row_y * 42, lut, data1, data2, mask8, pos0);
         }
     }
 }

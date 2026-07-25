@@ -42,6 +42,7 @@
 #include "audio_mac.h"
 #include "palette_menu.h"
 #include "gb_palettes.h"
+#include "../src/prof.h"
 
 #include "compiler.h"
 
@@ -277,6 +278,9 @@ void StopEmulation(void)
 
   SaveGame();
   RemoveVBL();
+#ifdef GB6_PROFILING
+  prof_remove();
+#endif
   audio_mac_shutdown();
   jit_cleanup();
 
@@ -371,6 +375,10 @@ void StartEmulation(void)
   if (limit_fps) {
     InstallVBL();
   }
+
+#ifdef GB6_PROFILING
+  prof_install();
+#endif
 
   UpdateMenuItems();
 }
