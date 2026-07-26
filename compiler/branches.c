@@ -60,7 +60,7 @@ int compile_jr(
         // Exit to dispatcher with target PC
         emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
         emit_move_w_dn(block, REG_68K_D_NEXT_PC, target_gb_pc);
-        emit_patchable_exit(block);
+        emit_block_exit(block, target_gb_pc);
 
         // Native branch (cycles < scanline boundary)
         // Recompute displacement since block->length changed
@@ -75,7 +75,7 @@ int compile_jr(
     flush_cycles(block);
     emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
     emit_move_w_dn(block, REG_68K_D_NEXT_PC, target_gb_pc);
-    emit_patchable_exit(block);
+    emit_block_exit(block, target_gb_pc);
     return 1;
 }
 
@@ -173,7 +173,7 @@ void compile_jr_cond(
         // Exit to dispatcher (cycles >= exit budget)
         emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
         emit_move_w_dn(block, REG_68K_D_NEXT_PC, target_gb_pc);
-        emit_patchable_exit(block);
+        emit_block_exit(block, target_gb_pc);
 
         // .fall_through: block continues deferring
         patch_branch_b(block, fall);
@@ -196,7 +196,7 @@ void compile_jr_cond(
     emit_add_cycles(block, pending_cycles + 4);  // pending + taken extra
     emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
     emit_move_w_dn(block, REG_68K_D_NEXT_PC, target_gb_pc);
-    emit_patchable_exit(block);
+    emit_block_exit(block, target_gb_pc);
 
     patch_branch_b(block, skip);
 }
@@ -232,7 +232,7 @@ void compile_jp_cond(
     emit_add_cycles(block, pending_cycles + 4);  // pending + taken extra
     emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
     emit_move_w_dn(block, REG_68K_D_NEXT_PC, target);
-    emit_patchable_exit(block);
+    emit_block_exit(block, target);
 
     patch_branch_b(block, skip);
 }
@@ -253,7 +253,7 @@ void compile_call_imm16(
     // jump to target
     emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
     emit_move_w_dn(block, REG_68K_D_NEXT_PC, target);
-    emit_patchable_exit(block);
+    emit_block_exit(block, target);
 }
 
 // Compile conditional call (call nz, call z, call nc, call c)
@@ -293,7 +293,7 @@ void compile_call_cond(
     // Jump to target
     emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
     emit_move_w_dn(block, REG_68K_D_NEXT_PC, target);
-    emit_patchable_exit(block);
+    emit_block_exit(block, target);
     pending_cycles = saved;
 
     patch_branch_w(block, skip);
@@ -341,5 +341,5 @@ void compile_rst_n(struct code_block *block, uint8_t target, uint16_t ret_addr)
 
     // jump to target (0x00, 0x08, 0x10, 0x18, 0x20, 0x28, 0x30, 0x38)
     emit_moveq_dn(block, REG_68K_D_NEXT_PC, target);
-    emit_patchable_exit(block);
+    emit_block_exit(block, target);
 }

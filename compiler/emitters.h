@@ -55,6 +55,7 @@ void emit_or_l_dn_dn(struct code_block *block, uint8_t src, uint8_t dest);
 void emit_rts(struct code_block *block);
 void emit_dispatch_jump(struct code_block *block);
 void emit_patchable_exit(struct code_block *block);
+void emit_block_exit(struct code_block *block, uint16_t target_gb_pc);
 void emit_bra_b(struct code_block *block, int8_t disp);
 void emit_bra_w(struct code_block *block, int16_t disp);
 void emit_beq_b(struct code_block *block, int8_t disp);

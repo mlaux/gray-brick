@@ -1332,3 +1332,13 @@ void emit_patchable_exit(struct code_block *block)
     // rts (2 bytes)
     emit_rts(block);
 }
+
+// allows skipping patch helper for areas that it will never patch
+void emit_block_exit(struct code_block *block, uint16_t target_gb_pc)
+{
+    if (target_gb_pc >= 0x8000) {
+        emit_dispatch_jump(block);
+    } else {
+        emit_patchable_exit(block);
+    }
+}
