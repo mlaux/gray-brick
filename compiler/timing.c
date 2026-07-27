@@ -16,8 +16,6 @@
 static void emit_wake_skip(struct code_block *block, int next_pc)
 {
 #ifdef GB6_PROFILING
-    // D2 is still the live countdown here, so it is exactly what the
-    // fast-forward is about to skip
     emit_add_l_dn_disp_an(block, REG_68K_D_CYCLE_COUNT, JIT_CTX_SKIPPED,
             REG_68K_A_CTX);
 #endif
@@ -48,8 +46,6 @@ static void emit_ly_wait_clamp(struct code_block *block, uint16_t loop_pc)
     emit_bcc_s(block, 0);
 
 #ifdef GB6_PROFILING
-    // the caller loaded the wait distance over D2, so the skipped amount
-    // is gone here - count the events so the shortfall in SKIPPED is visible
     emit_addq_l_disp_an(block, 1, JIT_CTX_LY_SKIPS, REG_68K_A_CTX);
 #endif
     emit_moveq_dn(block, REG_68K_D_CYCLE_COUNT, 0);
@@ -144,15 +140,14 @@ void compile_ly_wait(
         size_t inside = block->length;
         emit_bcs_b(block, 0);
 
-        // past line N: everything up to its next occurrence is
-        // deadline-paced, the re-entered loop closes the gap
+        // past line N
         emit_wake_skip(block, loop_pc);
 
-        // on line N right now: the loop exits on this pass
+        // on line N right now, the loop exits on this pass
         patch_branch_b(block, inside);
         emit_ly_exit_now(block, target_ly, 0, 0x04, exit_cycles, next_pc);
 
-        // before line N: wait for its start
+        // before line N, wait for its start
         patch_branch_b(block, below);
         emit_move_l_dn(block, REG_68K_D_CYCLE_COUNT, lo);
         emit_sub_l_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_CYCLE_COUNT);
@@ -168,14 +163,14 @@ void compile_ly_wait(
         size_t above = block->length;
         emit_bcc_s(block, 0);
 
-        // on line N: wait for the next line (N=153 wraps at the frame end)
+        // on line N, wait for the next line (N=153 wraps at the frame end)
         emit_move_l_dn(block, REG_68K_D_CYCLE_COUNT, hi);
         emit_sub_l_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_CYCLE_COUNT);
         emit_ly_wait_clamp(block, loop_pc);
         emit_ly_wait_done(block, (target_ly + 1) % 154,
                 target_ly == 153 ? 0x01 : 0x00, next_pc);
 
-        // not on line N: the loop exits on this pass, A = actual LY
+        // not on line N, the loop exits on this pass, A = actual LY
         patch_branch_b(block, below);
         emit_ly_exit_now(block, -1, REG_68K_D_SCRATCH_0, 0x01,
                 exit_cycles, next_pc);
@@ -189,13 +184,13 @@ void compile_ly_wait(
         size_t reached = block->length;
         emit_bcc_s(block, 0);
 
-        // before line N: wait for its start
+        // before line N, wait for its start
         emit_move_l_dn(block, REG_68K_D_CYCLE_COUNT, lo);
         emit_sub_l_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_CYCLE_COUNT);
         emit_ly_wait_clamp(block, loop_pc);
         emit_ly_wait_done(block, target_ly, 0x04, next_pc);
 
-        // at or past line N: the loop exits on this pass
+        // at or past line N, the loop exits on this pass
         patch_branch_b(block, reached);
         emit_cmpi_l_imm_dn(block, hi, REG_68K_D_SCRATCH_0);
         size_t exactly = block->length;
@@ -383,10 +378,8 @@ void compile_ly_wait_reg(
     }
 }
 
-// synthesize a counted busy-wait: dec a/b; jr nz, -3 with an empty body
-// (the classic OAM DMA delay). charges the whole loop's cycles at once,
-// clamped to wake_limit; a clamped exit resumes at the dec so the loop
-// re-fuses next dispatch with the remaining count
+// dec a/b; jr nz, -3 with an empty body (the classic OAM DMA delay)
+// -> exit with correct cycles spent
 void compile_delay_loop(
     struct code_block *block,
     uint8_t dec_op,

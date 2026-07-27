@@ -42,9 +42,6 @@ typedef struct {
 extern jit_context jit_ctx;
 extern int jit_halted;
 
-// read_cycles stashes the block's countdown (D2) at each C call; the
-// in-flight executed cycles are its distance from wake_limit. Both are
-// adjusted in tandem by dmg_budget_touch, keeping this difference valid
 static inline u32 jit_in_flight(void)
 {
     return jit_ctx.wake_limit - jit_ctx.read_cycles;

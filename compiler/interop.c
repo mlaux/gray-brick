@@ -2,10 +2,9 @@
 #include "emitters.h"
 #include "interop.h"
 
-// Retro68 uses D0-D2 as scratch, so the cycle countdown is stashed in
-// jit_ctx.read_cycles across C calls and reloaded after. The C side
-// doubles as a reader (lazy DIV/LY need the exact clock) and a writer
-// (budget_touch shrinks it in tandem with wake_limit).
+// Retro68 uses D0-D2 as scratch so I have to push cycle count before calling
+// back into C. i'm not sure if this is a mac calling convention or specific
+// to this gcc port.
 // also interestingly, it doesn't appear to use the "A5 world" or A6, so i can
 // use those registers while in the JIT world. calling back into C won't mess
 // them up

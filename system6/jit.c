@@ -32,8 +32,6 @@ static u32 call_count = 0;
 static u32 last_report_tick = 0;
 
 #ifdef GB6_PROFILING
-// counted, not sampled: the slow-path memory accesses compiled code made,
-// reported per emulated frame. the inline fast paths absorb everything else
 static u32 prof_interop;
 
 static u8 prof_read(void *dmg, u16 address)
@@ -324,8 +322,6 @@ static void update_profiling_status_bar(u32 frames_now)
   u32 frames_delta;
   u32 fps;
 
-  // dispatches outnumber frames by thousands to one, so a report every
-  // 100 of them lands inside the same tick and averages nothing
   if (elapsed < 30 || last_report_tick == 0) {
     if (last_report_tick == 0) {
       last_report_tick = now;
@@ -341,9 +337,6 @@ static void update_profiling_status_bar(u32 frames_now)
 
 #ifdef GB6_PROFILING
   {
-    // the 1 khz sampler's counts are already milliseconds. everything is
-    // reported per emulated frame: percentages move whenever another phase
-    // moves, which makes them useless for comparing two scenes
     static u32 last_counts[PROF_NUM_PHASES];
     u32 d[PROF_NUM_PHASES];
     u32 total = 0;
@@ -366,8 +359,7 @@ static void update_profiling_status_bar(u32 frames_now)
     mem = prof_interop / frames_delta;
     prof_interop = 0;
 
-    // GB cycles the fast-forwards skipped outright. reads high in CGB
-    // double speed, where the countdown is in CPU cycles
+    // GB cycles the fast-forwards skipped
     skip = jit_ctx.skipped_cycles / frames_delta;
     ly = jit_ctx.ly_clamp_skips / frames_delta;
     jit_ctx.skipped_cycles = 0;
@@ -375,19 +367,14 @@ static void update_profiling_status_bar(u32 frames_now)
 
     exec = skip < CYCLES_PER_FRAME ? CYCLES_PER_FRAME - skip : 0;
 
-    // N: jit ms per frame's worth of GB code that actually ran. J and K
-    // both move with the scene, this does not - A/B codegen against it
+    // N: jit ms per frame's worth of GB code that actually ran
     norm = exec ? jit_ms * CYCLES_PER_FRAME / exec : 0;
     skip = skip * 100 / CYCLES_PER_FRAME;
 
     if (total > 0) {
-      // sync/other/compile are dropped: the remainder is 1000/fps - J - R - B,
-      // and the compile phase overwrites the status bar with its own text
       sprintf(buf, "%lu FPS N%lu J%lu R%lu B%lu M%lu K%lu",
           fps, norm, jit_ms, render_ms, draw_ms, mem, skip);
 
-      // L only appears when it has something to say: a nonzero count means
-      // the LY clamp skipped cycles that K could not account for
       if (ly) {
         sprintf(buf + strlen(buf), " L%lu", ly);
       }

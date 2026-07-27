@@ -2,8 +2,6 @@
 #define _PROF_H
 
 // no-ops unless GB6_PROFILING is defined.
-// audio has no phase: it generates at interrupt time, so its cost is
-// baked into whichever phase it preempts
 
 enum {
     PROF_OTHER,     // event handling, pacing, dispatch overhead

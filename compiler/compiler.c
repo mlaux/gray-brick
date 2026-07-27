@@ -108,7 +108,7 @@ static void compile_ldh_a_u8(
     uint8_t addr
 ) {
     if (addr >= 0x80) {
-        // HRAM (and the IE mirror at $ffff, which dmg_write keeps current)
+        // HRAM
         if (ctx && ctx->hram_base) {
             emit_move_b_abs32_dn(block,
                     (uint32_t) (uintptr_t) ctx->hram_base + (addr - 0x80),
@@ -132,8 +132,6 @@ static void compile_ldh_u8_a(
     struct compile_ctx *ctx,
     uint8_t addr
 ) {
-    // $ffff is IE: the write must reach dmg_write for the zero_page
-    // mirror and the deadline-gating budget_touch
     if (addr >= 0x80 && addr != 0xff) {
         if (ctx && ctx->hram_base) {
             emit_move_b_dn_abs32(block, REG_68K_D_A,
@@ -743,8 +741,6 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
                 uint16_t addr = READ_BYTE(src_ptr) | (READ_BYTE(src_ptr + 1) << 8);
                 src_ptr += 2;
                 if (addr >= 0xff80 && addr != 0xffff && ctx->hram_base) {
-                    // same direct zero_page store the ldh fast path does;
-                    // $ffff (IE) must go through dmg_write
                     emit_move_b_dn_abs32(block, REG_68K_D_A,
                             (uint32_t) (uintptr_t) ctx->hram_base + (addr - 0xff80));
                 } else {
@@ -757,8 +753,7 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
         case 0xfa: // ld a, (u16)
             {
                 uint16_t addr = READ_BYTE(src_ptr) | (READ_BYTE(src_ptr + 1) << 8);
-                // banked reads only fold from banked blocks (cached per bank);
-                // fixed/upper blocks run under any bank, so read at runtime
+                // banked reads only fold from banked blocks
                 int fold = addr < 0x4000
                         || (addr < 0x8000 && src_address >= 0x4000
                             && src_address < 0x8000);
