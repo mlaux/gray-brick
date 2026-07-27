@@ -235,8 +235,7 @@ void compile_get_gb_reg_d0(struct code_block *block, int gb_reg)
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_0);
         break;
     case GB_REG_HL:
-        emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
-        compile_call_dmg_read(block);
+        compile_call_dmg_read_hl(block);
         break;
     default:
         printf("invalid register for compile_get_gb_reg_d0\n");

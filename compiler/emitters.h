@@ -87,6 +87,7 @@ void emit_push_l_disp_an(struct code_block *block, int16_t disp, uint8_t areg);
 void emit_movea_l_ind_an_an(struct code_block *block, uint8_t src_areg, uint8_t dest_areg);
 void emit_movea_l_disp_an_an(struct code_block *block, int16_t disp, uint8_t src_areg, uint8_t dest_areg);
 void emit_jsr_ind_an(struct code_block *block, uint8_t areg);
+void emit_jsr_abs_l(struct code_block *block, uint32_t addr);
 void emit_addq_l_an(struct code_block *block, uint8_t areg, uint8_t val);
 void emit_movem_l_to_predec(struct code_block *block, uint16_t mask);
 void emit_movem_l_from_postinc(struct code_block *block, uint16_t mask);

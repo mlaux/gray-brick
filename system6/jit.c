@@ -8,6 +8,7 @@
 #include "types.h"
 #include "jit.h"
 #include "compiler.h"
+#include "interop.h"
 #include "dmg.h"
 #include "cgb.h"
 #include "cache.h"
@@ -109,6 +110,28 @@ static void enter_asm_world(void *code)
   );
 }
 
+// emit the shared memory-access helpers as the first arena allocation
+static int jit_emit_helpers(void)
+{
+  const struct code_block *blk;
+  void *region = arena_alloc(JIT_HELPERS_SIZE + 15);
+  u32 base;
+
+  if (!region) {
+    return 0;
+  }
+  base = ((u32) region + 15) & ~15ul;
+  blk = compile_emit_helpers(base, compile_ctx.hram_base);
+  if (!blk) {
+    return 0;
+  }
+  memcpy((void *) base, blk->code, blk->length);
+  if (TrapAvailable(_CacheFlush)) {
+    FlushCodeCache();
+  }
+  return 1;
+}
+
 // Sync jit_ctx cache pointers from lru.c, need to do this when the arena
 // is cleared and the cache is reinitialized with new arrays
 static void sync_cache_pointers(void)
@@ -148,6 +171,19 @@ void jit_init(struct dmg *dmg)
     return;
   }
 
+  compile_ctx.dmg = dmg;
+  compile_ctx.read = dmg_read;
+  compile_ctx.cache_store = cache_store;
+  compile_ctx.alloc = arena_alloc;
+  compile_ctx.wram_base = dmg->main_ram;
+  compile_ctx.hram_base = dmg->zero_page;
+
+  if (!jit_emit_helpers()) {
+    set_status_bar("Helper emit fail");
+    jit_halted = 1;
+    return;
+  }
+
   // pre-allocate cache arrays so dispatcher never sees NULL
   if (!cache_init()) {
     set_status_bar("Cache alloc fail");
@@ -159,13 +195,6 @@ void jit_init(struct dmg *dmg)
 
   // Set initial A register for CGB mode ($11) vs DMG mode ($01)
   jit_regs.d4 = (dmg->cgb && dmg->cgb->mode) ? 0x11 : 0x01;
-
-  compile_ctx.dmg = dmg;
-  compile_ctx.read = dmg_read;
-  compile_ctx.cache_store = cache_store;
-  compile_ctx.alloc = arena_alloc;
-  compile_ctx.wram_base = dmg->main_ram;
-  compile_ctx.hram_base = dmg->zero_page;
 
   jit_ctx.dmg = dmg;
 #ifdef GB6_PROFILING
@@ -219,6 +248,11 @@ int jit_clear_all_blocks(void)
   int k;
 
   arena_reset();
+  if (!jit_emit_helpers()) {
+    set_status_bar("Helper emit fail");
+    jit_halted = 1;
+    return 0;
+  }
   if (!cache_init()) {
     set_status_bar("Cache alloc fail");
     jit_halted = 1;

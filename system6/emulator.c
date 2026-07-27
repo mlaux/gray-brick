@@ -164,9 +164,6 @@ void InitToolbox(void)
 
   MaxApplZone();
 
-  // enable keyUp events (not delivered by default)
-  SetEventMask(everyEvent);
-
   mbar = GetNewMBar(MBAR_DEFAULT);
   SetMenuBar(mbar);
   apple = GetMenuHandle(MENU_APPLE);
@@ -755,7 +752,7 @@ static int ProcessEvents(void)
 {
   EventRecord evt;
 
-  while (GetNextEvent(everyEvent, &evt)) {
+  while (GetNextEvent(everyEvent - autoKeyMask, &evt)) {
     switch (evt.what) {
       case mouseDown:
         OnMouseDown(&evt);
@@ -768,7 +765,7 @@ static int ProcessEvents(void)
         }
         break;
       case keyDown:
-      case autoKey:
+        // game input comes from PollGameInput, only shortcuts here
         if (evt.modifiers & cmdKey) {
           char ch = evt.message & charCodeMask;
           // Command-T: toggle trace mode
@@ -782,15 +779,6 @@ static int ProcessEvents(void)
           } else {
             OnMenuAction(MenuKey(ch));
           }
-        } else if (g_wp) {
-          int key = (evt.message & keyCodeMask) >> 8;
-          HandleKeyEvent(key, 1);
-        }
-        break;
-      case keyUp:
-        if (g_wp) {
-          int key = (evt.message & keyCodeMask) >> 8;
-          HandleKeyEvent(key, 0);
         }
         break;
     }
@@ -842,9 +830,7 @@ static int CheckFinderFiles(void)
 int main(int argc, char *argv[])
 {
   int finderResult;
-  u32 last_process, now;
-  SwapInstructionCache(true);
-  SwapDataCache(true);
+  u32 last_process, last_poll, now;
 
   InitToolbox();
   DetectScreenDepth();
@@ -866,7 +852,8 @@ int main(int argc, char *argv[])
   }
 
   last_frame_count = 0;
-  last_process = Ticks;
+  last_process = 0;
+  last_poll = 0;
 
   while (app_running) {
     now = Ticks;
@@ -879,6 +866,10 @@ int main(int argc, char *argv[])
 
     if (g_wp) {
       CheckPendingTasks();
+      if (now != last_poll) {
+        PollGameInput();
+        last_poll = now;
+      }
       jit_run(&dmg);
 
       if (limit_fps && dmg.frames_rendered != last_frame_count) {

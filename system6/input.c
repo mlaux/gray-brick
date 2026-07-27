@@ -1,3 +1,5 @@
+#include <Events.h>
+
 #include "../src/dmg.h"
 #include "emulator.h"
 #include "input.h"
@@ -19,14 +21,23 @@ static struct {
   { BUTTON_START, FIELD_ACTION }
 };
 
-void HandleKeyEvent(int keyCode, int down)
+// edge-detect against the last poll
+void PollGameInput(void)
 {
+  KeyMap keys;
+  unsigned char *raw = (unsigned char *) keys;
+  static unsigned char prev[8];
   int k;
 
+  GetKeys(keys);
   for (k = 0; k < 8; k++) {
-    if (keyMappings[k] == keyCode) {
-      dmg_set_button(&dmg, buttonMap[k].field, buttonMap[k].button, down);
-      break;
+    int code = keyMappings[k];
+    unsigned char down = (raw[code >> 3] >> (code & 7)) & 1;
+
+    if (down == prev[k]) {
+      continue;
     }
+    prev[k] = down;
+    dmg_set_button(&dmg, buttonMap[k].field, buttonMap[k].button, down);
   }
 }

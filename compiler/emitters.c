@@ -638,6 +638,14 @@ void emit_jsr_ind_an(struct code_block *block, uint8_t areg)
     emit_word(block, 0x4e90 | areg);
 }
 
+// jsr (addr).l - jump to subroutine at absolute address
+void emit_jsr_abs_l(struct code_block *block, uint32_t addr)
+{
+    // 0100 1110 10 111 001 = 0x4eb9
+    emit_word(block, 0x4eb9);
+    emit_long(block, addr);
+}
+
 // addq.l #val, An - add quick to address register (long)
 void emit_addq_l_an(struct code_block *block, uint8_t areg, uint8_t val)
 {

@@ -36,82 +36,16 @@ void compile_page_lookup(
     }
 }
 
-// addr in D1, val_reg specifies value register
-void compile_slow_dmg_write(struct code_block *block, uint8_t val_reg)
+// shared helper entry addresses, set by compile_emit_helpers
+struct jit_helpers jit_helpers;
+
+// scratch the helpers are emitted into
+static struct code_block helper_block;
+
+// C-call sequence for dmg_read - addr in D1.w, result in D0.b
+static void emit_c_read_call(struct code_block *block)
 {
-    // D2 has to be exact for lazy register evaluation. no-op when reached
-    // through the inline wrapper, which already flushed before the split
-    flush_cycles(block);
-    // stash the countdown for lazy register evaluation; the C side
-    // shrinks it in place when a write tightens wake_limit, so the
-    // reload below picks up the new budget (retro68 scratches D2)
-    emit_move_l_dn_disp_an(block, REG_68K_D_CYCLE_COUNT, JIT_CTX_READ_CYCLES, REG_68K_A_CTX);
-    emit_push_b_dn(block, val_reg); // 2
-    emit_push_w_dn(block, REG_68K_D_SCRATCH_1); // 2
-    emit_push_l_disp_an(block, JIT_CTX_DMG, REG_68K_A_CTX); // 4
-    emit_movea_l_disp_an_an(block, JIT_CTX_WRITE, REG_68K_A_CTX, REG_68K_A_SCRATCH_1); // 4
-    emit_jsr_ind_an(block, REG_68K_A_SCRATCH_1); // 2
-    emit_addq_l_an(block, 7, 8); // 2
-    emit_move_l_disp_an_dn(block, JIT_CTX_READ_CYCLES, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
-}
-
-// inline dmg_write with page table fast path - addr in D1, value in val_reg
-static void compile_inline_dmg_write(struct code_block *block, uint8_t val_reg)
-{
-    size_t unmapped, done;
-
-    // flush before the fast/slow split so both paths see the same D2
-    flush_cycles(block);
-    // Fast path: check write page table. entries are biased, so the full
-    // address in D1.w indexes the page directly
-    // move.w d1, d3
-    emit_move_w_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_NEXT_PC);
-    // a0 = write_page[addr >> 8]
-    compile_page_lookup(block, REG_68K_A_WRITE_PAGE, REG_68K_D_NEXT_PC, REG_68K_A_SCRATCH_1);
-    // move.l a0, d3 - sets Z, d3 is dead
-    emit_move_l_an_dn(block, REG_68K_A_SCRATCH_1, REG_68K_D_NEXT_PC);
-    unmapped = block->length;
-    emit_beq_b(block, 0);
-
-    // Page hit:
-    // move.b val_reg, (a0,d1.w)
-    emit_move_b_dn_idx_an(block, val_reg, REG_68K_A_SCRATCH_1, REG_68K_D_SCRATCH_1);
-    done = block->length;
-    emit_bra_b(block, 0);
-
-    patch_branch_b(block, unmapped);
-    compile_slow_dmg_write(block, val_reg);
-    patch_branch_b(block, done);
-}
-
-// Call dmg_write(dmg, addr, val) - addr in D1, val in D4 (A register)
-void compile_call_dmg_write_a(struct code_block *block)
-{
-    compile_inline_dmg_write(block, REG_68K_D_A);
-    // compile_slow_dmg_write(block, REG_68K_D_A);
-}
-
-// Call dmg_write(dmg, addr, val) - addr in D1, val is immediate
-void compile_call_dmg_write_imm(struct code_block *block, uint8_t val)
-{
-    emit_move_b_dn(block, 0, val);
-    compile_inline_dmg_write(block, 0);
-}
-
-// Call dmg_write(dmg, addr, val) - addr in D1, val in D0
-void compile_call_dmg_write_d0(struct code_block *block)
-{
-    compile_inline_dmg_write(block, 0);
-}
-
-// Emit slow path call to dmg_read - expects address in D1, returns in D0
-void compile_slow_dmg_read(struct code_block *block)
-{
-    // D2 has to be exact for lazy DIV/LY evaluation. no-op when reached
-    // through the inline wrapper, which already flushed before the split
-    flush_cycles(block);
-    // stash the countdown for DIV/LY evaluation and reload after (see
-    // compile_slow_dmg_write)
+    // stash the countdown for lazy DIV/LY evaluation
     emit_move_l_dn_disp_an(block, REG_68K_D_CYCLE_COUNT, JIT_CTX_READ_CYCLES, REG_68K_A_CTX); // 4
     emit_push_w_dn(block, REG_68K_D_SCRATCH_1); // 2
     emit_push_l_disp_an(block, JIT_CTX_DMG, REG_68K_A_CTX); // 4
@@ -121,34 +55,204 @@ void compile_slow_dmg_read(struct code_block *block)
     emit_move_l_disp_an_dn(block, JIT_CTX_READ_CYCLES, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
 }
 
+// C-call sequence for dmg_write - addr in D1.w, value in D0.b
+static void emit_c_write_call(struct code_block *block)
+{
+    emit_move_l_dn_disp_an(block, REG_68K_D_CYCLE_COUNT, JIT_CTX_READ_CYCLES, REG_68K_A_CTX);
+    emit_push_b_dn(block, REG_68K_D_SCRATCH_0); // 2
+    emit_push_w_dn(block, REG_68K_D_SCRATCH_1); // 2
+    emit_push_l_disp_an(block, JIT_CTX_DMG, REG_68K_A_CTX); // 4
+    emit_movea_l_disp_an_an(block, JIT_CTX_WRITE, REG_68K_A_CTX, REG_68K_A_SCRATCH_1); // 4
+    emit_jsr_ind_an(block, REG_68K_A_SCRATCH_1); // 2
+    emit_addq_l_an(block, 7, 8); // 2
+    emit_move_l_disp_an_dn(block, JIT_CTX_READ_CYCLES, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
+}
+
+// start the next entry on a 16-byte I-cache line (base is 16-aligned)
+static void pad_align16(struct code_block *block)
+{
+    while (block->length & 15) {
+        emit_word(block, 0x4e71); // nop
+    }
+}
+
+const struct code_block *compile_emit_helpers(uint32_t base, void *hram_base)
+{
+    struct code_block *b = &helper_block;
+    size_t unmapped, lo, ie;
+
+    b->length = 0;
+    lo = ie = 0;
+
+    // read chain - page lookup falls through to the hit and its rts
+    jit_helpers.read8_hl = base + b->length;
+    emit_move_w_an_dn(b, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
+    jit_helpers.read8 = base + b->length;
+    emit_move_w_dn_dn(b, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);
+    compile_page_lookup(b, REG_68K_A_READ_PAGE, REG_68K_D_SCRATCH_0,
+            REG_68K_A_SCRATCH_1);
+    emit_move_l_an_dn(b, REG_68K_A_SCRATCH_1, REG_68K_D_SCRATCH_0);
+    unmapped = b->length;
+    emit_beq_b(b, 0);
+    emit_move_b_idx_an_dn(b, REG_68K_A_SCRATCH_1, REG_68K_D_SCRATCH_1,
+            REG_68K_D_SCRATCH_0);
+    emit_rts(b);
+
+    patch_branch_b(b, unmapped);
+    if (hram_base) {
+        // HRAM and the IE mirror at $ffff,
+        // bias the base by +$80 (-$10000+$80)
+        emit_cmpi_w_imm_dn(b, 0xff80, REG_68K_D_SCRATCH_1);
+        lo = b->length;
+        emit_bcs_b(b, 0);
+        emit_movea_l_imm32(b, REG_68K_A_SCRATCH_1,
+                (uint32_t) (uintptr_t) hram_base + 0x80);
+        emit_move_b_idx_an_dn(b, REG_68K_A_SCRATCH_1, REG_68K_D_SCRATCH_1,
+                REG_68K_D_SCRATCH_0);
+        emit_rts(b);
+        patch_branch_b(b, lo);
+    }
+    jit_helpers.read8_slow = base + b->length;
+    emit_c_read_call(b);
+    emit_rts(b);
+
+    pad_align16(b);
+
+    // write chain
+    jit_helpers.write8_a = base + b->length;
+    emit_move_b_dn_dn(b, REG_68K_D_A, REG_68K_D_SCRATCH_0);
+    unmapped = b->length;
+    emit_bra_b(b, 0);
+    jit_helpers.write8_hl_a = base + b->length;
+    emit_move_b_dn_dn(b, REG_68K_D_A, REG_68K_D_SCRATCH_0);
+    jit_helpers.write8_hl = base + b->length;
+    emit_move_w_an_dn(b, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
+    patch_branch_b(b, unmapped);
+    jit_helpers.write8 = base + b->length;
+    // D0 holds the value, so the lookup scratches through D3
+    emit_move_w_dn_dn(b, REG_68K_D_SCRATCH_1, REG_68K_D_NEXT_PC);
+    compile_page_lookup(b, REG_68K_A_WRITE_PAGE, REG_68K_D_NEXT_PC,
+            REG_68K_A_SCRATCH_1);
+    emit_move_l_an_dn(b, REG_68K_A_SCRATCH_1, REG_68K_D_NEXT_PC);
+    unmapped = b->length;
+    emit_beq_b(b, 0);
+    emit_move_b_dn_idx_an(b, REG_68K_D_SCRATCH_0, REG_68K_A_SCRATCH_1,
+            REG_68K_D_SCRATCH_1);
+    emit_rts(b);
+
+    if (hram_base) {
+        patch_branch_b(b, unmapped);
+        // $ffff is IE, so need to go to C
+        emit_cmpi_w_imm_dn(b, 0xff80, REG_68K_D_SCRATCH_1);
+        lo = b->length;
+        emit_bcs_b(b, 0);
+        emit_cmpi_w_imm_dn(b, 0xffff, REG_68K_D_SCRATCH_1);
+        ie = b->length;
+        emit_beq_b(b, 0);
+        emit_movea_l_imm32(b, REG_68K_A_SCRATCH_1,
+                (uint32_t) (uintptr_t) hram_base + 0x80);
+        emit_move_b_dn_idx_an(b, REG_68K_D_SCRATCH_0, REG_68K_A_SCRATCH_1,
+                REG_68K_D_SCRATCH_1);
+        emit_rts(b);
+    }
+    jit_helpers.write8_slow_a = base + b->length;
+    emit_move_b_dn_dn(b, REG_68K_D_A, REG_68K_D_SCRATCH_0);
+    jit_helpers.write8_slow = base + b->length;
+    if (hram_base) {
+        patch_branch_b(b, lo);
+        patch_branch_b(b, ie);
+    } else {
+        patch_branch_b(b, unmapped);
+    }
+    emit_c_write_call(b);
+    emit_rts(b);
+
+    if (b->length > JIT_HELPERS_SIZE) {
+        return NULL;
+    }
+    return b;
+}
+
+// addr in D1, val_reg specifies value register
+void compile_slow_dmg_write(struct code_block *block, uint8_t val_reg)
+{
+    // D2 has to be exact for lazy register evaluation
+    flush_cycles(block);
+    if (val_reg == REG_68K_D_A) {
+        emit_jsr_abs_l(block, jit_helpers.write8_slow_a);
+        return;
+    }
+    if (val_reg != REG_68K_D_SCRATCH_0) {
+        emit_move_b_dn_dn(block, val_reg, REG_68K_D_SCRATCH_0);
+    }
+    emit_jsr_abs_l(block, jit_helpers.write8_slow);
+}
+
+// Call dmg_write(dmg, addr, val) - addr in D1, val in D4 (A register)
+void compile_call_dmg_write_a(struct code_block *block)
+{
+    flush_cycles(block);
+    emit_jsr_abs_l(block, jit_helpers.write8_a);
+}
+
+// Call dmg_write(dmg, addr, val) - addr in D1, val is immediate
+void compile_call_dmg_write_imm(struct code_block *block, uint8_t val)
+{
+    emit_move_b_dn(block, 0, val);
+    flush_cycles(block);
+    emit_jsr_abs_l(block, jit_helpers.write8);
+}
+
+// Call dmg_write(dmg, addr, val) - addr in D1, val in D0
+void compile_call_dmg_write_d0(struct code_block *block)
+{
+    flush_cycles(block);
+    emit_jsr_abs_l(block, jit_helpers.write8);
+}
+
+// Call dmg_write(dmg, HL, val) - val in D0, D1 loaded inside the helper
+void compile_call_dmg_write_hl_d0(struct code_block *block)
+{
+    flush_cycles(block);
+    emit_jsr_abs_l(block, jit_helpers.write8_hl);
+}
+
+// Call dmg_write(dmg, HL, A)
+void compile_call_dmg_write_hl_a(struct code_block *block)
+{
+    flush_cycles(block);
+    emit_jsr_abs_l(block, jit_helpers.write8_hl_a);
+}
+
+// Call dmg_write(dmg, HL, val) - val is immediate
+void compile_call_dmg_write_hl_imm(struct code_block *block, uint8_t val)
+{
+    emit_move_b_dn(block, 0, val);
+    flush_cycles(block);
+    emit_jsr_abs_l(block, jit_helpers.write8_hl);
+}
+
+// Emit slow path call to dmg_read - expects address in D1, returns in D0
+void compile_slow_dmg_read(struct code_block *block)
+{
+    // D2 has to be exact for lazy DIV/LY evaluation; the helper stashes
+    // it around the C call
+    flush_cycles(block);
+    emit_jsr_abs_l(block, jit_helpers.read8_slow);
+}
+
 // Call dmg_read(dmg, addr) - addr in D1, result stays in D0
-// Page table fast path, falls back to slow path for unmapped pages
 void compile_call_dmg_read(struct code_block *block)
 {
-    size_t unmapped, done;
-
-    // flush before the fast/slow split so both paths see the same D2
     flush_cycles(block);
-    // Fast path: check page table. entries are biased, so the full
-    // address in D1.w indexes the page directly
-    // move.w d1, d0
-    emit_move_w_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);
-    // a0 = read_page[addr >> 8]
-    compile_page_lookup(block, REG_68K_A_READ_PAGE, REG_68K_D_SCRATCH_0, REG_68K_A_SCRATCH_1);
-    // move.l a0, d0 - sets Z, d0 is dead
-    emit_move_l_an_dn(block, REG_68K_A_SCRATCH_1, REG_68K_D_SCRATCH_0);
-    unmapped = block->length;
-    emit_beq_b(block, 0);
+    emit_jsr_abs_l(block, jit_helpers.read8);
+}
 
-    // Page hit:
-    // move.b (a0,d1.w), d0
-    emit_move_b_idx_an_dn(block, REG_68K_A_SCRATCH_1, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);
-    done = block->length;
-    emit_bra_b(block, 0);
-
-    patch_branch_b(block, unmapped);
-    compile_slow_dmg_read(block);
-    patch_branch_b(block, done);
+// Call dmg_read(dmg, HL) - D1 loaded inside the helper, result in D0
+void compile_call_dmg_read_hl(struct code_block *block)
+{
+    flush_cycles(block);
+    emit_jsr_abs_l(block, jit_helpers.read8_hl);
 }
 
 // Call dmg_read(dmg, addr) - addr in D1, result goes to D4 (A register)
@@ -158,11 +262,17 @@ void compile_call_dmg_read_a(struct code_block *block)
     emit_move_b_dn_dn(block, 0, REG_68K_D_A);
 }
 
+// Call dmg_read(dmg, HL) - result goes to D4 (A register)
+void compile_call_dmg_read_hl_a(struct code_block *block)
+{
+    compile_call_dmg_read_hl(block);
+    emit_move_b_dn_dn(block, 0, REG_68K_D_A);
+}
+
 void compile_call_ei_di(struct code_block *block, int enabled)
 {
     flush_cycles(block);
-    // EI tightens wake_limit via budget_touch, and dmg_ei_di needs the
-    // exact clock; stash and reload D2 like the memory slow paths
+    // save cycle count
     emit_move_l_dn_disp_an(block, REG_68K_D_CYCLE_COUNT, JIT_CTX_READ_CYCLES, REG_68K_A_CTX);
     // push enabled
     emit_moveq_dn(block, REG_68K_D_SCRATCH_1, (int8_t) enabled);

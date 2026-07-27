@@ -24,6 +24,7 @@
 #include "lcd.h"
 #include "rom.h"
 #include "compiler.h"
+#include "interop.h"
 #include "m68k.h"
 
 #include "../system6/jit.h"
@@ -167,6 +168,9 @@ static void sync_ctx_from_68k(void)
 static void sync_budget_to_68k(void)
 {
     ctx_w32(JIT_CTX_WAKE_LIMIT, jit_ctx.wake_limit);
+    // budget_touch shrinks the stashed countdown in tandem; the block
+    // reloads D2 from this after the call
+    ctx_w32(JIT_CTX_READ_CYCLES, jit_ctx.read_cycles);
 }
 
 // --insn-log: every instruction Musashi executes, one line each, with
@@ -261,6 +265,7 @@ void host_gate(unsigned int index, unsigned int sp)
     }
     case GATE_EI_DI: {
         u16 v = m68_r16(sp + 8);
+        jit_ctx.read_cycles = m68_r32(JIT_CTX_ADDR + JIT_CTX_READ_CYCLES);
         if (host_insn_log) {
             fprintf(host_insn_log, "= %s\n", v ? "ei" : "di");
         }
@@ -269,6 +274,7 @@ void host_gate(unsigned int index, unsigned int sp)
         break;
     }
     case GATE_STOP:
+        jit_ctx.read_cycles = m68_r32(JIT_CTX_ADDR + JIT_CTX_READ_CYCLES);
         if (host_insn_log) {
             fprintf(host_insn_log, "= stop\n");
         }
@@ -279,7 +285,7 @@ void host_gate(unsigned int index, unsigned int sp)
         if (host_insn_log) {
             fprintf(host_insn_log, "= exit d3=%x d2=%u\n",
                     m68k_get_reg(NULL, M68K_REG_D3),
-                    m68k_get_reg(NULL, M68K_REG_D2));
+                    jit_ctx.wake_limit - m68k_get_reg(NULL, M68K_REG_D2));
         }
         block_returned = 1;
         m68k_end_timeslice();
@@ -317,12 +323,38 @@ static u32 gate_stub(int index)
     return GATE_STUB_BASE + index * 16;
 }
 
+// port of jit_emit_helpers: first arena allocation, stable across resets
+static int emit_helpers(void)
+{
+    const struct code_block *blk;
+    u8 *region = arena_alloc(JIT_HELPERS_SIZE + 15);
+    u32 base;
+
+    if (!region) {
+        return 0;
+    }
+    base = ((u32) (region - m68k_mem) + 15) & ~15u;
+    blk = compile_emit_helpers(base, compile_ctx.hram_base);
+    if (!blk) {
+        return 0;
+    }
+    memcpy(m68k_mem + base, blk->code, blk->length);
+    if (host_insn_log) {
+        fprintf(host_insn_log, "= helpers %06x len=%zu\n",
+                base, blk->length);
+    }
+    return 1;
+}
+
 // port of jit_clear_all_blocks
 static int clear_all_blocks(void)
 {
     int k;
 
     arena_reset();
+    if (!emit_helpers()) {
+        return 0;
+    }
     if (!cache_init()) {
         return 0;
     }
@@ -515,8 +547,25 @@ void host_jit_init(struct dmg *d)
 
     compiler_init();
 
+    compile_ctx.dmg = dmg;
+    compile_ctx.read = dmg_read;
+    compile_ctx.cache_store = cache_store;
+    compile_ctx.alloc = arena_alloc;
+    compile_ctx.current_bank = 1;
+    // 68k-space addresses: emitted stack fast paths embed these as
+    // absolute A3 values, so they must be Musashi addresses, not host
+    // pointers
+    compile_ctx.wram_base =
+        (void *) (uintptr_t) (DMG_ADDR + offsetof(struct dmg, main_ram));
+    compile_ctx.hram_base =
+        (void *) (uintptr_t) (DMG_ADDR + offsetof(struct dmg, zero_page));
+
     arena_set_region(&m68k_mem[ARENA_ADDR], ARENA_END - ARENA_ADDR);
     arena_init();
+    if (!emit_helpers()) {
+        fprintf(stderr, "gb6run: helper emit failed\n");
+        exit(2);
+    }
     if (!cache_init()) {
         fprintf(stderr, "gb6run: cache init failed\n");
         exit(2);
@@ -566,24 +615,12 @@ void host_jit_init(struct dmg *d)
     ctx_w32(JIT_CTX_DISPATCH, CHAIN_STUB_ADDR);
     ctx_w32(JIT_CTX_PATCH_HELPER, CHAIN_STUB_ADDR);
     ctx_w32(JIT_CTX_FRAME_CYCLES_PTR, FRAME_SHADOW_ADDR);
-    ctx_w32(JIT_CTX_READ_CYCLES, 0);
+    ctx_w32(JIT_CTX_READ_CYCLES, jit_ctx.wake_limit);
+    jit_ctx.read_cycles = jit_ctx.wake_limit;
     ctx_w16(JIT_CTX_DAA_STATE, 0);
     ctx_w16(JIT_CTX_GB_SP, jit_ctx.gb_sp);
     ctx_w32(JIT_CTX_STACK_IN_RAM, jit_ctx.stack_in_ram);
     m68k_mem[JIT_CTX_ADDR + 16] = 0; // trace_enabled (dispatcher asm only)
-
-    compile_ctx.dmg = dmg;
-    compile_ctx.read = dmg_read;
-    compile_ctx.cache_store = cache_store;
-    compile_ctx.alloc = arena_alloc;
-    compile_ctx.current_bank = 1;
-    // 68k-space addresses: emitted stack fast paths embed these as
-    // absolute A3 values, so they must be Musashi addresses, not host
-    // pointers
-    compile_ctx.wram_base =
-        (void *) (uintptr_t) (DMG_ADDR + offsetof(struct dmg, main_ram));
-    compile_ctx.hram_base =
-        (void *) (uintptr_t) (DMG_ADDR + offsetof(struct dmg, zero_page));
 
     dmg->rom_bank_switch_hook = rom_bank_hook;
 
@@ -613,6 +650,7 @@ void host_jit_init(struct dmg *d)
     }
 
     // boot-ROM handoff state, mirroring jit_init
+    m68k_set_reg(M68K_REG_D2, jit_ctx.wake_limit);
     m68k_set_reg(M68K_REG_D3, 0x100);
     m68k_set_reg(M68K_REG_D4, (dmg->cgb && dmg->cgb->mode) ? 0x11 : 0x01);
     m68k_set_reg(M68K_REG_D5, 0x00000013);
@@ -668,7 +706,7 @@ void host_dump_state(FILE *fp)
 int host_jit_run(void)
 {
     void *code;
-    u32 d2, d3;
+    u32 d2, d3, executed;
 
     if (jit_halted) {
         return 0;
@@ -691,7 +729,8 @@ enter:
         fprintf(host_insn_log, "= enter %02x:%04x arena=%06x d2=%u frame=%u\n",
                 jit_ctx.current_rom_bank, d3,
                 (u32) ((u8 *) code - m68k_mem),
-                m68k_get_reg(NULL, M68K_REG_D2), dmg->frame_cycles);
+                jit_ctx.wake_limit - m68k_get_reg(NULL, M68K_REG_D2),
+                dmg->frame_cycles);
     }
 
     sync_ctx_to_68k();
@@ -716,7 +755,7 @@ enter:
     // mimic the Mac's native chaining (dispatcher asm + patched exits):
     // follow cached successors without hardware sync until the budget
     // expires, a block misses, or the exit was a plain-rts fast-forward
-    if (host_chain && exit_chainable && d2 < jit_ctx.wake_limit) {
+    if (host_chain && exit_chainable && (s32) d2 > 0) {
         code = cache_lookup(d3, jit_ctx.current_rom_bank);
         if (code) {
             goto enter;
@@ -724,18 +763,25 @@ enter:
     }
 
     sync_ctx_from_68k();
-    host_total_ppu += jit_ctx.effective_double_speed ? (d2 >> 1) : d2;
-    dmg_sync_hw(dmg, d2);
+    // D2 counts down; wake_limit and the countdown were tightened in
+    // tandem by any mid-block budget_touch, so this difference is the
+    // executed total either way
+    executed = jit_ctx.wake_limit - d2;
+    host_total_ppu += jit_ctx.effective_double_speed ? (executed >> 1)
+                                                     : executed;
+    dmg_sync_hw(dmg, executed);
     if (dmg->interrupt_enable) {
         check_interrupts();
     }
-    m68k_set_reg(M68K_REG_D2, 0);
     update_wake_limit();
+    m68k_set_reg(M68K_REG_D2, jit_ctx.wake_limit);
+    jit_ctx.read_cycles = jit_ctx.wake_limit;
+    ctx_w32(JIT_CTX_READ_CYCLES, jit_ctx.wake_limit);
     sync_page_tables();
 
     if (host_insn_log) {
         fprintf(host_insn_log, "= sync d2=%u frame=%u wake=%u\n",
-                d2, dmg->frame_cycles, jit_ctx.wake_limit);
+                executed, dmg->frame_cycles, jit_ctx.wake_limit);
     }
 
     host_dispatches++;

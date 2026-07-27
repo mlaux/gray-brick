@@ -4,6 +4,7 @@
 #include <assert.h>
 
 #include "../compiler.h"
+#include "../interop.h"
 #include "tests.h"
 #include "../musashi/m68k.h"
 
@@ -12,6 +13,7 @@ static uint8_t mem[MEM_SIZE];
 
 #define CODE_BASE 0x1000
 #define STUB_BASE 0x2000   // Where stub functions live
+#define HELPER_BASE 0x2100 // shared memory-access helpers
 #define JIT_CTX_ADDR 0x3000 // jit_runtime context structure
 #define STACK_BASE 0x8000
 
@@ -165,6 +167,13 @@ static void setup_runtime_stubs(void)
         0x70, 0x01,              // moveq #1, d0
         0x4e, 0x75               // rts
     };
+
+    // shared memory-access helpers for the current codegen mode. no
+    // hram_base: tests route HRAM through the stubs like everything else
+    {
+        const struct code_block *helpers = compile_emit_helpers(HELPER_BASE, NULL);
+        memcpy(mem + HELPER_BASE, helpers->code, helpers->length);
+    }
 
     // Copy stubs to memory
     memcpy(mem + STUB_BASE, stub_read, sizeof(stub_read));
@@ -565,6 +574,9 @@ int main(int argc, char *argv[])
     printf("\n======== 68000 ========\n");
     m68k_set_cpu_type(M68K_CPU_TYPE_68000);
     compiler_68020 = 0;
+    // record helper entry addresses for compile_block; the bytes are
+    // (re-)copied into memory by setup_runtime_stubs
+    compile_emit_helpers(HELPER_BASE, NULL);
 
     register_load_tests();
     register_alu_tests();
@@ -577,6 +589,7 @@ int main(int argc, char *argv[])
     printf("\n======== 68020 ========\n");
     m68k_set_cpu_type(M68K_CPU_TYPE_68020);
     compiler_68020 = 1;
+    compile_emit_helpers(HELPER_BASE, NULL);
 
     register_load_tests();
     register_alu_tests();

@@ -283,8 +283,7 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
             break;
 
         case 0x32: // ld (hl-), a
-            emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1); // D1.w = HL
-            compile_call_dmg_write_a(block); // dmg_write(dmg, D1.w, A)
+            compile_call_dmg_write_hl_a(block); // dmg_write(dmg, HL, A)
             emit_subq_w_an(block, REG_68K_A_HL, 1); // HL--
             break;
 
@@ -293,14 +292,12 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
             break;
 
         case 0x2a: // ld a, (hl+)
-            emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1); // D1.w = HL
-            compile_call_dmg_read_a(block); // dmg_read(dmg, D1.w) into A
+            compile_call_dmg_read_hl_a(block); // dmg_read(dmg, HL) into A
             emit_addq_w_an(block, REG_68K_A_HL, 1); // HL++
             break;
 
         case 0x3a: // ld a, (hl-)
-            emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1); // D1.w = HL
-            compile_call_dmg_read_a(block); // dmg_read(dmg, D1.w) into A
+            compile_call_dmg_read_hl_a(block); // dmg_read(dmg, HL) into A
             emit_subq_w_an(block, REG_68K_A_HL, 1); // HL--
             break;
 
@@ -448,8 +445,7 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
             break;
 
         case 0x22: // ld (hl+), a
-            emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
-            compile_call_dmg_write_a(block);
+            compile_call_dmg_write_hl_a(block);
             emit_addq_w_an(block, REG_68K_A_HL, 1);
             break;
 
@@ -739,11 +735,7 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
             break;
 
         case 0x36: // ld (hl), u8
-            {
-                uint8_t val = READ_BYTE(src_ptr++);
-                emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);  // D1.w = HL
-                compile_call_dmg_write_imm(block, val);
-            }
+            compile_call_dmg_write_hl_imm(block, READ_BYTE(src_ptr++));
             break;
 
         case 0xea: // ld (u16), a

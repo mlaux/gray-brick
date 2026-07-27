@@ -223,16 +223,21 @@ void dmg_init_pages(struct dmg *dmg)
 void dmg_update_rom_bank(struct dmg *dmg, int bank)
 {
     int k;
-    u8 *bank_base;
+    u8 *biased;
 
     if (dmg->current_rom_bank == bank) {
         return;
     }
     dmg->current_rom_bank = bank;
 
-    bank_base = &dmg->rom->data[bank * 0x4000];
-    for (k = 0x40; k <= 0x7f; k++) {
-        dmg->read_page[k] = PAGE_BIAS(&bank_base[(k - 0x40) << 8], k);
+    // the per-page offset and the bias cancel, so every page in the
+    // window shares one biased pointer: bank_base - 0x4000
+    biased = PAGE_BIAS(&dmg->rom->data[bank * 0x4000], 0x40);
+    for (k = 0x40; k <= 0x7f; k += 4) {
+        dmg->read_page[k] = biased;
+        dmg->read_page[k + 1] = biased;
+        dmg->read_page[k + 2] = biased;
+        dmg->read_page[k + 3] = biased;
     }
 
     // Notify JIT of bank switch
@@ -243,16 +248,16 @@ void dmg_update_rom_bank(struct dmg *dmg, int bank)
 
 void dmg_update_ram_bank(struct dmg *dmg, u8 *ram_base)
 {
+    // same cancellation as dmg_update_rom_bank; NULL stays NULL so the
+    // window falls back to the slow path when RAM is disabled
+    u8 *biased = ram_base ? PAGE_BIAS(ram_base, 0xa0) : NULL;
     int k;
-    for (k = 0xa0; k <= 0xbf; k++) {
-        if (ram_base) {
-            u8 *page = &ram_base[(k - 0xa0) << 8];
-            dmg->read_page[k] = PAGE_BIAS(page, k);
-            dmg->write_page[k] = PAGE_BIAS(page, k);
-        } else {
-            dmg->read_page[k] = NULL;
-            dmg->write_page[k] = NULL;
-        }
+
+    for (k = 0xa0; k <= 0xbf; k += 2) {
+        dmg->read_page[k] = biased;
+        dmg->write_page[k] = biased;
+        dmg->read_page[k + 1] = biased;
+        dmg->write_page[k + 1] = biased;
     }
 }
 
