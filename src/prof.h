@@ -1,7 +1,9 @@
 #ifndef _PROF_H
 #define _PROF_H
 
-// no-ops unless GB6_PROFILING is defined
+// no-ops unless GB6_PROFILING is defined.
+// audio has no phase: it generates at interrupt time, so its cost is
+// baked into whichever phase it preempts
 
 enum {
     PROF_OTHER,     // event handling, pacing, dispatch overhead
@@ -10,7 +12,6 @@ enum {
     PROF_SYNC,      // dmg_sync_hw minus the nested phases below
     PROF_RENDER,    // render_frame minus lcd_draw
     PROF_DRAW,      // convert + blit to screen
-    PROF_AUDIO,     // audio sample generation
     PROF_NUM_PHASES
 };
 

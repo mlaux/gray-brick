@@ -5,7 +5,7 @@
 #define CACHEFLUSH_OFFSET 102
 
 // compiled blocks JMP here instead of RTS. This routine:
-// 1. Checks if accumulated cycles in D2 >= jit_ctx.wake_limit, if so, RTS to C
+// 1. Checks the countdown in D2: <= 0 means the wake deadline is due, RTS to C
 // 2. Determines which cache to use based on PC in D3
 // 3. Looks up block in appropriate cache, if found -> JMP to it
 // 4. Otherwise -> RTS to C to compile the block
@@ -16,8 +16,8 @@ static void dispatcher_code_asm(void)
         "\t"
         "tst.b 16(%%a4)\n\t" // check trace_enabled
         "bne.s .Ldisp_exit\n\t" // if set, always return to C
-        "cmp.l 80(%%a4), %%d2\n\t" // wake_limit, offset must match jit.h
-        "bcc.s .Ldisp_exit\n\t"
+        "tst.l %%d2\n\t" // countdown: <= 0 means the wake deadline is due
+        "ble.s .Ldisp_exit\n\t"
 
         "cmpi.w #0x4000, %%d3\n\t"
         "bcs.s .Ldisp_bank0\n\t"

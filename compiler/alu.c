@@ -8,10 +8,67 @@
 // helper for reading GB memory during compilation
 #define READ_BYTE(off) (ctx->read(ctx->dmg, src_address + (off)))
 
+// ops that emit DAA tracking (the add/sub family)
+static int daa_tracked_op(uint8_t op)
+{
+    if (op >= 0x80 && op <= 0x9f)
+        return 1;
+    switch (op) {
+    case 0x3c: case 0x3d:
+    case 0xc6: case 0xce: case 0xd6: case 0xde:
+        return 1;
+    }
+    return 0;
+}
+
+// control flow the DAA scan cannot see past: the continuation might reach a
+// daa, so tracking state must be valid here
+static int daa_scan_barrier(uint8_t op)
+{
+    switch (op) {
+    case 0x10: case 0x18: case 0x20: case 0x28: case 0x30: case 0x38:
+    case 0x76:
+    case 0xc0: case 0xc2: case 0xc3: case 0xc4: case 0xc7:
+    case 0xc8: case 0xc9: case 0xca: case 0xcc: case 0xcd: case 0xcf:
+    case 0xd0: case 0xd2: case 0xd4: case 0xd7:
+    case 0xd8: case 0xd9: case 0xda: case 0xdc: case 0xdf:
+    case 0xe7: case 0xe9: case 0xef:
+    case 0xf7: case 0xff:
+        return 1;
+    }
+    return 0;
+}
+
+// returns 0 when a later tracked ALU op re-establishes DAA state before any
+// daa/branch/block end could observe this op's state, so tracking is dead
+static int daa_track_needed(
+    struct compile_ctx *ctx,
+    uint16_t src_address,
+    uint16_t off
+) {
+    while (off < 256) {
+        uint8_t op = READ_BYTE(off);
+
+        if (op == 0x27)
+            return 1;
+        if (daa_tracked_op(op))
+            return 0;
+        if (daa_scan_barrier(op))
+            return 1;
+        off += insn_length[op];
+    }
+    return 1;
+}
+
+// set per-op by compile_alu_op from the scan above
+static int daa_track = 1;
+
 // DAA tracking: save old_A and set N flag before ALU ops that affect A
 // These are needed for DAA to compute the half-carry (H) and know add vs sub
 static void compile_daa_track_add(struct code_block *block)
 {
+    if (!daa_track)
+        return;
     // Save old_A to context for H flag computation
     emit_move_b_dn_disp_an(block, REG_68K_D_A, JIT_CTX_DAA_STATE, REG_68K_A_CTX);
     // Set N=0 (addition)
@@ -21,6 +78,8 @@ static void compile_daa_track_add(struct code_block *block)
 
 static void compile_daa_track_sub(struct code_block *block)
 {
+    if (!daa_track)
+        return;
     // Save old_A to context for H flag computation
     emit_move_b_dn_disp_an(block, REG_68K_D_A, JIT_CTX_DAA_STATE, REG_68K_A_CTX);
     // Set N=1 (subtraction)
@@ -200,6 +259,14 @@ int compile_alu_op(
     uint16_t src_address,
     uint16_t *src_ptr
 ) {
+    daa_track = 1;
+    if (daa_tracked_op(op)) {
+        uint16_t next_off = *src_ptr;
+        if (op == 0xc6 || op == 0xce || op == 0xd6 || op == 0xde)
+            next_off++;
+        daa_track = daa_track_needed(ctx, src_address, next_off);
+    }
+
     switch (op) {
     // inc/dec register ops (0xn4, 0xn5, 0xnc, 0xnd where n = 0-3)
     case 0x04: // inc b

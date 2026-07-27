@@ -30,9 +30,39 @@ static int pc_history_idx = 0;
 static u32 call_count = 0;
 static u32 last_report_tick = 0;
 
+#ifdef GB6_PROFILING
+// counted, not sampled: the slow-path memory accesses compiled code made,
+// reported per emulated frame. the inline fast paths absorb everything else
+static u32 prof_interop;
+
+static u8 prof_read(void *dmg, u16 address)
+{
+  prof_interop++;
+  return dmg_read(dmg, address);
+}
+
+static void prof_write(void *dmg, u16 address, u8 data)
+{
+  prof_interop++;
+  dmg_write(dmg, address, data);
+}
+
+static u16 prof_read16(void *dmg, u16 address)
+{
+  prof_interop++;
+  return dmg_read16(dmg, address);
+}
+
+static void prof_write16(void *dmg, u16 address, u16 data)
+{
+  prof_interop++;
+  dmg_write16(dmg, address, data);
+}
+#endif
+
 // register state that persists between block executions
 struct {
-  u32 d2; // accumulated cycles, output
+  u32 d2; // cycle countdown from wake_limit, executed = wake_limit - d2
   u32 d3; // next pc, output only
   u32 d4, d5, d6, d7; // a, bc, de, f
   u32 a2, a3, a4; // hl, sp, ctx
@@ -138,10 +168,17 @@ void jit_init(struct dmg *dmg)
   compile_ctx.hram_base = dmg->zero_page;
 
   jit_ctx.dmg = dmg;
+#ifdef GB6_PROFILING
+  jit_ctx.read_func = prof_read;
+  jit_ctx.write_func = prof_write;
+  jit_ctx.read16_func = prof_read16;
+  jit_ctx.write16_func = prof_write16;
+#else
   jit_ctx.read_func = dmg_read;
   jit_ctx.write_func = dmg_write;
   jit_ctx.read16_func = dmg_read16;
   jit_ctx.write16_func = dmg_write16;
+#endif
   jit_ctx.ei_di_func = dmg_ei_di;
   jit_ctx.stop_func = jit_handle_stop;
   jit_ctx.current_rom_bank = 1; // bank 1 is default after boot
@@ -153,8 +190,12 @@ void jit_init(struct dmg *dmg)
   jit_ctx.effective_double_speed = 0;
   // refined by update_wake_limit after the first dispatch
   jit_ctx.wake_limit = CYCLES_PER_FRAME;
+  jit_ctx.skipped_cycles = 0;
+  jit_ctx.ly_clamp_skips = 0;
   sync_cache_pointers();
 
+  jit_regs.d2 = jit_ctx.wake_limit; // countdown starts at the full budget
+  jit_ctx.read_cycles = jit_ctx.wake_limit; // in-flight count 0
   jit_regs.d3 = 0x100; // initial PC
   // A register: 0x11 for CGB, 0x01 for DMG
   jit_regs.d4 = (dmg->cgb && dmg->cgb->mode) ? 0x11 : 0x01;
@@ -246,18 +287,33 @@ static void update_profiling_status_bar(u32 frames_now)
 
   u32 now = TickCount();
   u32 elapsed = now - last_report_tick;
+  u32 frames_delta;
+  u32 fps;
 
-  u32 frames_delta = frames_now - last_frames_rendered;
-  u32 fps = elapsed > 0 ? (frames_delta * 60) / elapsed : 0;
+  // dispatches outnumber frames by thousands to one, so a report every
+  // 100 of them lands inside the same tick and averages nothing
+  if (elapsed < 30 || last_report_tick == 0) {
+    if (last_report_tick == 0) {
+      last_report_tick = now;
+      last_frames_rendered = frames_now;
+    }
+    return;
+  }
+
+  frames_delta = frames_now - last_frames_rendered;
+  fps = (frames_delta * 60) / elapsed;
   last_frames_rendered = frames_now;
   last_report_tick = now;
 
 #ifdef GB6_PROFILING
   {
-    // phase percentages from the 1 khz sampler since the last report
+    // the 1 khz sampler's counts are already milliseconds. everything is
+    // reported per emulated frame: percentages move whenever another phase
+    // moves, which makes them useless for comparing two scenes
     static u32 last_counts[PROF_NUM_PHASES];
     u32 d[PROF_NUM_PHASES];
     u32 total = 0;
+    u32 jit_ms, render_ms, draw_ms, mem, skip, exec, norm, ly;
     int k;
 
     for (k = 0; k < PROF_NUM_PHASES; k++) {
@@ -265,16 +321,42 @@ static void update_profiling_status_bar(u32 frames_now)
       last_counts[k] = prof_counts[k];
       total += d[k];
     }
+
+    if (!frames_delta) {
+      frames_delta = 1;
+    }
+
+    jit_ms = d[PROF_JIT] / frames_delta;
+    render_ms = d[PROF_RENDER] / frames_delta;
+    draw_ms = d[PROF_DRAW] / frames_delta;
+    mem = prof_interop / frames_delta;
+    prof_interop = 0;
+
+    // GB cycles the fast-forwards skipped outright. reads high in CGB
+    // double speed, where the countdown is in CPU cycles
+    skip = jit_ctx.skipped_cycles / frames_delta;
+    ly = jit_ctx.ly_clamp_skips / frames_delta;
+    jit_ctx.skipped_cycles = 0;
+    jit_ctx.ly_clamp_skips = 0;
+
+    exec = skip < CYCLES_PER_FRAME ? CYCLES_PER_FRAME - skip : 0;
+
+    // N: jit ms per frame's worth of GB code that actually ran. J and K
+    // both move with the scene, this does not - A/B codegen against it
+    norm = exec ? jit_ms * CYCLES_PER_FRAME / exec : 0;
+    skip = skip * 100 / CYCLES_PER_FRAME;
+
     if (total > 0) {
-      sprintf(buf, "%lu FPS J%lu C%lu S%lu R%lu B%lu A%lu O%lu",
-          fps,
-          d[PROF_JIT] * 100 / total,
-          d[PROF_COMPILE] * 100 / total,
-          d[PROF_SYNC] * 100 / total,
-          d[PROF_RENDER] * 100 / total,
-          d[PROF_DRAW] * 100 / total,
-          d[PROF_AUDIO] * 100 / total,
-          d[PROF_OTHER] * 100 / total);
+      // sync/other/compile are dropped: the remainder is 1000/fps - J - R - B,
+      // and the compile phase overwrites the status bar with its own text
+      sprintf(buf, "%lu FPS N%lu J%lu R%lu B%lu M%lu K%lu",
+          fps, norm, jit_ms, render_ms, draw_ms, mem, skip);
+
+      // L only appears when it has something to say: a nonzero count means
+      // the LY clamp skipped cycles that K could not account for
+      if (ly) {
+        sprintf(buf + strlen(buf), " L%lu", ly);
+      }
       set_status_bar(buf);
       return;
     }
@@ -414,14 +496,17 @@ int jit_run(struct dmg *dmg)
       return 0;
   }
 
-  // sync hardware with cycles accumulated by compiled code
+  // sync hardware with cycles accumulated by compiled code. D2 counts
+  // down from wake_limit; read wake_limit AFTER the block since slow
+  // writes tighten it (and D2) in tandem mid-block
   PROF_SET(PROF_SYNC);
-  dmg_sync_hw(dmg, jit_regs.d2);
+  dmg_sync_hw(dmg, jit_ctx.wake_limit - jit_regs.d2);
   if (dmg->interrupt_enable) {
     check_interrupts(dmg);
   }
-  jit_regs.d2 = 0;
   update_wake_limit(dmg);
+  jit_regs.d2 = jit_ctx.wake_limit;
+  jit_ctx.read_cycles = jit_ctx.wake_limit;
   PROF_SET(PROF_OTHER);
 
   call_count++;

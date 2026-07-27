@@ -27,7 +27,7 @@ int pending_cycles;
 uint8_t flush_at[256];
 
 // SM83 instruction lengths for the branch-target pre-scan (CB handled as 2)
-static const uint8_t insn_length[256] = {
+const uint8_t insn_length[256] = {
     1, 3, 1, 1, 1, 1, 2, 1, 3, 1, 1, 1, 1, 1, 2, 1, // 0x00
     2, 3, 1, 1, 1, 1, 2, 1, 2, 1, 1, 1, 1, 1, 2, 1, // 0x10
     2, 3, 1, 1, 1, 1, 2, 1, 2, 1, 1, 1, 1, 1, 2, 1, // 0x20
@@ -102,13 +102,23 @@ void compile_join_de(struct code_block *block, int dreg)
     emit_move_b_dn_dn(block, REG_68K_D_DE, dreg);  // D1 = 0x0000DDEE
 }
 
-static void compile_ldh_a_u8(struct code_block *block, uint8_t addr)
-{
+static void compile_ldh_a_u8(
+    struct code_block *block,
+    struct compile_ctx *ctx,
+    uint8_t addr
+) {
     if (addr >= 0x80) {
-        // movea.l (a4), a0
-        emit_movea_l_ind_an_an(block, 4, 0);
-        // move.b addr(a0), d4
-        emit_move_b_disp_an_dn(block, addr - 0x80, 0, 4);
+        // HRAM (and the IE mirror at $ffff, which dmg_write keeps current)
+        if (ctx && ctx->hram_base) {
+            emit_move_b_abs32_dn(block,
+                    (uint32_t) (uintptr_t) ctx->hram_base + (addr - 0x80),
+                    REG_68K_D_A);
+        } else {
+            // movea.l (a4), a0
+            emit_movea_l_ind_an_an(block, 4, 0);
+            // move.b addr(a0), d4
+            emit_move_b_disp_an_dn(block, addr - 0x80, 0, 4);
+        }
     } else {
         // not hram so it has to be I/O, go directly to C
         emit_move_w_dn(block, REG_68K_D_SCRATCH_1, 0xff00 + addr);
@@ -117,11 +127,21 @@ static void compile_ldh_a_u8(struct code_block *block, uint8_t addr)
     }
 }
 
-static void compile_ldh_u8_a(struct code_block *block, uint8_t addr)
-{
-    if (addr >= 0x80) {
-        emit_movea_l_ind_an_an(block, 4, 0);
-        emit_move_b_dn_disp_an(block, 4, addr - 0x80, 0);
+static void compile_ldh_u8_a(
+    struct code_block *block,
+    struct compile_ctx *ctx,
+    uint8_t addr
+) {
+    // $ffff is IE: the write must reach dmg_write for the zero_page
+    // mirror and the deadline-gating budget_touch
+    if (addr >= 0x80 && addr != 0xff) {
+        if (ctx && ctx->hram_base) {
+            emit_move_b_dn_abs32(block, REG_68K_D_A,
+                    (uint32_t) (uintptr_t) ctx->hram_base + (addr - 0x80));
+        } else {
+            emit_movea_l_ind_an_an(block, 4, 0);
+            emit_move_b_dn_disp_an(block, 4, addr - 0x80, 0);
+        }
     } else {
         emit_move_w_dn(block, REG_68K_D_SCRATCH_1, 0xff00 + addr);
         compile_slow_dmg_write(block, REG_68K_D_A);
@@ -520,7 +540,7 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
             break;
 
         case 0xe0: // ld ($ff00 + u8), a
-            compile_ldh_u8_a(block, READ_BYTE(src_ptr++));
+            compile_ldh_u8_a(block, ctx, READ_BYTE(src_ptr++));
             break;
 
         case 0xe9: // jp (hl)
@@ -694,7 +714,7 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
                     }
                 }
 
-                compile_ldh_a_u8(block, addr);
+                compile_ldh_a_u8(block, ctx, addr);
             }
             break;
 
@@ -730,8 +750,15 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
             {
                 uint16_t addr = READ_BYTE(src_ptr) | (READ_BYTE(src_ptr + 1) << 8);
                 src_ptr += 2;
-                emit_move_w_dn(block, REG_68K_D_SCRATCH_1, addr);
-                compile_call_dmg_write_a(block);
+                if (addr >= 0xff80 && addr != 0xffff && ctx->hram_base) {
+                    // same direct zero_page store the ldh fast path does;
+                    // $ffff (IE) must go through dmg_write
+                    emit_move_b_dn_abs32(block, REG_68K_D_A,
+                            (uint32_t) (uintptr_t) ctx->hram_base + (addr - 0xff80));
+                } else {
+                    emit_move_w_dn(block, REG_68K_D_SCRATCH_1, addr);
+                    compile_call_dmg_write_a(block);
+                }
             }
             break;
 
@@ -747,6 +774,26 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
                 if (fold) {
                     uint8_t val = ctx->read(ctx->dmg, addr);
                     emit_moveq_dn(block, REG_68K_D_A, val);
+                } else if (addr >= 0xff80 && ctx->hram_base) {
+                    // HRAM/IE: fixed address, same store ldh reads
+                    emit_move_b_abs32_dn(block,
+                            (uint32_t) (uintptr_t) ctx->hram_base + (addr - 0xff80),
+                            REG_68K_D_A);
+                } else if (addr >= 0xc000 && addr < 0xd000 && ctx->wram_base) {
+                    emit_move_b_abs32_dn(block,
+                            (uint32_t) (uintptr_t) ctx->wram_base + (addr - 0xc000),
+                            REG_68K_D_A);
+                } else if ((addr >= 0x8000 && addr < 0xa000)
+                        || (addr >= 0xd000 && addr < 0xfe00)) {
+                    // VRAM/banked WRAM/echo pages are always mapped
+                    // (possibly rebanked), so resolve through read_page
+                    // with no null check
+                    emit_move_w_dn(block, REG_68K_D_SCRATCH_0,
+                            (addr >> 8) * 4);
+                    emit_movea_l_idx_an_an(block, 0, REG_68K_A_READ_PAGE,
+                            REG_68K_D_SCRATCH_0, REG_68K_A_SCRATCH_1);
+                    emit_move_b_disp_an_dn(block, (int16_t) addr,
+                            REG_68K_A_SCRATCH_1, REG_68K_D_A);
                 } else {
                     emit_move_w_dn(block, REG_68K_D_SCRATCH_1, addr);
                     compile_call_dmg_read_a(block);
@@ -757,6 +804,24 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
         case 0x76:
             compile_halt(block, src_address + src_ptr);
             done = 1;
+            break;
+
+        case 0x05: // dec b
+        case 0x3d: // dec a
+            // counted empty delay loop: dec r; jr nz, -3 (OAM DMA waits)
+            if (READ_BYTE(src_ptr) == 0x20
+                    && (int8_t) READ_BYTE(src_ptr + 1) == -3) {
+                uint16_t loop_pc = src_address + src_ptr - 1;
+                if (ctx->cache_store) {
+                    ctx->cache_store(loop_pc, ctx->current_bank,
+                            (void *) (block->code + m68k_offsets[src_ptr - 1]));
+                }
+                compile_delay_loop(block, op, loop_pc,
+                        src_address + src_ptr + 2);
+                src_ptr += 2;
+                break;
+            }
+            compile_alu_op(block, op, ctx, src_address, &src_ptr);
             break;
 
         default:

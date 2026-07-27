@@ -35,10 +35,20 @@ typedef struct {
     /* 50 */ u32 wake_limit;  // CPU cycles from the last sync to the
                               // earliest deadline (doubled in double speed);
                               // dispatcher exit budget and HALT/idle skip
+    /* 54 */ u32 skipped_cycles;  // GB6_PROFILING: cycles fast-forwarded
+    /* 58 */ u32 ly_clamp_skips;  // GB6_PROFILING: LY-wait clamp skip count
 } jit_context;
 
 extern jit_context jit_ctx;
 extern int jit_halted;
+
+// read_cycles stashes the block's countdown (D2) at each C call; the
+// in-flight executed cycles are its distance from wake_limit. Both are
+// adjusted in tandem by dmg_budget_touch, keeping this difference valid
+static inline u32 jit_in_flight(void)
+{
+    return jit_ctx.wake_limit - jit_ctx.read_cycles;
+}
 
 void jit_init(struct dmg *dmg);
 

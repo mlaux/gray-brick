@@ -199,7 +199,7 @@ int cgb_write_reg(struct cgb_state *cgb, struct dmg *dmg, u16 address, u8 data)
                 // Temporarily add in-flight PPU cycles so hdma_sync sees
                 // the correct current scanline.
                 int ppu_adj = (cgb->double_speed && !ignore_double_speed)
-                    ? (jit_ctx.read_cycles >> 1) : jit_ctx.read_cycles;
+                    ? (jit_in_flight() >> 1) : jit_in_flight();
                 dmg->frame_cycles += ppu_adj;
                 hdma_sync(dmg);
                 dmg->frame_cycles -= ppu_adj;

@@ -33,7 +33,7 @@ static int dmg_double_speed(struct dmg *dmg)
 // on this; the frame events run on the frame_cycles PPU clock
 static u32 dmg_now_cpu(struct dmg *dmg)
 {
-    return dmg->total_cycles + jit_ctx.read_cycles;
+    return dmg->total_cycles + jit_in_flight();
 }
 
 // the PPU-cycle beam position, frame-relative and unwrapped, including
@@ -41,7 +41,7 @@ static u32 dmg_now_cpu(struct dmg *dmg)
 // compare correctly once the sync absorbs the block's cycles
 static u32 dmg_now_ppu(struct dmg *dmg)
 {
-    u32 in_flight = jit_ctx.read_cycles;
+    u32 in_flight = jit_in_flight();
     if (dmg_double_speed(dmg)) {
         in_flight >>= 1;
     }
@@ -63,6 +63,10 @@ static void dmg_budget_touch(struct dmg *dmg)
         dist <<= 1;
     }
     if (dist < jit_ctx.wake_limit) {
+        // shrink the stashed countdown by the same amount so the
+        // in-flight count stays valid and the block's D2 reload sees
+        // the tightened budget
+        jit_ctx.read_cycles -= jit_ctx.wake_limit - dist;
         jit_ctx.wake_limit = dist;
     }
 }

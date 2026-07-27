@@ -11,11 +11,17 @@
 #define LINE_CYCLES  456
 #define FRAME_CYCLES 70224
 
-// fast-forward D2 to jit_ctx.wake_limit and exit at next_pc so the wait re-checks
+// fast-forward the countdown to 0 (the wake deadline) and exit at
+// next_pc so the wait re-checks
 static void emit_wake_skip(struct code_block *block, int next_pc)
 {
-    // move.l JIT_CTX_WAKE_LIMIT(a4), d2
-    emit_move_l_disp_an_dn(block, JIT_CTX_WAKE_LIMIT, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
+#ifdef GB6_PROFILING
+    // D2 is still the live countdown here, so it is exactly what the
+    // fast-forward is about to skip
+    emit_add_l_dn_disp_an(block, REG_68K_D_CYCLE_COUNT, JIT_CTX_SKIPPED,
+            REG_68K_A_CTX);
+#endif
+    emit_moveq_dn(block, REG_68K_D_CYCLE_COUNT, 0);
     // move.l #next_pc, d3
     emit_move_l_dn(block, REG_68K_D_NEXT_PC, next_pc);
     emit_rts(block);
@@ -33,17 +39,25 @@ static void emit_ly_wait_clamp(struct code_block *block, uint16_t loop_pc)
     emit_add_l_dn_dn(block, REG_68K_D_CYCLE_COUNT, REG_68K_D_CYCLE_COUNT);
     patch_branch_b(block, single_speed);
 
+    // d1 = wake_limit - dist: the countdown value at the wait's end.
+    // borrow means the target is past the wake deadline
     emit_move_l_disp_an_dn(block, JIT_CTX_WAKE_LIMIT, REG_68K_A_CTX,
             REG_68K_D_SCRATCH_1);
-    emit_cmp_l_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_CYCLE_COUNT);
+    emit_sub_l_dn_dn(block, REG_68K_D_CYCLE_COUNT, REG_68K_D_SCRATCH_1);
     size_t in_reach = block->length;
-    emit_bls_b(block, 0);
+    emit_bcc_s(block, 0);
 
-    emit_move_l_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_CYCLE_COUNT);
+#ifdef GB6_PROFILING
+    // the caller loaded the wait distance over D2, so the skipped amount
+    // is gone here - count the events so the shortfall in SKIPPED is visible
+    emit_addq_l_disp_an(block, 1, JIT_CTX_LY_SKIPS, REG_68K_A_CTX);
+#endif
+    emit_moveq_dn(block, REG_68K_D_CYCLE_COUNT, 0);
     emit_move_l_dn(block, REG_68K_D_NEXT_PC, loop_pc);
     emit_rts(block);
 
     patch_branch_b(block, in_reach);
+    emit_move_l_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_CYCLE_COUNT);
 }
 
 // the loop condition is already false, fall through
@@ -62,7 +76,7 @@ static void emit_ly_exit_now(
         emit_move_l_dn_dn(block, fc_reg, REG_68K_D_A);
     }
     emit_moveq_dn(block, REG_68K_D_FLAGS, flags);
-    emit_addi_l_dn(block, REG_68K_D_CYCLE_COUNT, exit_cycles);
+    emit_add_cycles(block, exit_cycles);
     emit_move_l_dn(block, REG_68K_D_NEXT_PC, next_pc);
     emit_rts(block);
 }
@@ -288,7 +302,7 @@ void compile_ly_wait_reg(
         // on line N right now: exit with A = N already in place
         patch_branch_b(block, inside);
         emit_moveq_dn(block, REG_68K_D_FLAGS, 0x04);
-        emit_addi_l_dn(block, REG_68K_D_CYCLE_COUNT, exit_cycles);
+        emit_add_cycles(block, exit_cycles);
         emit_move_l_dn(block, REG_68K_D_NEXT_PC, next_pc);
         emit_rts(block);
 
@@ -362,12 +376,104 @@ void compile_ly_wait_reg(
                 exit_cycles, next_pc);
         patch_branch_b(block, exactly);
         emit_moveq_dn(block, REG_68K_D_FLAGS, 0x04);
-        emit_addi_l_dn(block, REG_68K_D_CYCLE_COUNT, exit_cycles);
+        emit_add_cycles(block, exit_cycles);
         emit_move_l_dn(block, REG_68K_D_NEXT_PC, next_pc);
         emit_rts(block);
         break;
     }
     }
+}
+
+// synthesize a counted busy-wait: dec a/b; jr nz, -3 with an empty body
+// (the classic OAM DMA delay). charges the whole loop's cycles at once,
+// clamped to wake_limit; a clamped exit resumes at the dec so the loop
+// re-fuses next dispatch with the remaining count
+void compile_delay_loop(
+    struct code_block *block,
+    uint8_t dec_op,
+    uint16_t loop_pc,
+    uint16_t next_pc
+) {
+    size_t past_wake, full, j_ok, done_exit;
+
+    flush_cycles(block);
+
+    // d0 = counter value, 0 meaning 256
+    emit_moveq_dn(block, REG_68K_D_SCRATCH_0, 0);
+    if (dec_op == 0x05) {
+        emit_move_l_dn_dn(block, REG_68K_D_BC, REG_68K_D_SCRATCH_1);
+        emit_swap(block, REG_68K_D_SCRATCH_1);
+        emit_move_b_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);
+    } else {
+        emit_move_b_dn_dn(block, REG_68K_D_A, REG_68K_D_SCRATCH_0);
+    }
+    emit_subq_w_dn(block, REG_68K_D_SCRATCH_0, 1);
+    emit_andi_w_dn(block, REG_68K_D_SCRATCH_0, 0xff);
+    emit_addq_w_dn(block, REG_68K_D_SCRATCH_0, 1);
+
+    // d3 = N, d0 = 16N - 8: the whole loop is 16N - 4 and the dec's 4
+    // was already deferred
+    emit_move_w_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_NEXT_PC);
+    emit_lsl_w_imm_dn(block, 4, REG_68K_D_SCRATCH_0);
+    emit_subq_w_dn(block, REG_68K_D_SCRATCH_0, 8);
+
+    // d1 = budget remaining (the countdown itself); <= 0 means the wake
+    // deadline is already due
+    emit_move_l_dn_dn(block, REG_68K_D_CYCLE_COUNT, REG_68K_D_SCRATCH_1);
+    past_wake = block->length;
+    emit_ble_b(block, 0);
+    emit_cmp_l_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_SCRATCH_1);
+    full = block->length;
+    emit_bcc_s(block, 0);
+
+    // partial: j = (remaining + 4) / 16 iterations fit, at least 1
+    emit_addq_l_dn(block, REG_68K_D_SCRATCH_1, 4);
+    emit_lsr_l_imm_dn(block, 4, REG_68K_D_SCRATCH_1);
+    j_ok = block->length;
+    emit_bne_b(block, 0);
+    patch_branch_b(block, past_wake);
+    emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 1);
+    patch_branch_b(block, j_ok);
+
+    // charge 16j - 4, counter -= j, Z=0 C preserved
+    emit_move_l_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);
+    emit_lsl_w_imm_dn(block, 4, REG_68K_D_SCRATCH_1);
+    emit_subq_w_dn(block, REG_68K_D_SCRATCH_1, 4);
+    emit_sub_l_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_CYCLE_COUNT);
+    emit_sub_w_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_NEXT_PC);
+    if (dec_op == 0x05) {
+        emit_swap(block, REG_68K_D_BC);
+        emit_move_b_dn_dn(block, REG_68K_D_NEXT_PC, REG_68K_D_BC);
+        emit_swap(block, REG_68K_D_BC);
+    } else {
+        emit_move_b_dn_dn(block, REG_68K_D_NEXT_PC, REG_68K_D_A);
+    }
+    emit_andi_b_dn(block, REG_68K_D_FLAGS, 0x01);
+    emit_tst_b_dn(block, REG_68K_D_NEXT_PC);
+    done_exit = block->length;
+    emit_beq_b(block, 0);
+    emit_move_l_dn(block, REG_68K_D_NEXT_PC, loop_pc);
+    emit_rts(block);
+
+    // forced j drained the counter: final jr untaken is 4 cheaper
+    patch_branch_b(block, done_exit);
+    emit_addq_l_dn(block, REG_68K_D_CYCLE_COUNT, 4);
+    emit_ori_b_dn(block, REG_68K_D_FLAGS, 0x04);
+    emit_move_l_dn(block, REG_68K_D_NEXT_PC, next_pc);
+    emit_rts(block);
+
+    // full: charge 16N - 8, counter = 0, Z=1, block continues
+    patch_branch_b(block, full);
+    emit_sub_l_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_CYCLE_COUNT);
+    if (dec_op == 0x05) {
+        emit_swap(block, REG_68K_D_BC);
+        emit_andi_w_dn(block, REG_68K_D_BC, 0xff00);
+        emit_swap(block, REG_68K_D_BC);
+    } else {
+        emit_moveq_dn(block, REG_68K_D_A, 0);
+    }
+    emit_andi_b_dn(block, REG_68K_D_FLAGS, 0x01);
+    emit_ori_b_dn(block, REG_68K_D_FLAGS, 0x04);
 }
 
 void compile_halt(struct code_block *block, int next_pc)

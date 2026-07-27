@@ -375,6 +375,14 @@ void emit_addi_l_dn(struct code_block *block, uint8_t dreg, uint32_t imm)
     emit_long(block, imm);
 }
 
+// subi.l #imm, Dn
+void emit_subi_l_dn(struct code_block *block, uint8_t dreg, uint32_t imm)
+{
+    // 0000 0100 10 000 rrr
+    emit_word(block, 0x0480 | dreg);
+    emit_long(block, imm);
+}
+
 // or.b Ds, Dd (result to Dd)
 void emit_or_b_dn_dn(struct code_block *block, uint8_t src, uint8_t dest)
 {
@@ -679,6 +687,20 @@ void emit_movea_l_imm32(struct code_block *block, uint8_t areg, uint32_t val)
     emit_long(block, val);
 }
 
+void emit_move_b_abs32_dn(struct code_block *block, uint32_t addr, uint8_t dreg)
+{
+    // 00 01 ddd 000 111 001 = 0x1039 | (dreg << 9)
+    emit_word(block, 0x1039 | (dreg << 9));
+    emit_long(block, addr);
+}
+
+void emit_move_b_dn_abs32(struct code_block *block, uint8_t dreg, uint32_t addr)
+{
+    // 00 01 001 111 000 ddd = 0x13c0 | dreg
+    emit_word(block, 0x13c0 | dreg);
+    emit_long(block, addr);
+}
+
 // eor.b Ds, Dd - XOR data registers (result to Dd)
 void emit_eor_b_dn_dn(struct code_block *block, uint8_t src, uint8_t dest)
 {
@@ -848,6 +870,13 @@ void emit_tst_b_dn(struct code_block *block, uint8_t dreg)
     emit_word(block, 0x4a00 | dreg);
 }
 
+// tst.l Dn - test long in data register (sets Z and N flags)
+void emit_tst_l_dn(struct code_block *block, uint8_t dreg)
+{
+    // 0100 1010 10 000 rrr
+    emit_word(block, 0x4a80 | dreg);
+}
+
 // lsr.w #count, Dn - logical shift right word by immediate (1-8)
 void emit_lsr_w_imm_dn(struct code_block *block, uint8_t count, uint8_t dreg)
 {
@@ -999,6 +1028,18 @@ void emit_add_l_disp_an_dn(
 ) {
     // 1101 ddd 0 10 101 aaa
     emit_word(block, 0xd0a8 | (dreg << 9) | areg);
+    emit_word(block, disp);
+}
+
+// add.l Dn, d(An) - add data register into memory long
+void emit_add_l_dn_disp_an(
+    struct code_block *block,
+    uint8_t dreg,
+    int16_t disp,
+    uint8_t areg
+) {
+    // 1101 ddd 1 10 101 aaa
+    emit_word(block, 0xd1a8 | (dreg << 9) | areg);
     emit_word(block, disp);
 }
 
@@ -1201,6 +1242,28 @@ void emit_bcs_b(struct code_block *block, int8_t disp)
     emit_word(block, 0x6500 | ((uint8_t) disp));
 }
 
+// bgt.b - branch if greater than (signed) with 8-bit displacement
+void emit_bgt_b(struct code_block *block, int8_t disp)
+{
+    // 0110 1110 dddd dddd
+    emit_word(block, 0x6e00 | ((uint8_t) disp));
+}
+
+// bgt.w - branch if greater than (signed) with 16-bit displacement
+void emit_bgt_w(struct code_block *block, int16_t disp)
+{
+    // 0110 1110 0000 0000, then displacement word
+    emit_word(block, 0x6e00);
+    emit_word(block, disp);
+}
+
+// ble.b - branch if less than or equal (signed) with 8-bit displacement
+void emit_ble_b(struct code_block *block, int8_t disp)
+{
+    // 0110 1111 dddd dddd
+    emit_word(block, 0x6f00 | ((uint8_t) disp));
+}
+
 // bne.b - branch if not equal with 8-bit displacement
 void emit_bne_b(struct code_block *block, int8_t disp)
 {
@@ -1294,18 +1357,18 @@ void emit_cmp_l_disp_an_dn(
     emit_word(block, disp);
 }
 
-// emit_add_cycles - add GB cycles to context, picks optimal instruction
+// emit_add_cycles - charge GB cycles to the ledger. D2 counts DOWN from
+// wake_limit, so charging is a subtract and the CCR result (N/Z) is the
+// budget check: <= 0 means the wake deadline is due
 void emit_add_cycles(struct code_block *block, int cycles)
 {
     if (cycles <= 0) {
         return;
     }
     if (cycles <= 8) {
-        emit_addq_l_dn(block, REG_68K_D_CYCLE_COUNT, cycles);
-        // emit_addq_l_disp_an(block, cycles, JIT_CTX_CYCLES, REG_68K_A_CTX);
+        emit_subq_l_dn(block, REG_68K_D_CYCLE_COUNT, cycles);
     } else {
-        emit_addi_l_dn(block, REG_68K_D_CYCLE_COUNT, cycles);
-        // emit_addi_l_disp_an(block, cycles, JIT_CTX_CYCLES, REG_68K_A_CTX);
+        emit_subi_l_dn(block, REG_68K_D_CYCLE_COUNT, cycles);
     }
 }
 
@@ -1317,11 +1380,11 @@ void emit_add_cycles(struct code_block *block, int cycles)
 // 14 bytes total
 void emit_patchable_exit(struct code_block *block)
 {
-    // cmp.l JIT_CTX_WAKE_LIMIT(a4), d2 (4 bytes)
-    emit_cmp_l_disp_an_dn(block, JIT_CTX_WAKE_LIMIT, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
+    // tst.l d2 (2 bytes)
+    emit_tst_l_dn(block, REG_68K_D_CYCLE_COUNT);
 
-    // bcc.s +6 = skip over movea.l + jsr to rts (2 bytes)
-    emit_bcc_s(block, 6);
+    // ble.s +6 = skip over movea.l + jsr to rts (2 bytes)
+    emit_ble_b(block, 6);
 
     // movea.l JIT_CTX_PATCH_HELPER(a4), a0 (4 bytes)
     emit_movea_l_disp_an_an(block, JIT_CTX_PATCH_HELPER, REG_68K_A_CTX, REG_68K_A_SCRATCH_1);

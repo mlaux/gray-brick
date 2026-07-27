@@ -72,6 +72,9 @@
 #define JIT_CTX_WAKE_LIMIT  80  // u32: CPU-cycle distance to the earliest
                                 // deadline; dispatcher exit budget and the
                                 // HALT/idle fast-forward target
+// GB6_PROFILING only, written by the fast-forward paths
+#define JIT_CTX_SKIPPED     84  // u32: GB cycles skipped by wake_skip
+#define JIT_CTX_LY_SKIPS    88  // u32: LY-wait clamp skips (cycles unknown)
 
 struct code_block {
     // number of bytes populated in code[]
@@ -99,6 +102,9 @@ void flush_cycles(struct code_block *block);
 
 // GB offsets targeted by backward jumps in the current block (pre-scan)
 extern uint8_t flush_at[256];
+
+// SM83 instruction lengths (CB counted as 2)
+extern const uint8_t insn_length[256];
 
 typedef uint8_t (*dmg_read_fn)(void *dmg, uint16_t address);
 

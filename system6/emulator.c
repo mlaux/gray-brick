@@ -46,6 +46,8 @@
 
 #include "compiler.h"
 
+#define Ticks (*(volatile u32 *) 0x16a)
+
 static void UpdateMenuItems(void);
 
 // Called by dmg.c when ROM bank switches
@@ -385,7 +387,7 @@ void StartEmulation(void)
 
 static void CheckPendingTasks(void)
 {
-  unsigned long now = TickCount();
+  u32 now = Ticks;
   if (soft_reset_release_tick && now >= soft_reset_release_tick) {
     dmg_set_button(&dmg, FIELD_ACTION,
         BUTTON_A | BUTTON_B | BUTTON_SELECT | BUTTON_START, 0);
@@ -639,7 +641,7 @@ void OnMenuAction(long action)
       if (g_wp) {
         dmg_set_button(&dmg, FIELD_ACTION,
             BUTTON_A | BUTTON_B | BUTTON_SELECT | BUTTON_START, 1);
-        soft_reset_release_tick = TickCount() + SOFT_RESET_TICKS;
+        soft_reset_release_tick = Ticks + SOFT_RESET_TICKS;
       }
     }
     else if(item == FILE_CLOSE) {
@@ -839,7 +841,10 @@ static int CheckFinderFiles(void)
 
 int main(int argc, char *argv[])
 {
-  int finderResult, last_process;
+  int finderResult;
+  u32 last_process, now;
+  SwapInstructionCache(true);
+  SwapDataCache(true);
 
   InitToolbox();
   DetectScreenDepth();
@@ -861,11 +866,15 @@ int main(int argc, char *argv[])
   }
 
   last_frame_count = 0;
-  last_process = TickCount();
+  last_process = Ticks;
 
   while (app_running) {
-    if (!ProcessEvents()) {
-      break;
+    now = Ticks;
+    if ((now - last_process >= 15)) {
+      if (!ProcessEvents()) {
+        break;
+      }
+      last_process = now;
     }
 
     if (g_wp) {

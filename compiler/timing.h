@@ -44,4 +44,12 @@ void compile_hram_idle_wait(
     uint16_t loop_pc
 );
 
+// synthesize a counted busy-wait: dec a/b; jr nz, -3 with an empty body
+void compile_delay_loop(
+    struct code_block *block,
+    uint8_t dec_op,
+    uint16_t loop_pc,
+    uint16_t next_pc
+);
+
 #endif

@@ -2,9 +2,10 @@
 #include "emitters.h"
 #include "interop.h"
 
-// Retro68 uses D0-D2 as scratch so I have to push cycle count before calling
-// back into C. i'm not sure if this is a mac calling convention or specific
-// to this gcc port.
+// Retro68 uses D0-D2 as scratch, so the cycle countdown is stashed in
+// jit_ctx.read_cycles across C calls and reloaded after. The C side
+// doubles as a reader (lazy DIV/LY need the exact clock) and a writer
+// (budget_touch shrinks it in tandem with wake_limit).
 // also interestingly, it doesn't appear to use the "A5 world" or A6, so i can
 // use those registers while in the JIT world. calling back into C won't mess
 // them up
@@ -41,17 +42,17 @@ void compile_slow_dmg_write(struct code_block *block, uint8_t val_reg)
     // D2 has to be exact for lazy register evaluation. no-op when reached
     // through the inline wrapper, which already flushed before the split
     flush_cycles(block);
-    // store current cycle count for lazy register evaluation
+    // stash the countdown for lazy register evaluation; the C side
+    // shrinks it in place when a write tightens wake_limit, so the
+    // reload below picks up the new budget (retro68 scratches D2)
     emit_move_l_dn_disp_an(block, REG_68K_D_CYCLE_COUNT, JIT_CTX_READ_CYCLES, REG_68K_A_CTX);
-    // and push so retro68 doesn't erase
-    emit_push_l_dn(block, REG_68K_D_CYCLE_COUNT); // 2
     emit_push_b_dn(block, val_reg); // 2
     emit_push_w_dn(block, REG_68K_D_SCRATCH_1); // 2
     emit_push_l_disp_an(block, JIT_CTX_DMG, REG_68K_A_CTX); // 4
     emit_movea_l_disp_an_an(block, JIT_CTX_WRITE, REG_68K_A_CTX, REG_68K_A_SCRATCH_1); // 4
     emit_jsr_ind_an(block, REG_68K_A_SCRATCH_1); // 2
     emit_addq_l_an(block, 7, 8); // 2
-    emit_pop_l_dn(block, REG_68K_D_CYCLE_COUNT); // 2
+    emit_move_l_disp_an_dn(block, JIT_CTX_READ_CYCLES, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
 }
 
 // inline dmg_write with page table fast path - addr in D1, value in val_reg
@@ -109,15 +110,15 @@ void compile_slow_dmg_read(struct code_block *block)
     // D2 has to be exact for lazy DIV/LY evaluation. no-op when reached
     // through the inline wrapper, which already flushed before the split
     flush_cycles(block);
-    // store current cycle count for DIV/LY evaluation
+    // stash the countdown for DIV/LY evaluation and reload after (see
+    // compile_slow_dmg_write)
     emit_move_l_dn_disp_an(block, REG_68K_D_CYCLE_COUNT, JIT_CTX_READ_CYCLES, REG_68K_A_CTX); // 4
-    emit_push_l_dn(block, REG_68K_D_CYCLE_COUNT); // 2
     emit_push_w_dn(block, REG_68K_D_SCRATCH_1); // 2
     emit_push_l_disp_an(block, JIT_CTX_DMG, REG_68K_A_CTX); // 4
     emit_movea_l_disp_an_an(block, JIT_CTX_READ, REG_68K_A_CTX, REG_68K_A_SCRATCH_1); // 4
     emit_jsr_ind_an(block, REG_68K_A_SCRATCH_1); // 2
     emit_addq_l_an(block, 7, 6); // 2
-    emit_pop_l_dn(block, REG_68K_D_CYCLE_COUNT); // 2
+    emit_move_l_disp_an_dn(block, JIT_CTX_READ_CYCLES, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
 }
 
 // Call dmg_read(dmg, addr) - addr in D1, result stays in D0
@@ -160,6 +161,9 @@ void compile_call_dmg_read_a(struct code_block *block)
 void compile_call_ei_di(struct code_block *block, int enabled)
 {
     flush_cycles(block);
+    // EI tightens wake_limit via budget_touch, and dmg_ei_di needs the
+    // exact clock; stash and reload D2 like the memory slow paths
+    emit_move_l_dn_disp_an(block, REG_68K_D_CYCLE_COUNT, JIT_CTX_READ_CYCLES, REG_68K_A_CTX);
     // push enabled
     emit_moveq_dn(block, REG_68K_D_SCRATCH_1, (int8_t) enabled);
     // i actually have this as a 16-bit int for some reason
@@ -172,6 +176,7 @@ void compile_call_ei_di(struct code_block *block, int enabled)
     emit_jsr_ind_an(block, REG_68K_A_SCRATCH_1);
     // clean up stack
     emit_addq_l_an(block, 7, 6);
+    emit_move_l_disp_an_dn(block, JIT_CTX_READ_CYCLES, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
 }
 
 // Slow path for dmg_read16 - addr in D1.w, result in D0.w
@@ -179,13 +184,12 @@ void compile_slow_dmg_read16(struct code_block *block)
 {
     flush_cycles(block);
     emit_move_l_dn_disp_an(block, REG_68K_D_CYCLE_COUNT, JIT_CTX_READ_CYCLES, REG_68K_A_CTX);
-    emit_push_l_dn(block, REG_68K_D_CYCLE_COUNT);
     emit_push_w_dn(block, REG_68K_D_SCRATCH_1);
     emit_push_l_disp_an(block, JIT_CTX_DMG, REG_68K_A_CTX);
     emit_movea_l_disp_an_an(block, JIT_CTX_READ16, REG_68K_A_CTX, REG_68K_A_SCRATCH_1);
     emit_jsr_ind_an(block, REG_68K_A_SCRATCH_1);
     emit_addq_l_an(block, 7, 6);
-    emit_pop_l_dn(block, REG_68K_D_CYCLE_COUNT);
+    emit_move_l_disp_an_dn(block, JIT_CTX_READ_CYCLES, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
 }
 
 // Call dmg_read16(dmg, addr) - addr in D1.w, result in D0.w
@@ -246,14 +250,13 @@ void compile_slow_dmg_write16(struct code_block *block)
 {
     flush_cycles(block);
     emit_move_l_dn_disp_an(block, REG_68K_D_CYCLE_COUNT, JIT_CTX_READ_CYCLES, REG_68K_A_CTX);
-    emit_push_l_dn(block, REG_68K_D_CYCLE_COUNT);
     emit_push_w_dn(block, REG_68K_D_SCRATCH_0);
     emit_push_w_dn(block, REG_68K_D_SCRATCH_1);
     emit_push_l_disp_an(block, JIT_CTX_DMG, REG_68K_A_CTX);
     emit_movea_l_disp_an_an(block, JIT_CTX_WRITE16, REG_68K_A_CTX, REG_68K_A_SCRATCH_1);
     emit_jsr_ind_an(block, REG_68K_A_SCRATCH_1);
     emit_addq_l_an(block, 7, 8);
-    emit_pop_l_dn(block, REG_68K_D_CYCLE_COUNT);
+    emit_move_l_disp_an_dn(block, JIT_CTX_READ_CYCLES, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
 }
 
 // Call dmg_write16(dmg, addr, data) - addr in D1.w, data in D0.w
@@ -319,6 +322,7 @@ void compile_call_dmg_write16_d0(struct code_block *block)
 void compile_call_stop(struct code_block *block, int next_pc)
 {
     flush_cycles(block);
+    emit_move_l_dn_disp_an(block, REG_68K_D_CYCLE_COUNT, JIT_CTX_READ_CYCLES, REG_68K_A_CTX);
     // push dmg pointer
     emit_push_l_disp_an(block, JIT_CTX_DMG, REG_68K_A_CTX);  // 4
     // load stop_func address
@@ -327,6 +331,7 @@ void compile_call_stop(struct code_block *block, int next_pc)
     emit_jsr_ind_an(block, REG_68K_A_SCRATCH_1);  // 2
     // clean up stack
     emit_addq_l_an(block, 7, 4);  // 2
+    emit_move_l_disp_an_dn(block, JIT_CTX_READ_CYCLES, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
 
     // D0 = return value. If 0, continue execution. If non-zero, halt.
     emit_tst_b_dn(block, REG_68K_D_SCRATCH_0);  // 2

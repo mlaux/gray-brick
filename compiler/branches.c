@@ -50,13 +50,11 @@ int compile_jr(
             return 0;
         }
 
-        // Larger loop - check cycle count, exit to dispatcher if >= budget
-        // cmp.l JIT_CTX_WAKE_LIMIT(a4), d2
-        emit_cmp_l_disp_an_dn(block, JIT_CTX_WAKE_LIMIT, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
-
-        // bcs = branch if carry set = branch if cycles < exit budget
+        // Larger loop - the flush above subtracted from D2 and set the
+        // flags: budget remains while D2 > 0 (pending >= 12 at a jr, so
+        // the flush always emits)
         size_t skip = block->length;
-        emit_bcs_b(block, 0);
+        emit_bgt_b(block, 0);
         // Exit to dispatcher with target PC
         emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
         emit_move_w_dn(block, REG_68K_D_NEXT_PC, target_gb_pc);
@@ -163,12 +161,13 @@ void compile_jr_cond(
 
         // .check_cycles:
         patch_branch_b(block, cond);
+        // the charge subtracts from D2 and sets the flags: budget
+        // remains while D2 > 0
         emit_add_cycles(block, pending_cycles + 4);
-        emit_cmp_l_disp_an_dn(block, JIT_CTX_WAKE_LIMIT, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
 
-        // bcs.w to native loop target (cycles < exit budget)
+        // bgt.w to native loop target (budget remains)
         m68k_disp = (int16_t) target_m68k - (int16_t) (block->length + 2);
-        emit_bcs_w(block, m68k_disp);
+        emit_bgt_w(block, m68k_disp);
 
         // Exit to dispatcher (cycles >= exit budget)
         emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);

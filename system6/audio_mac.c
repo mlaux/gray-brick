@@ -186,11 +186,6 @@ static void gen_samples(unsigned char *p)
 // called at interrupt time when a buffer is exhausted
 static pascal void DoubleBackProc(SndChannelPtr chan, SndDoubleBufferPtr buf)
 {
-#ifdef GB6_PROFILING
-    unsigned char prev_phase = prof_phase;
-    PROF_SET(PROF_AUDIO);
-#endif
-
     if (!g_audio || (s32) (samples_out - emu_samples) > STALL_SAMPLES) {
         memset(buf->dbSoundData, 0x80, BUFFER_SAMPLES);
     } else {
@@ -200,10 +195,6 @@ static pascal void DoubleBackProc(SndChannelPtr chan, SndDoubleBufferPtr buf)
     samples_out += BUFFER_SAMPLES;
     buf->dbNumFrames = BUFFER_SAMPLES;
     buf->dbFlags |= dbBufferReady;
-
-#ifdef GB6_PROFILING
-    PROF_SET(prev_phase);
-#endif
 }
 
 int audio_mac_init(struct audio *audio)

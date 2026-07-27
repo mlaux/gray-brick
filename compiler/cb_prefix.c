@@ -55,7 +55,7 @@ static int get_reg_for_op(struct code_block *block, int gb_reg)
         return REG_68K_D_SCRATCH_1;
     case 6: // (HL) - memory indirect
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
-        compile_slow_dmg_read(block);  // result in D0
+        compile_call_dmg_read(block);  // result in D0
         emit_move_b_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_SCRATCH_1);
         return REG_68K_D_SCRATCH_1;
     case 7: // A - directly accessible
@@ -98,7 +98,7 @@ static void put_reg_result(struct code_block *block, int gb_reg)
     case 6: // (HL) - write back to memory
         emit_move_b_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
-        compile_slow_dmg_write(block, 0);
+        compile_call_dmg_write_d0(block);
         break;
     case 7: // A - already in place
         break;
@@ -240,7 +240,7 @@ static void compile_bit_reg(struct code_block *block, int bit, int gb_reg)
         break;
     case 6: // (HL) - memory indirect
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
-        compile_slow_dmg_read(block);  // result in D0
+        compile_call_dmg_read(block);  // result in D0
         emit_btst_imm_dn(block, bit, REG_68K_D_SCRATCH_0);
         break;
     case 7: // A
@@ -278,10 +278,10 @@ static void compile_res_reg(struct code_block *block, int bit, int gb_reg)
         break;
     case 6: // (HL) - read, modify, write
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
-        compile_slow_dmg_read(block);  // D0 = memory[HL]
+        compile_call_dmg_read(block);  // D0 = memory[HL]
         emit_bclr_imm_dn(block, bit, REG_68K_D_SCRATCH_0);  // clear bit in D0
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);  // D1 = address
-        compile_slow_dmg_write(block, 0);
+        compile_call_dmg_write_d0(block);
         break;
     case 7: // A
         emit_bclr_imm_dn(block, bit, REG_68K_D_A);
@@ -317,10 +317,10 @@ static void compile_set_reg(struct code_block *block, int bit, int gb_reg)
         break;
     case 6: // (HL) - read, modify, write
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
-        compile_slow_dmg_read(block);  // D0 = memory[HL]
+        compile_call_dmg_read(block);  // D0 = memory[HL]
         emit_bset_imm_dn(block, bit, REG_68K_D_SCRATCH_0);  // set bit in D0
         emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);  // D1 = address
-        compile_slow_dmg_write(block, 0);  // write D0 to address D1
+        compile_call_dmg_write_d0(block);  // write D0 to address D1
         break;
     case 7: // A
         emit_bset_imm_dn(block, bit, REG_68K_D_A);
