@@ -58,6 +58,13 @@ struct audio {
     u16 sweep_counter;          // sample counter for 128 Hz sweep tick
     u16 length_counter;         // sample counter for 256 Hz length tick
 
+    // wave RAM unpacked to centered, volume-shifted samples
+    s8 wave_tab[32];
+
+    // mixtab[mix + 128] = ((mix * master) >> 2) + 128
+    u8 mixtab[256];
+    u8 mixtab_master;
+
     // raw register storage for reads
     u8 regs[0x30];
 };

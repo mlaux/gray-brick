@@ -10,11 +10,17 @@
 #include <Sound.h>
 #include <Memory.h>
 #include <Gestalt.h>
+#include <OSUtils.h>
 #include <string.h>
 
 #include "audio_mac.h"
 #include "../src/audio.h"
 #include "../src/prof.h"
+
+// do everything but start the sound manager
+#define AUDIO_BENCH_MUTE 0
+// bypass the Sound Manager entirely
+#define AUDIO_DIRECT_ASC 1
 
 // 4194304 / 11127 = about 377
 #define CYCLES_PER_SAMPLE 377
@@ -36,8 +42,8 @@ static int cycle_accum;
 static u32 emu_samples;          // emulated time in samples, main loop owns
 static volatile u32 samples_out; // real time: samples handed to Sound Manager
 
-// APU register writes waiting to be applied during generation.
-// main loop produces, interrupt gets
+// APU register writes produced by the "main thread" waiting to be applied
+// during generation
 struct apu_event {
     u32 t;
     u16 addr;
@@ -65,6 +71,97 @@ typedef struct {
 
 static SndDoubleBufferHeader dbl_header;
 static MyDoubleBuffer dbl_buffers[2];
+
+#define LM_TICKS (*(volatile u32 *) 0x16a)
+
+#if AUDIO_BENCH_MUTE
+static unsigned char bench_buf[BUFFER_SAMPLES];
+static u32 bench_t0;
+static void gen_samples(unsigned char *p, int samples);
+static void bench_drain(void);
+#endif
+
+#if AUDIO_DIRECT_ASC
+#define LM_SDVOLUME (*(volatile u8 *) 0x260)
+
+#define ASC_BASE 0x50f14000
+#define ASC_FIFO_DEPTH 1024
+
+#define ASC_FIFO_A  (*(volatile u8 *) (ASC_BASE + 0x000))
+#define ASC_VERSION (*(volatile u8 *) (ASC_BASE + 0x800))
+#define ASC_MODE    (*(volatile u8 *) (ASC_BASE + 0x801))
+#define ASC_CONTROL (*(volatile u8 *) (ASC_BASE + 0x802))
+#define ASC_FIFOMODE (*(volatile u8 *) (ASC_BASE + 0x803))
+#define ASC_FIFOSTAT (*(volatile u8 *) (ASC_BASE + 0x804))
+#define ASC_VOLUME  (*(volatile u8 *) (ASC_BASE + 0x806))
+#define ASC_CLOCK   (*(volatile u8 *) (ASC_BASE + 0x807))
+
+#define ASC_CHUNK 128 // mono samples per push, x2 = quarter FIFO
+
+// diagnostics "dl @a78"
+// +0 = chunks pushed
+// +4 = total level-2 interrupts through the thunk
+// +6 = byte0 = OR of every FIFOSTAT byte read,
+//      byte1 = OR of VIA2 IFR at every entry
+//      byte2 = watchdog revivals mod 256
+//      byte3 = CB1 claims mod 256
+// +8 = FIFOSTAT bit1 but not bit0, either empty or full
+static struct {
+    u32 dbg;
+    u16 pushes;
+    u16 entries;
+    u16 bit1_only;
+} asc_stats;
+
+static void gen_samples(unsigned char *p, int samples);
+
+// VIA2 on discrete-VIA2 machines, TODO verify fancy AV quadras, powerbooks
+#define VIA2_BASE 0x50f02000
+#define VIA2_PCR (*(volatile u8 *) (VIA2_BASE + 0x1800))
+#define VIA2_IFR (*(volatile u8 *) (VIA2_BASE + 0x1a00))
+#define VIA2_IER (*(volatile u8 *) (VIA2_BASE + 0x1c00))
+#define VIA2_CB1_BIT 0x10
+
+// Lvl2DT did not work on my machines, use autovector directly, handle
+// CB1 interrupts and chain the rest to the old handler
+#define VEC_LEVEL2 0x68
+
+#define ASC_STAT_A_HALF          0x01
+#define ASC_STAT_A_EMPTY_OR_FULL 0x02
+
+static u32 asc_saved_vec;
+static u8 asc_saved_ier;
+static u32 asc_watch_t;
+static u32 asc_watch_pushes;
+static volatile u8 asc_vec_claimed;
+static volatile u8 asc_in_push;
+static u32 asc_last_push_tick;
+static u16 asc_thunk[16];
+static void asc_watchdog(void);
+
+static u32 read_vbr(void)
+{
+    register u32 v asm("d0");
+    // compiled for 68000 so needs to be .shorts, but this is only called on
+    // 020 and up
+    asm volatile(".short 0x4e7a, 0x0801" : "=r"(v));
+    return v;
+}
+
+#define LEVEL2_VECTOR (*(volatile u32 *) (read_vbr() + VEC_LEVEL2))
+
+static u16 ints_off(void)
+{
+    u16 sr;
+    asm volatile("move.w %%sr,%0\n\tori.w #0x0700,%%sr" : "=d"(sr));
+    return sr;
+}
+
+static void ints_restore(u16 sr)
+{
+    asm volatile("move.w %0,%%sr" : : "d"(sr));
+}
+#endif
 
 // for Mac Plus/SE/Classic
 // #define VIA1_T1CL (*(volatile u8 *) 0xEFE9FE)
@@ -125,6 +222,17 @@ void audio_mac_sync(int cycles)
         emu_samples = out;
     else if ((s32) (emu_samples - out) > MAX_BANK_SAMPLES)
         emu_samples = out + MAX_BANK_SAMPLES;
+
+#if AUDIO_DIRECT_ASC
+    if (snd_running) {
+        asc_watchdog();
+    }
+#endif
+
+#if AUDIO_BENCH_MUTE
+    if (snd_running)
+        bench_drain();
+#endif
 }
 
 void audio_mac_write(struct audio *audio, u16 addr, u8 value)
@@ -158,12 +266,12 @@ void audio_mac_write(struct audio *audio, u16 addr, u8 value)
 }
 
 // generate one buffer, applying queued register writes at their offsets
-static void gen_samples(unsigned char *p)
+static void gen_samples(unsigned char *p, int samples)
 {
     int done = 0;
 
-    while (done < BUFFER_SAMPLES) {
-        int n = BUFFER_SAMPLES - done;
+    while (done < samples) {
+        int n = samples - done;
 
         if (evq_read != evq_write) {
             struct apu_event *e = &evq[evq_read];
@@ -183,13 +291,265 @@ static void gen_samples(unsigned char *p)
     }
 }
 
+#if AUDIO_BENCH_MUTE
+// stand in for DoubleBackProc
+static void bench_drain(void)
+{
+    u32 real = ((LM_TICKS - bench_t0) * 11127) / 60;
+
+    while ((s32) (real - samples_out) >= BUFFER_SAMPLES) {
+        gen_samples(bench_buf, BUFFER_SAMPLES);
+        samples_out += BUFFER_SAMPLES;
+    }
+}
+#endif
+
+#if AUDIO_DIRECT_ASC
+
+static int asc_hw_present(void)
+{
+    long response;
+
+    return Gestalt(gestaltHardwareAttr, &response) == noErr &&
+           (response & (1L << gestaltHasASC));
+}
+
+static void asc_setup_regs(void)
+{
+    ASC_MODE = 0;
+    ASC_FIFOMODE = 0x80; // clear both FIFOs
+    ASC_FIFOMODE = 0;
+    ASC_CONTROL = 0; // mono: FIFO A drives both outputs
+    ASC_CLOCK = 0; // 22257 Hz
+    ASC_VOLUME = (u8) ((LM_SDVOLUME & 7) << 5);
+    ASC_MODE = 1; // FIFO mode, starts draining
+}
+
+static u8 asc_dbg_or, asc_dbg_ifr_or, asc_dbg_revive, asc_dbg_claimed;
+
+static void asc_dbg_update(void)
+{
+    asc_stats.dbg = ((u32) asc_dbg_claimed << 24) | ((u32) asc_dbg_revive << 16) |
+              ((u32) asc_dbg_ifr_or << 8) | asc_dbg_or;
+}
+
+// the idea here was to make it so that system sounds still work and the
+// emulator can re-setup the ASC after they're done, but i don't think this
+// works properly - TODO revisit
+static void asc_reassert(void)
+{
+    ASC_CONTROL = 0;
+    ASC_CLOCK = 0;
+    ASC_VOLUME = (u8) ((LM_SDVOLUME & 7) << 5);
+    ASC_MODE = 1;
+    asc_dbg_update();
+}
+
+// generate and push each sample twice for the 2:1 rate
+static void asc_push_chunk(void)
+{
+    static unsigned char chunk[ASC_CHUNK];
+    signed char mmu;
+    int k;
+
+    // reentrancy guard
+    asc_in_push = 1;
+
+    // same stall rule as the SM path, for menus etc
+    if (!g_audio || (s32) (samples_out - emu_samples) > STALL_SAMPLES) {
+        memset(chunk, 0x80, ASC_CHUNK);
+    } else {
+        gen_samples(chunk, ASC_CHUNK);
+    }
+    samples_out += ASC_CHUNK;
+
+    mmu = true32b;
+    SwapMMUMode(&mmu);
+
+    if (ASC_MODE != 1)
+        asc_reassert();
+
+    for (k = 0; k < ASC_CHUNK; k++) {
+        u8 b = chunk[k];
+        ASC_FIFO_A = b;
+        ASC_FIFO_A = b;
+    }
+
+    SwapMMUMode(&mmu);
+
+    asc_stats.pushes++;
+    asc_last_push_tick = LM_TICKS;
+    asc_in_push = 0;
+}
+
+// called from the thunk at interrupt level 2 with d0-d3/a0-a3 saved
+// handles if it's from the ASC, otherwise chains to the saved handler
+static void asc_vec_handler(void)
+{
+    u8 stat, ifr;
+    signed char mmu;
+
+    mmu = true32b;
+    SwapMMUMode(&mmu);
+    ifr = VIA2_IFR;
+    asc_stats.entries++; // every level-2, audio or not
+    asc_dbg_ifr_or |= ifr & 0x7f;
+    if (!(ifr & VIA2_CB1_BIT)) {
+        // not audio
+        SwapMMUMode(&mmu);
+        asc_vec_claimed = 0;
+        asc_dbg_update();
+        return;
+    }
+    VIA2_IFR = VIA2_CB1_BIT;
+    stat = ASC_FIFOSTAT; // read clears the chip's IRQ source
+    SwapMMUMode(&mmu);
+    asc_vec_claimed = 1;
+    asc_dbg_claimed++;
+
+    if (stat)
+        asc_dbg_or |= stat;
+    if (stat == ASC_STAT_A_EMPTY_OR_FULL)
+        asc_stats.bit1_only++;
+    asc_dbg_update();
+
+    if (!snd_running || asc_in_push)
+        return;
+
+    if (stat & ASC_STAT_A_HALF) {
+        // ready for more audio
+        asc_push_chunk();
+    } else if (stat == ASC_STAT_A_EMPTY_OR_FULL &&
+               LM_TICKS - asc_last_push_tick >= 2) {
+        // empty? use ticks to distinguish between full and empty bc
+        // this bit is set for both. this feels like a hack but works well
+        asc_push_chunk();
+        asc_push_chunk();
+        asc_push_chunk();
+    }
+}
+
+// save scratch, call C, then RTE if claimed or jmp to the saved level-2 handler
+// for everything else
+static void asc_build_thunk(void)
+{
+    u8 *t = (u8 *) asc_thunk;
+
+    t[0] = 0x48; t[1] = 0xe7;   // movem.l d0-d3/a0-a3,-(sp)
+    t[2] = 0xf0; t[3] = 0xf0;
+    t[4] = 0x4e; t[5] = 0xb9;   // jsr asc_vec_handler
+    *(u32 *) (t + 6) = (u32) asc_vec_handler;
+    t[10] = 0x4c; t[11] = 0xdf; // movem.l (sp)+,d0-d3/a0-a3
+    t[12] = 0x0f; t[13] = 0x0f;
+    t[14] = 0x4a; t[15] = 0x39; // tst.b asc_vec_claimed
+    *(u32 *) (t + 16) = (u32) &asc_vec_claimed;
+    t[20] = 0x67; t[21] = 0x02; // beq.s +2 (to the jmp)
+    t[22] = 0x4e; t[23] = 0x73; // rte
+    t[24] = 0x4e; t[25] = 0xf9; // jmp saved handler
+    *(u32 *) (t + 26) = asc_saved_vec;
+
+    FlushCodeCache();
+}
+
+// check if no pushes in 1/2 second, if so restart the sound
+static void asc_watchdog(void)
+{
+    signed char mmu;
+
+    if (LM_TICKS - asc_watch_t < 30)
+        return;
+    asc_watch_t = LM_TICKS;
+
+    if (asc_stats.pushes != asc_watch_pushes) {
+        asc_watch_pushes = asc_stats.pushes;
+        return;
+    }
+
+    mmu = true32b;
+    SwapMMUMode(&mmu);
+    if (ASC_MODE != 1)
+        asc_reassert();
+    SwapMMUMode(&mmu);
+
+    asc_push_chunk();
+    asc_push_chunk();
+    asc_push_chunk();
+    asc_watch_pushes = asc_stats.pushes;
+    asc_dbg_revive++;
+    asc_dbg_update();
+}
+
+static int asc_start(void)
+{
+    signed char mmu;
+    u16 sr;
+    int k;
+
+    if (!asc_hw_present())
+        return 0;
+
+    mmu = true32b;
+    SwapMMUMode(&mmu);
+    sr = ints_off();
+    ASC_MODE = 0; // no new FIFO IRQs while we swap the vector
+    VIA2_IFR = VIA2_CB1_BIT;
+    VIA2_PCR &= (u8) ~VIA2_CB1_BIT; // CB1 negative edge (assert = low)
+    asc_saved_ier = VIA2_IER & VIA2_CB1_BIT;
+    VIA2_IER = 0x80 | VIA2_CB1_BIT;
+    asc_saved_vec = LEVEL2_VECTOR;
+    asc_build_thunk();
+    LEVEL2_VECTOR = (u32) asc_thunk;
+    asc_setup_regs();
+    ints_restore(sr);
+    SwapMMUMode(&mmu);
+
+    memset(&asc_stats, 0, sizeof(asc_stats));
+    asc_dbg_or = 0;
+    asc_dbg_ifr_or = 0;
+    asc_dbg_revive = 0;
+    asc_dbg_claimed = 0;
+
+    *(volatile u32 *) 0xa78 = (u32) &asc_stats;
+
+    asc_watch_t = LM_TICKS;
+    asc_watch_pushes = 0;
+    // fill to 768 bytes, then the interrupts take over
+    for (k = 0; k < 3; k++)
+        asc_push_chunk();
+    return 1;
+}
+
+static void asc_stop(void)
+{
+    signed char mmu;
+    u16 sr;
+
+    if (!asc_hw_present())
+        return;
+
+    mmu = true32b;
+    SwapMMUMode(&mmu);
+    sr = ints_off();
+    ASC_MODE = 0;
+    ASC_FIFOMODE = 0x80;
+    ASC_FIFOMODE = 0;
+    VIA2_IFR = VIA2_CB1_BIT;
+    if (!asc_saved_ier)
+        VIA2_IER = VIA2_CB1_BIT; // SM had CB1 disabled; put it back
+    LEVEL2_VECTOR = asc_saved_vec;
+    ints_restore(sr);
+    SwapMMUMode(&mmu);
+}
+
+#endif
+
 // called at interrupt time when a buffer is exhausted
 static pascal void DoubleBackProc(SndChannelPtr chan, SndDoubleBufferPtr buf)
 {
     if (!g_audio || (s32) (samples_out - emu_samples) > STALL_SAMPLES) {
         memset(buf->dbSoundData, 0x80, BUFFER_SAMPLES);
     } else {
-        gen_samples(buf->dbSoundData);
+        gen_samples(buf->dbSoundData, BUFFER_SAMPLES);
     }
 
     samples_out += BUFFER_SAMPLES;
@@ -212,8 +572,17 @@ int audio_mac_init(struct audio *audio)
 
     g_audio = audio;
 
+#if AUDIO_DIRECT_ASC
+    if (!asc_hw_present())
+        return 0;
+    audio_inited = 1;
+    return 1;
+#endif
+
+    long init_opts = initMono | initNoInterp;
+
     snd_channel = NULL;
-    err = SndNewChannel(&snd_channel, sampledSynth, initMono, NULL);
+    err = SndNewChannel(&snd_channel, sampledSynth, init_opts, NULL);
     if (err != noErr) {
         return 0;
     }
@@ -246,8 +615,13 @@ void audio_mac_start(void)
 {
     int k;
 
+#if AUDIO_DIRECT_ASC
+    if (!audio_inited)
+        return;
+#else
     if (!audio_inited || !snd_channel)
         return;
+#endif
 
     cycle_accum = 0;
     emu_samples = 0;
@@ -262,12 +636,26 @@ void audio_mac_start(void)
         dbl_buffers[k].dbFlags = dbBufferReady;
     }
 
+#if AUDIO_DIRECT_ASC
+    snd_running = asc_start();
+#elif AUDIO_BENCH_MUTE
+    snd_running = 1;
+    bench_t0 = LM_TICKS;
+#else
     snd_running = 1;
     SndPlayDoubleBuffer(snd_channel, &dbl_header);
+#endif
 }
 
 void audio_mac_stop(void)
 {
+#if AUDIO_DIRECT_ASC
+    if (!snd_running)
+        return;
+
+    snd_running = 0;
+    asc_stop();
+#else
     SndCommand cmd;
 
     if (!snd_channel)
@@ -282,6 +670,7 @@ void audio_mac_stop(void)
 
     cmd.cmd = flushCmd;
     SndDoImmediate(snd_channel, &cmd);
+#endif
 }
 
 void audio_mac_wait_if_ahead(void)
@@ -289,8 +678,11 @@ void audio_mac_wait_if_ahead(void)
     if (!snd_running)
         return;
 
-    while ((s32) (emu_samples - samples_out) > MAX_LEAD_SAMPLES)
-        ;
+    while ((s32) (emu_samples - samples_out) > MAX_LEAD_SAMPLES) {
+#if AUDIO_BENCH_MUTE
+        bench_drain();
+#endif
+    }
 }
 
 void audio_mac_shutdown(void)

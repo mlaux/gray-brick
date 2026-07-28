@@ -37,9 +37,9 @@ static int dac_on(struct audio *audio, int ch)
 // for noise channel
 static const u8 divisor_table[8] = { 8, 16, 32, 48, 64, 80, 96, 112 };
 
-// precomputed LFSR output bits
-static u8 lfsr15_bits[4096]; // 32768 bits for 15-bit mode
-static u8 lfsr7_bits[16]; // 128 bits for 7-bit mode
+// precomputed LFSR output, one byte per step so playback is a plain load
+static u8 lfsr15_bytes[32768]; // 15-bit mode, period 32767
+static u8 lfsr7_bytes[128]; // 7-bit mode, period 127
 
 // precomputed bandlimited square wave tables. this sounds better than the
 // basic square wave, but still not great because of the low sample rate.
@@ -58,6 +58,44 @@ static u8 lfsr7_bits[16]; // 128 bits for 7-bit mode
 static void update_bl_table(struct audio_channel *ch)
 {
     ch->bl_table = bl_square_vol[ch->volume][ch->duty][ch->band];
+}
+
+static void update_wave_table(struct audio *audio)
+{
+    int k;
+    int shift = audio->ch3.volume;
+
+    if (shift == 0) {
+        memset(audio->wave_tab, 0, sizeof(audio->wave_tab));
+        return;
+    }
+    shift--; // now 0=100%, 1=50%, 2=25%
+
+    for (k = 0; k < 32; k++) {
+        int nibble = audio->wave_ram[k >> 1];
+        if (k & 1)
+            nibble &= 0x0f;
+        else
+            nibble = (nibble >> 4) & 0x0f;
+        audio->wave_tab[k] = (s8) ((nibble - 8) >> shift);
+    }
+}
+
+static void update_mix_table(struct audio *audio)
+{
+    int k;
+    u8 master = ((audio->master_vol_left + audio->master_vol_right) >> 1) + 1;
+
+    if (master == audio->mixtab_master)
+        return;
+    audio->mixtab_master = master;
+
+    // >>3 would be "most correct" in terms of keeping the original scale
+    // but this scales to -106 - 104 to make it louder
+    for (k = 0; k < 256; k++) {
+        s16 v = (s16) ((k - 128) * master) >> 2;
+        audio->mixtab[k] = (u8) (v + 128);
+    }
 }
 
 static void update_phase_inc(struct audio_channel *ch, int base)
@@ -199,21 +237,17 @@ void audio_init(struct audio *audio)
     update_bl_table(&audio->ch4);
 
     // generate 15-bit LFSR output table (period 32767)
-    memset(lfsr15_bits, 0, sizeof(lfsr15_bits));
     lfsr = 0x7fff;
     for (k = 0; k < 32767; k++) {
-        if (lfsr & 1)
-            lfsr15_bits[k >> 3] |= (1 << (k & 7));
+        lfsr15_bytes[k] = lfsr & 1;
         int xor_bit = (lfsr ^ (lfsr >> 1)) & 1;
         lfsr = (lfsr >> 1) | (xor_bit << 14);
     }
 
     // generate 7-bit LFSR output table (period 127)
-    memset(lfsr7_bits, 0, sizeof(lfsr7_bits));
     lfsr = 0x7f;
     for (k = 0; k < 127; k++) {
-        if (lfsr & 1)
-            lfsr7_bits[k >> 3] |= (1 << (k & 7));
+        lfsr7_bytes[k] = lfsr & 1;
         int xor_bit = (lfsr ^ (lfsr >> 1)) & 1;
         lfsr = (lfsr >> 1) | (xor_bit << 6);
     }
@@ -230,6 +264,7 @@ void audio_write(struct audio *audio, u16 addr, u8 value)
     // wave RAM
     if (addr >= REG_WAVE_START && addr <= REG_WAVE_END) {
         audio->wave_ram[addr - REG_WAVE_START] = value;
+        update_wave_table(audio);
         return;
     }
 
@@ -311,6 +346,7 @@ void audio_write(struct audio *audio, u16 addr, u8 value)
     case 0xff1c:    // NR32 - volume
         // volume code: 0=mute, 1=100%, 2=50%, 3=25%
         audio->ch3.volume = (value >> 5) & 0x03;
+        update_wave_table(audio);
         break;
     case 0xff1d:    // NR33 - freq low
         audio->ch3.freq_reg = (audio->ch3.freq_reg & 0x700) | value;
@@ -398,100 +434,137 @@ u8 audio_read(struct audio *audio, u16 addr)
     return audio->regs[addr - 0xff10];
 }
 
-static s8 generate_square(struct audio_channel *ch, u32 phase)
+static void advance_phase(struct audio_channel *ch, int n)
 {
-    if (!ch->enabled)
-        return 0;
-
-    int idx = (phase >> BL_TABLE_SHIFT) & (BL_TABLE_SIZE - 1);
-    return ch->bl_table[idx];
+    ch->phase += ch->phase_inc * (u32) n;
 }
 
-static s8 generate_wave(struct audio *audio, u32 phase)
+// generate one run of samples where envelope/sweep/length don't change
+static void render_run(struct audio *audio, u8 *buffer, int n, u8 audible)
 {
-    struct audio_channel *ch = &audio->ch3;
-    if (!ch->enabled || ch->volume == 0)
-        return 0;
+    int k;
+    u8 active = audible;
+    const u8 *mt = audio->mixtab + 128;
+    const s8 *t1, *t2, *t3;
+    const u8 *nz;
+    u32 ph1, ph2, ph3, ph4, inc1, inc2, inc3, inc4, nmask;
+    s8 pm[2];
 
-    int sample_idx = (phase >> BL_TABLE_SHIFT) & 0x1f;
-    int byte_idx = sample_idx >> 1;
-    int nibble = audio->wave_ram[byte_idx];
+    if (!audio->ch1.enabled || audio->ch1.volume == 0)
+        active &= ~0x01;
+    if (!audio->ch2.enabled || audio->ch2.volume == 0)
+        active &= ~0x02;
+    if (!audio->ch3.enabled || audio->ch3.volume == 0)
+        active &= ~0x04;
+    if (!audio->ch4.enabled || audio->ch4.volume == 0)
+        active &= ~0x08;
 
-    if (sample_idx & 1)
-        nibble &= 0x0f;
-    else
-        nibble = (nibble >> 4) & 0x0f;
+    // inactive channels still advance
+    if (!(active & 0x01))
+        advance_phase(&audio->ch1, n);
+    if (!(active & 0x02))
+        advance_phase(&audio->ch2, n);
+    if (!(active & 0x04))
+        advance_phase(&audio->ch3, n);
+    if (!(active & 0x08))
+        advance_phase(&audio->ch4, n);
 
-    // volume shift: 0=mute, 1=100%, 2=50%, 3=25%
-    int shift = ch->volume;
-    if (shift == 0)
-        return 0;
-    shift--; // now 0=100%, 1=50%, 2=25%
-
-    // center around 0 (nibble is 0-15, center at 7.5)
-    return (s8)((nibble - 8) >> shift);
-}
-
-// noise phase is not pre-scaled, it needs bits 16-30
-static s8 generate_noise(struct audio *audio, u32 phase)
-{
-    struct audio_channel *ch = &audio->ch4;
-    if (!ch->enabled || ch->volume == 0)
-        return 0;
-
-    // get output bit from precomputed table
-    int pos, high;
-    if (audio->lfsr_width) {
-        // should be 0-126 but whatever, use & bc modulo is slow
-        pos = (phase >> 16) & 0x7f;
-        high = (lfsr7_bits[pos >> 3] >> (pos & 7)) & 1;
-    } else {
-        pos = (phase >> 16) & 0x7fff;
-        high = (lfsr15_bits[pos >> 3] >> (pos & 7)) & 1;
+    if (active == 0) {
+        memset(buffer, mt[0], n);
+        return;
     }
 
-    return high ? ch->volume : -(s8)ch->volume;
+    t1 = audio->ch1.bl_table;
+    t2 = audio->ch2.bl_table;
+    t3 = audio->wave_tab;
+    ph1 = audio->ch1.phase;
+    ph2 = audio->ch2.phase;
+    ph3 = audio->ch3.phase;
+    ph4 = audio->ch4.phase;
+    inc1 = audio->ch1.phase_inc;
+    inc2 = audio->ch2.phase_inc;
+    inc3 = audio->ch3.phase_inc;
+    inc4 = audio->ch4.phase_inc;
+
+    pm[0] = -(s8) audio->ch4.volume;
+    pm[1] = audio->ch4.volume;
+    if (audio->lfsr_width) {
+        nz = lfsr7_bytes;
+        nmask = 0x7f;
+    } else {
+        nz = lfsr15_bytes;
+        nmask = 0x7fff;
+    }
+
+    for (k = 0; k < n; k++) {
+        int mix = 0;
+
+        if (active & 0x01) {
+            mix = t1[(ph1 >> BL_TABLE_SHIFT) & (BL_TABLE_SIZE - 1)];
+            ph1 += inc1;
+        }
+        if (active & 0x02) {
+            mix += t2[(ph2 >> BL_TABLE_SHIFT) & (BL_TABLE_SIZE - 1)];
+            ph2 += inc2;
+        }
+        if (active & 0x04) {
+            mix += t3[(ph3 >> BL_TABLE_SHIFT) & (BL_TABLE_SIZE - 1)];
+            ph3 += inc3;
+        }
+        // noise phase is not pre-scaled, it needs bits 16-30
+        if (active & 0x08) {
+            mix += pm[nz[(ph4 >> 16) & nmask]];
+            ph4 += inc4;
+        }
+
+        buffer[k] = mt[mix];
+    }
+
+    if (active & 0x01)
+        audio->ch1.phase = ph1;
+    if (active & 0x02)
+        audio->ch2.phase = ph2;
+    if (active & 0x04)
+        audio->ch3.phase = ph3;
+    if (active & 0x08)
+        audio->ch4.phase = ph4;
 }
 
 void audio_generate(struct audio *audio, u8 *buffer, int samples)
 {
-    int k;
+    int done, n, d;
+    u8 pan, audible;
 
     if (!audio->master_enable) {
-        memset(buffer, 0, samples);
+        memset(buffer, 0x80, samples);
         return;
     }
 
+    update_mix_table(audio);
+
     // for mono, i'll make a channel audible if it's panned to either side
-    u8 pan = audio->panning;
-    u8 audible = pan | (pan >> 4);
+    pan = audio->panning;
+    audible = pan | (pan >> 4);
 
-    // keep the per-sample state in locals to avoid reloading it 11127x/sec
-    s16 master = ((audio->master_vol_left + audio->master_vol_right) >> 1) + 1;
-    u32 ph1 = audio->ch1.phase, inc1 = audio->ch1.phase_inc;
-    u32 ph2 = audio->ch2.phase, inc2 = audio->ch2.phase_inc;
-    u32 ph3 = audio->ch3.phase, inc3 = audio->ch3.phase_inc;
-    u32 ph4 = audio->ch4.phase, inc4 = audio->ch4.phase_inc;
+    done = 0;
+    while (done < samples) {
+        // run until the next envelope (64 Hz = 174 samples), sweep (128 Hz
+        // = 87) or length (256 Hz = 43) tick, whichever comes first
+        n = samples - done;
+        d = 174 - audio->env_counter;
+        if (d < n)
+            n = d;
+        d = 87 - audio->sweep_counter;
+        if (d < n)
+            n = d;
+        d = 43 - audio->length_counter;
+        if (d < n)
+            n = d;
 
-    for (k = 0; k < samples; k++) {
-        s16 mix = 0;
+        render_run(audio, buffer + done, n, audible);
+        done += n;
 
-        if (audible & 0x01)
-            mix += generate_square(&audio->ch1, ph1);
-        if (audible & 0x02)
-            mix += generate_square(&audio->ch2, ph2);
-        if (audible & 0x04)
-            mix += generate_wave(audio, ph3);
-        if (audible & 0x08)
-            mix += generate_noise(audio, ph4);
-
-        ph1 += inc1;
-        ph2 += inc2;
-        ph3 += inc3;
-        ph4 += inc4;
-
-        // envelope tick at 64 Hz, 11127 / 64 = 174 samples
-        audio->env_counter++;
+        audio->env_counter += n;
         if (audio->env_counter >= 174) {
             audio->env_counter = 0;
             step_envelope(&audio->ch1);
@@ -499,17 +572,13 @@ void audio_generate(struct audio *audio, u8 *buffer, int samples)
             step_envelope(&audio->ch4);
         }
 
-        // sweep tick at 128 Hz, 11127 / 128 = 87 samples
-        audio->sweep_counter++;
+        audio->sweep_counter += n;
         if (audio->sweep_counter >= 87) {
             audio->sweep_counter = 0;
             step_sweep(audio);
-            // sweep can retune ch1 mid-buffer
-            inc1 = audio->ch1.phase_inc;
         }
 
-        // length tick at 256 Hz, 11127 / 256 = 43 samples
-        audio->length_counter++;
+        audio->length_counter += n;
         if (audio->length_counter >= 43) {
             audio->length_counter = 0;
             step_length(&audio->ch1, 64);
@@ -517,17 +586,5 @@ void audio_generate(struct audio *audio, u8 *buffer, int samples)
             step_length(&audio->ch3, 256);
             step_length(&audio->ch4, 64);
         }
-
-        // >>3 would be "most correct" in terms of keeping the original scale
-        // but this scales to -106 - 104 to make it louder.
-        // product is at most +/-480 so a 16-bit multiply is enough
-        mix = (s16) (mix * master) >> 2;
-        // direct to unsigned bc it's what sound manager wants
-        buffer[k] = (u8) (mix + 128);
     }
-
-    audio->ch1.phase = ph1;
-    audio->ch2.phase = ph2;
-    audio->ch3.phase = ph3;
-    audio->ch4.phase = ph4;
 }
