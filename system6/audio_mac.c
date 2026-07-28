@@ -136,7 +136,7 @@ static u32 asc_watch_pushes;
 static volatile u8 asc_vec_claimed;
 static volatile u8 asc_in_push;
 static u32 asc_last_push_tick;
-static u16 asc_thunk[16];
+void asc_thunk_entry(void);
 static void asc_watchdog(void);
 
 static u32 read_vbr(void)
@@ -384,7 +384,7 @@ static void asc_push_chunk(void)
 
 // called from the thunk at interrupt level 2 with d0-d3/a0-a3 saved
 // handles if it's from the ASC, otherwise chains to the saved handler
-static void asc_vec_handler(void)
+static __attribute__((used)) void asc_vec_handler(void)
 {
     u8 stat, ifr;
     signed char mmu;
@@ -429,27 +429,22 @@ static void asc_vec_handler(void)
     }
 }
 
-// save scratch, call C, then RTE if claimed or jmp to the saved level-2 handler
-// for everything else
-static void asc_build_thunk(void)
-{
-    u8 *t = (u8 *) asc_thunk;
-
-    t[0] = 0x48; t[1] = 0xe7;   // movem.l d0-d3/a0-a3,-(sp)
-    t[2] = 0xf0; t[3] = 0xf0;
-    t[4] = 0x4e; t[5] = 0xb9;   // jsr asc_vec_handler
-    *(u32 *) (t + 6) = (u32) asc_vec_handler;
-    t[10] = 0x4c; t[11] = 0xdf; // movem.l (sp)+,d0-d3/a0-a3
-    t[12] = 0x0f; t[13] = 0x0f;
-    t[14] = 0x4a; t[15] = 0x39; // tst.b asc_vec_claimed
-    *(u32 *) (t + 16) = (u32) &asc_vec_claimed;
-    t[20] = 0x67; t[21] = 0x02; // beq.s +2 (to the jmp)
-    t[22] = 0x4e; t[23] = 0x73; // rte
-    t[24] = 0x4e; t[25] = 0xf9; // jmp saved handler
-    *(u32 *) (t + 26) = asc_saved_vec;
-
-    FlushCodeCache();
-}
+// level 2 interrupt vector entry - save scratch, call C, then rte if claimed
+// or chain  to the saved handler for everything else
+asm(
+    ".text\n"
+    ".balign 2\n"
+    "asc_thunk_entry:\n"
+    "    movem.l %d0-%d3/%a0-%a3,-(%sp)\n"
+    "    jsr asc_vec_handler\n"
+    "    movem.l (%sp)+,%d0-%d3/%a0-%a3\n"
+    "    tst.b asc_vec_claimed\n"
+    "    beq.s .Lchain\n"
+    "    rte\n"
+    ".Lchain:\n"
+    "    move.l asc_saved_vec,-(%sp)\n"
+    "    rts\n"
+);
 
 // check if no pushes in 1/2 second, if so restart the sound
 static void asc_watchdog(void)
@@ -497,8 +492,7 @@ static int asc_start(void)
     asc_saved_ier = VIA2_IER & VIA2_CB1_BIT;
     VIA2_IER = 0x80 | VIA2_CB1_BIT;
     asc_saved_vec = LEVEL2_VECTOR;
-    asc_build_thunk();
-    LEVEL2_VECTOR = (u32) asc_thunk;
+    LEVEL2_VECTOR = (u32) asc_thunk_entry;
     asc_setup_regs();
     ints_restore(sr);
     SwapMMUMode(&mmu);
