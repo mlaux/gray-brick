@@ -19,8 +19,6 @@
 
 // do everything but start the sound manager
 #define AUDIO_BENCH_MUTE 0
-// bypass the Sound Manager entirely
-#define AUDIO_DIRECT_ASC 1
 
 // 4194304 / 11127 = about 377
 #define CYCLES_PER_SAMPLE 377
@@ -62,6 +60,9 @@ static struct audio *g_audio;
 static int audio_inited;
 static volatile int snd_running;
 
+// bypass the Sound Manager, decided at init from the machine type
+static int use_direct;
+
 typedef struct {
     long dbNumFrames;
     long dbFlags;
@@ -81,20 +82,19 @@ static void gen_samples(unsigned char *p, int samples);
 static void bench_drain(void);
 #endif
 
-#if AUDIO_DIRECT_ASC
 #define LM_SDVOLUME (*(volatile u8 *) 0x260)
 
 #define ASC_BASE 0x50f14000
 #define ASC_FIFO_DEPTH 1024
 
-#define ASC_FIFO_A  (*(volatile u8 *) (ASC_BASE + 0x000))
-#define ASC_VERSION (*(volatile u8 *) (ASC_BASE + 0x800))
-#define ASC_MODE    (*(volatile u8 *) (ASC_BASE + 0x801))
-#define ASC_CONTROL (*(volatile u8 *) (ASC_BASE + 0x802))
+#define ASC_FIFO_A   (*(volatile u8 *) (ASC_BASE + 0x000))
+#define ASC_VERSION  (*(volatile u8 *) (ASC_BASE + 0x800))
+#define ASC_MODE     (*(volatile u8 *) (ASC_BASE + 0x801))
+#define ASC_CONTROL  (*(volatile u8 *) (ASC_BASE + 0x802))
 #define ASC_FIFOMODE (*(volatile u8 *) (ASC_BASE + 0x803))
 #define ASC_FIFOSTAT (*(volatile u8 *) (ASC_BASE + 0x804))
-#define ASC_VOLUME  (*(volatile u8 *) (ASC_BASE + 0x806))
-#define ASC_CLOCK   (*(volatile u8 *) (ASC_BASE + 0x807))
+#define ASC_VOLUME   (*(volatile u8 *) (ASC_BASE + 0x806))
+#define ASC_CLOCK    (*(volatile u8 *) (ASC_BASE + 0x807))
 
 #define ASC_CHUNK 128 // mono samples per push, x2 = quarter FIFO
 
@@ -139,6 +139,7 @@ static u32 asc_last_push_tick;
 void asc_thunk_entry(void);
 static void asc_watchdog(void);
 
+// this is always 0.....
 static u32 read_vbr(void)
 {
     register u32 v asm("d0");
@@ -161,7 +162,6 @@ static void ints_restore(u16 sr)
 {
     asm volatile("move.w %0,%%sr" : : "d"(sr));
 }
-#endif
 
 // for Mac Plus/SE/Classic
 // #define VIA1_T1CL (*(volatile u8 *) 0xEFE9FE)
@@ -223,11 +223,9 @@ void audio_mac_sync(int cycles)
     else if ((s32) (emu_samples - out) > MAX_BANK_SAMPLES)
         emu_samples = out + MAX_BANK_SAMPLES;
 
-#if AUDIO_DIRECT_ASC
-    if (snd_running) {
+    if (use_direct && snd_running) {
         asc_watchdog();
     }
-#endif
 
 #if AUDIO_BENCH_MUTE
     if (snd_running)
@@ -304,14 +302,30 @@ static void bench_drain(void)
 }
 #endif
 
-#if AUDIO_DIRECT_ASC
-
 static int asc_hw_present(void)
 {
     long response;
 
     return Gestalt(gestaltHardwareAttr, &response) == noErr &&
            (response & (1L << gestaltHasASC));
+}
+
+// this driver assumes a plain ASC at 0x50f14000 paced off FIFO A's half-empty
+// bit, with a discrete VIA2 at 0x50f02000. later machines all differ somehow:
+// IIci/IIsi replace VIA2 with the RBV, the IIfx uses the OSS and moves the
+// ASC, Quadras have an EASC or IOSB. those fall back to the Sound Manager
+static int asc_direct_supported(void)
+{
+    long machine;
+
+    if (!asc_hw_present())
+        return 0;
+
+    if (Gestalt(gestaltMachineType, &machine) != noErr)
+        return 0;
+
+    return machine == gestaltMacII || machine == gestaltMacIIx ||
+           machine == gestaltMacIIcx || machine == gestaltMacSE030;
 }
 
 static void asc_setup_regs(void)
@@ -535,8 +549,6 @@ static void asc_stop(void)
     SwapMMUMode(&mmu);
 }
 
-#endif
-
 // called at interrupt time when a buffer is exhausted
 static pascal void DoubleBackProc(SndChannelPtr chan, SndDoubleBufferPtr buf)
 {
@@ -566,12 +578,11 @@ int audio_mac_init(struct audio *audio)
 
     g_audio = audio;
 
-#if AUDIO_DIRECT_ASC
-    if (!asc_hw_present())
-        return 0;
-    audio_inited = 1;
-    return 1;
-#endif
+    use_direct = asc_direct_supported();
+    if (use_direct) {
+        audio_inited = 1;
+        return 1;
+    }
 
     long init_opts = initMono | initNoInterp;
 
@@ -609,13 +620,10 @@ void audio_mac_start(void)
 {
     int k;
 
-#if AUDIO_DIRECT_ASC
     if (!audio_inited)
         return;
-#else
-    if (!audio_inited || !snd_channel)
+    if (!use_direct && !snd_channel)
         return;
-#endif
 
     cycle_accum = 0;
     emu_samples = 0;
@@ -630,9 +638,12 @@ void audio_mac_start(void)
         dbl_buffers[k].dbFlags = dbBufferReady;
     }
 
-#if AUDIO_DIRECT_ASC
-    snd_running = asc_start();
-#elif AUDIO_BENCH_MUTE
+    if (use_direct) {
+        snd_running = asc_start();
+        return;
+    }
+
+#if AUDIO_BENCH_MUTE
     snd_running = 1;
     bench_t0 = LM_TICKS;
 #else
@@ -643,14 +654,16 @@ void audio_mac_start(void)
 
 void audio_mac_stop(void)
 {
-#if AUDIO_DIRECT_ASC
-    if (!snd_running)
-        return;
-
-    snd_running = 0;
-    asc_stop();
-#else
     SndCommand cmd;
+
+    if (use_direct) {
+        if (!snd_running)
+            return;
+
+        snd_running = 0;
+        asc_stop();
+        return;
+    }
 
     if (!snd_channel)
         return;
@@ -664,7 +677,6 @@ void audio_mac_stop(void)
 
     cmd.cmd = flushCmd;
     SndDoImmediate(snd_channel, &cmd);
-#endif
 }
 
 void audio_mac_wait_if_ahead(void)
