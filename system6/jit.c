@@ -517,9 +517,8 @@ int jit_run(struct dmg *dmg)
       return 0;
   }
 
-  // sync hardware with cycles accumulated by compiled code. D2 counts
-  // down from wake_limit; read wake_limit AFTER the block since slow
-  // writes tighten it (and D2) in tandem mid-block
+  // sync hardware with cycles accumulated by compiled code, D2 counts
+  // down from wake_limit
   PROF_SET(PROF_SYNC);
   dmg_sync_hw(dmg, jit_ctx.wake_limit - jit_regs.d2);
   if (dmg->interrupt_enable) {

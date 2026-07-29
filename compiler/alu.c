@@ -21,8 +21,7 @@ static int daa_tracked_op(uint8_t op)
     return 0;
 }
 
-// control flow the DAA scan cannot see past: the continuation might reach a
-// daa, so tracking state must be valid here
+// control flow the DAA scan cannot see past
 static int daa_scan_barrier(uint8_t op)
 {
     switch (op) {

@@ -1365,9 +1365,7 @@ void emit_cmp_l_disp_an_dn(
     emit_word(block, disp);
 }
 
-// emit_add_cycles - charge GB cycles to the ledger. D2 counts DOWN from
-// wake_limit, so charging is a subtract and the CCR result (N/Z) is the
-// budget check: <= 0 means the wake deadline is due
+// subtract and <= 0 means time to exit
 void emit_add_cycles(struct code_block *block, int cycles)
 {
     if (cycles <= 0) {
