@@ -263,7 +263,11 @@ void ShowAboutBox(void)
       short type;
 
       GetDialogItem(dp, 2, &type, &handle, &rect);
-      SetDialogItem(dp, 2, type, GetIcon(132), &rect);
+      if (screen_depth > 1) {
+        SetDialogItem(dp, 2, type, (Handle) GetCIcon(132), &rect);
+      } else {
+        SetDialogItem(dp, 2, type, GetIcon(132), &rect);
+      }
       DrawDialog(dp);
     }
   } while (itemHit != ok);
