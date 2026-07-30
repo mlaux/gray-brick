@@ -332,7 +332,7 @@ void LoadPreferences(void)
     stat_ints_enabled = prefs[7];
   } else {
     frame_skip = 4;
-    if (screen_depth >= 8) {
+    if (screen_depth > 1) {
       screen_scale = 1;
     } else {
       screen_scale = 2;
@@ -673,7 +673,7 @@ int SaveScreenshot(void)
   if (screen_depth > 1) {
     CGrafPtr port = (CGrafPtr) g_wp;
     CopyBits(
-        (BitMap *) &offscreen_pixmap,
+        (BitMap *) lcd_active_pixmap(),
         (BitMap *) *port->portPixMap,
         &offscreen_rect, &offscreen_rect, srcCopy, NULL
     );

@@ -148,7 +148,7 @@ static void lcd_draw_1x_cgb(struct lcd *lcd_ptr, int all)
         dst += 42;
     }
 
-    lcd_blit_color_bands(lcd_ptr, 1, all);
+    lcd_blit_color_bands(&offscreen_pixmap, lcd_ptr, 1, all);
 }
 
 // CGB 2x indexed rendering
@@ -230,7 +230,7 @@ static void lcd_draw_2x_cgb(struct lcd *lcd_ptr, int all)
         dst += 168;  // 2 rows * 84 longs per row
     }
 
-    lcd_blit_color_bands(lcd_ptr, 2, all);
+    lcd_blit_color_bands(&offscreen_pixmap, lcd_ptr, 2, all);
 }
 
 // Main CGB draw function - called from lcd_mac.c

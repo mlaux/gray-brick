@@ -15,6 +15,8 @@
 
 extern WindowPtr g_wp;
 extern int screen_depth;
+extern int screen_is_color;
+extern int video_mode;
 
 extern struct rom rom;
 extern struct lcd lcd;
@@ -27,6 +29,9 @@ extern BitMap offscreen_bmp;
 
 extern char offscreen_color_buf[];
 extern PixMap offscreen_pixmap;
+extern PixMap lowdepth_pixmap;
+
+void InitLowDepthOffscreen(void);
 
 #define APP_VERSION "2.1.0 ${GIT_SHA}"
 

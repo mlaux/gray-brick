@@ -73,6 +73,8 @@ unsigned char gbc_enabled = 1;  // default: GBC support enabled
 unsigned char ignore_double_speed = 0;  // default: emulate double-speed accurately
 unsigned char stat_ints_enabled = 1;  // default: fire STAT interrupt events
 int screen_depth;
+int screen_is_color;
+int video_mode = VIDEO_BW;
 
 static u32 last_frame_count;
 
@@ -97,6 +99,9 @@ BitMap offscreen_bmp;
 char offscreen_color_buf[336 * 288];
 PixMap offscreen_pixmap;
 CTabHandle offscreen_ctab;
+
+// 2bpp/4bpp screens
+PixMap lowdepth_pixmap;
 
 // Status bar - if set, displayed instead of FPS
 char status_bar[64];
@@ -211,15 +216,33 @@ void set_status_bar(const char *str)
 void DetectScreenDepth(void)
 {
   SysEnvRec env;
-  screen_depth = 1;
+  GDHandle mainDev;
+  PixMapHandle pm;
 
-  if (SysEnvirons(1, &env) == noErr && env.hasColorQD) {
-    GDHandle mainDev = GetMainDevice();
-    if (mainDev) {
-      PixMapHandle pm = (*mainDev)->gdPMap;
-      screen_depth = (*pm)->pixelSize;
-    }
-    InitPalettes();
+  screen_depth = 1;
+  screen_is_color = 0;
+  video_mode = VIDEO_BW;
+
+  if (SysEnvirons(1, &env) != noErr || !env.hasColorQD) {
+    return;
+  }
+  InitPalettes();
+
+  mainDev = GetMainDevice();
+  if (!mainDev) {
+    return;
+  }
+  pm = (*mainDev)->gdPMap;
+  screen_depth = (*pm)->pixelSize;
+  screen_is_color = TestDeviceAttribute(mainDev, gdDevType);
+
+  if (screen_depth == 2) {
+    // 2bpp color defaults to the same four shades as 2bpp gray
+    video_mode = VIDEO_GRAY2;
+  } else if (screen_depth == 4) {
+    video_mode = screen_is_color ? VIDEO_INDEXED4 : VIDEO_GRAY4;
+  } else if (screen_depth > 1) {
+    video_mode = VIDEO_INDEXED;
   }
 }
 
@@ -257,6 +280,35 @@ void InitColorOffscreen(void)
   offscreen_pixmap.pmReserved = 0;
 }
 
+void InitLowDepthOffscreen(void)
+{
+  GDHandle mainDev = GetMainDevice();
+  PixMapHandle screenPM = (*mainDev)->gdPMap;
+  int width = (screen_scale == 1) ? 168 : 336;
+  int height = (screen_scale == 1) ? 144 : 288;
+
+  // can copy directly at 2bpp gray :)
+  lowdepth_pixmap.baseAddr = (video_mode == VIDEO_GRAY2 && screen_scale == 1)
+      ? (Ptr) lcd.pixels
+      : offscreen_color_buf;
+  lowdepth_pixmap.rowBytes = (width * screen_depth / 8) | 0x8000;
+  lowdepth_pixmap.bounds.top = 0;
+  lowdepth_pixmap.bounds.left = 0;
+  lowdepth_pixmap.bounds.bottom = height;
+  lowdepth_pixmap.bounds.right = width;
+  lowdepth_pixmap.pmVersion = 0;
+  lowdepth_pixmap.packType = 0;
+  lowdepth_pixmap.packSize = 0;
+  lowdepth_pixmap.hRes = 0x00480000;
+  lowdepth_pixmap.vRes = 0x00480000;
+  lowdepth_pixmap.pixelType = 0;
+  lowdepth_pixmap.pixelSize = screen_depth;
+  lowdepth_pixmap.cmpCount = 1;
+  lowdepth_pixmap.cmpSize = screen_depth;
+  lowdepth_pixmap.pmTable = (*screenPM)->pmTable;
+  lowdepth_pixmap.pmReserved = 0;
+}
+
 void SaveGame(void)
 {
   if (mbc_save_ram(dmg.rom->mbc, save_filename)) {
@@ -283,7 +335,7 @@ void StopEmulation(void)
   audio_mac_shutdown();
   jit_cleanup();
 
-  if (screen_depth > 1) {
+  if (VIDEO_HAS_PALETTES(video_mode)) {
     PaletteHandle pal = GetPalette(g_wp);
     DisposeWindow(g_wp);
     if (pal) {
@@ -352,7 +404,6 @@ void StartEmulation(void)
   dmg.audio = &audio;
 
   offscreen_bmp.baseAddr = offscreen_buf;
-  // bounds is full buffer size (168 or 336 pixels wide for scroll offset handling)
   offscreen_bmp.bounds.top = 0;
   offscreen_bmp.bounds.left = 0;
   offscreen_bmp.bounds.bottom = height;
@@ -360,9 +411,12 @@ void StartEmulation(void)
   offscreen_bmp.rowBytes = (width == 320) ? 42 : 21;
   if (screen_depth > 1) {
     InitColorOffscreen();
+    if (VIDEO_IS_LOW_DEPTH(video_mode)) {
+      InitLowDepthOffscreen();
+    }
     // init even if indexed isn;t currently selected so it's correct
     // if they change to indexed in settings
-    init_indexed_lut(g_wp);
+    init_video_luts(g_wp);
   }
 
   jit_init(&dmg);
@@ -465,24 +519,26 @@ void SetScreenScale(int scale)
 
   offscreen_rect.right = width;
   offscreen_rect.bottom = height;
-  // bmp bounds is full buffer size (168 or 336 pixels wide for scroll offset)
   offscreen_bmp.bounds.top = 0;
   offscreen_bmp.bounds.left = 0;
   offscreen_bmp.bounds.bottom = height;
   offscreen_bmp.bounds.right = (width == 320) ? 336 : 168;
   offscreen_bmp.rowBytes = (width == 320) ? 42 : 21;
-  // pixmap also uses wider buffer
   offscreen_pixmap.bounds.top = 0;
   offscreen_pixmap.bounds.left = 0;
   offscreen_pixmap.bounds.bottom = height;
   offscreen_pixmap.bounds.right = (width == 320) ? 336 : 168;
   offscreen_pixmap.rowBytes = ((width == 320) ? 336 : 168) | 0x8000;
 
+  if (VIDEO_IS_LOW_DEPTH(video_mode)) {
+    InitLowDepthOffscreen();
+  }
+
   if (g_wp) {
     Rect newBounds;
     PaletteHandle pal;
 
-    if (screen_depth > 1) {
+    if (VIDEO_HAS_PALETTES(video_mode)) {
       pal = GetPalette(g_wp);
       DisposeWindow(g_wp);
       if (pal) {
@@ -508,7 +564,7 @@ void SetScreenScale(int scale)
     SetPort(g_wp);
 
     if (screen_depth > 1) {
-      init_indexed_lut(g_wp);
+      init_video_luts(g_wp);
     }
   }
 
@@ -650,7 +706,8 @@ void OnMenuAction(long action)
   }
 
   else if (menu == MENU_PALETTES) {
-    if (item >= 1 && item <= gb_palette_count) {
+    if (VIDEO_HAS_PALETTES(video_mode)
+        && item >= 1 && item <= gb_palette_count) {
       current_palette = item - 1;
       if (g_wp) {
         PaletteHandle pal;
@@ -658,7 +715,7 @@ void OnMenuAction(long action)
         if (pal) {
           DisposePalette(pal);
         }
-        init_indexed_lut(g_wp);
+        init_video_luts(g_wp);
         lcd_mac_invalidate();
       }
       SavePreferences();
@@ -836,6 +893,9 @@ int main(int argc, char *argv[])
   DetectScreenDepth();
   if (screen_depth > 1) {
     InstallPalettesMenu();
+    if (!VIDEO_HAS_PALETTES(video_mode)) {
+      DisableItem(GetMenuHandle(MENU_PALETTES), 0);
+    }
     DrawMenuBar();
   }
   LoadKeyMappings();

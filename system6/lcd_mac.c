@@ -42,8 +42,14 @@ static unsigned char thresh_lo[256];
 // 1x: 4 pixels per packed byte
 static unsigned long color_lut_1x[256];
 // 2x: 8 pixels per packed byte (each GB pixel doubled), split into two 32-bit values
-static unsigned long color_lut_2x_lo[256];  // pixels 0,0,1,1
-static unsigned long color_lut_2x_hi[256];  // pixels 2,2,3,3
+static unsigned long color_lut_2x_lo[256]; // pixels 0,0,1,1
+static unsigned long color_lut_2x_hi[256]; // pixels 2,2,3,3
+
+// only needed for 2x in 2bbp mode since 1x can use pixels[] directly
+static unsigned short gray2_2x[256];  // 8 pixels @ 2bpp = 2 bytes
+
+static unsigned short depth4_1x[256]; // 4 pixels @ 4bpp = 2 bytes
+static unsigned long depth4_2x[256];  // 8 pixels @ 4bpp = 4 bytes
 
 void init_dither_lut(void)
 {
@@ -77,27 +83,10 @@ void init_dither_lut(void)
   }
 }
 
-void init_indexed_lut(WindowPtr wp)
+static void build_indexed8_luts(const unsigned char *gray_index)
 {
   int k;
-  PaletteHandle pal;
-  unsigned char gray_index[4];
 
-  pal = NewPalette(4, nil, pmTolerant, 0);
-
-  for (k = 0; k < 4; k++) {
-    SetEntryColor(pal, k, &gb_palettes[current_palette].colors[k]);
-  }
-
-  SetPalette(wp, pal, true);
-  ActivatePalette(wp);
-
-  // get mapped color indices for current screen CLUT
-  for (k = 0; k < 4; k++) {
-    gray_index[k] = Entry2Index(k);
-  }
-
-  // build color LUTs for fast indexed rendering
   for (k = 0; k < 256; k++) {
     unsigned char c0 = gray_index[(k >> 6) & 3];
     unsigned char c1 = gray_index[(k >> 4) & 3];
@@ -116,8 +105,86 @@ void init_indexed_lut(WindowPtr wp)
   }
 }
 
+static void build_gray2_2x_lut(void)
+{
+  int k;
+
+  for (k = 0; k < 256; k++) {
+    unsigned c0 = (k >> 6) & 3;
+    unsigned c1 = (k >> 4) & 3;
+    unsigned c2 = (k >> 2) & 3;
+    unsigned c3 = k & 3;
+
+    gray2_2x[k] = (unsigned short) ((c0 << 14) | (c0 << 12)
+                    | (c1 << 10) | (c1 << 8)
+                    | (c2 << 6) | (c2 << 4)
+                    | (c3 << 2) | c3);
+  }
+}
+
+// left pixel in the high nibble, same pixel order as the GB byte
+static void build_depth4_luts(const unsigned char *gray_index)
+{
+  int k;
+
+  for (k = 0; k < 256; k++) {
+    unsigned long c0 = gray_index[(k >> 6) & 3];
+    unsigned long c1 = gray_index[(k >> 4) & 3];
+    unsigned long c2 = gray_index[(k >> 2) & 3];
+    unsigned long c3 = gray_index[k & 3];
+
+    depth4_1x[k] = (unsigned short) ((c0 << 12) | (c1 << 8) | (c2 << 4) | c3);
+
+    depth4_2x[k] = (c0 << 28) | (c0 << 24) | (c1 << 20) | (c1 << 16)
+                    | (c2 << 12) | (c2 << 8) | (c3 << 4) | c3;
+  }
+}
+
+void init_video_luts(WindowPtr wp)
+{
+  static const unsigned char gray4_index[4] = { 0, 5, 10, 15 };
+
+  int k;
+  PaletteHandle pal;
+  unsigned char gray_index[4];
+
+  if (video_mode == VIDEO_GRAY2) {
+    build_gray2_2x_lut();
+  } else if (video_mode == VIDEO_GRAY4) {
+    build_depth4_luts(gray4_index);
+  } else {
+    pal = NewPalette(4, nil, pmTolerant, 0);
+
+    for (k = 0; k < 4; k++) {
+      SetEntryColor(pal, k, &gb_palettes[current_palette].colors[k]);
+    }
+
+    SetPalette(wp, pal, true);
+    ActivatePalette(wp);
+
+    for (k = 0; k < 4; k++) {
+      gray_index[k] = Entry2Index(k);
+    }
+
+    if (video_mode == VIDEO_INDEXED4) {
+      build_depth4_luts(gray_index);
+    } else {
+      build_indexed8_luts(gray_index);
+    }
+  }
+}
+
+// which pixmap holds the frame for screenshot
+PixMap *lcd_active_pixmap(void)
+{
+  if (dmg.cgb && dmg.cgb->mode) {
+    return &offscreen_pixmap;
+  }
+  return VIDEO_IS_LOW_DEPTH(video_mode) ? &lowdepth_pixmap : &offscreen_pixmap;
+}
+
 // one CopyBits per contiguous run of rows sharing a scroll offset and dirty status
-void lcd_blit_color_bands(struct lcd *lcd_ptr, int scale, int all)
+void lcd_blit_color_bands(PixMap *src, struct lcd *lcd_ptr, int scale, int all)
 {
   CGrafPtr port;
   Rect src_rect, dst_rect;
@@ -148,7 +215,7 @@ void lcd_blit_color_bands(struct lcd *lcd_ptr, int scale, int all)
       dst_rect.right = 160 * scale;
 
       CopyBits(
-          (BitMap *) &offscreen_pixmap,
+          (BitMap *) src,
           (BitMap *) *port->portPixMap,
           &src_rect, &dst_rect, srcCopy, NULL
       );
@@ -248,7 +315,7 @@ static void lcd_draw_1x_indexed(struct lcd *lcd_ptr)
     dst += 42;
   }
 
-  lcd_blit_color_bands(lcd_ptr, 1, force_all);
+  lcd_blit_color_bands(&offscreen_pixmap, lcd_ptr, 1, force_all);
 }
 
 static void lcd_draw_2x_bw(struct lcd *lcd_ptr)
@@ -299,11 +366,7 @@ static void lcd_draw_2x_indexed(struct lcd *lcd_ptr)
     return;
   }
 
-  // convert all 168 buffer pixels per row; per-band scroll offsets are
-  // handled by the band blit's source rects, so offset-only rows keep
-  // their converted bytes
   for (gy = 0; gy < 144; gy++) {
-    // row stride in longs: 336 bytes / 4 = 84 longs
     unsigned long *row0 = dst;
     unsigned long *row1 = dst + 84;
     int gx;
@@ -329,15 +392,118 @@ static void lcd_draw_2x_indexed(struct lcd *lcd_ptr)
       row1 += 2;
     }
 
-    dst += 168;  // 2 rows * 84 longs per row
+    dst += 168; // 2 rows * 84 longs per row
   }
 
-  lcd_blit_color_bands(lcd_ptr, 2, force_all);
+  lcd_blit_color_bands(&offscreen_pixmap, lcd_ptr, 2, force_all);
 }
 
-void (*draw_funcs[2][2])(struct lcd *) = {
-  { lcd_draw_1x_bw, lcd_draw_1x_indexed },
-  { lcd_draw_2x_bw, lcd_draw_2x_indexed },
+// the one mode with nothing to convert, small speed boost when scrolling
+// for slow machines
+static void lcd_draw_1x_gray2(struct lcd *lcd_ptr)
+{
+  if (!force_all && !lcd_ptr->frame_dirty) {
+    return;
+  }
+
+  lcd_blit_color_bands(&lowdepth_pixmap, lcd_ptr, 1, force_all);
+}
+
+static void lcd_draw_2x_gray2(struct lcd *lcd_ptr)
+{
+  int gy;
+  unsigned char *src = lcd_ptr->pixels;
+  unsigned short *dst = (unsigned short *) offscreen_color_buf;
+
+  if (!force_all && !lcd_ptr->frame_dirty) {
+    return;
+  }
+
+  for (gy = 0; gy < 144; gy++) {
+    unsigned short *row0 = dst;
+    unsigned short *row1 = dst + 42;
+    int gx;
+
+    if (!force_all && !(lcd_ptr->row_dirty[gy] & ROW_DIRTY_CONTENT)) {
+      src += 42;
+      dst += 84;
+      continue;
+    }
+
+    for (gx = 0; gx < 42; gx++) {
+      unsigned short v = gray2_2x[*src++];
+      *row0++ = v;
+      *row1++ = v;
+    }
+
+    dst += 84;
+  }
+
+  lcd_blit_color_bands(&lowdepth_pixmap, lcd_ptr, 2, force_all);
+}
+
+static void lcd_draw_1x_depth4(struct lcd *lcd_ptr)
+{
+  int gy;
+  unsigned char *src = lcd_ptr->pixels;
+  unsigned short *dst = (unsigned short *) offscreen_color_buf;
+
+  if (!force_all && !lcd_ptr->frame_dirty) {
+    return;
+  }
+
+  for (gy = 0; gy < 144; gy++) {
+    if (force_all || (lcd_ptr->row_dirty[gy] & ROW_DIRTY_CONTENT)) {
+      int gx;
+      for (gx = 0; gx < 42; gx++) {
+        dst[gx] = depth4_1x[src[gx]];
+      }
+    }
+    src += 42;
+    dst += 42;
+  }
+
+  lcd_blit_color_bands(&lowdepth_pixmap, lcd_ptr, 1, force_all);
+}
+
+static void lcd_draw_2x_depth4(struct lcd *lcd_ptr)
+{
+  int gy;
+  unsigned char *src = lcd_ptr->pixels;
+  unsigned long *dst = (unsigned long *) offscreen_color_buf;
+
+  if (!force_all && !lcd_ptr->frame_dirty) {
+    return;
+  }
+
+  for (gy = 0; gy < 144; gy++) {
+    unsigned long *row0 = dst;
+    unsigned long *row1 = dst + 42;
+    int gx;
+
+    if (!force_all && !(lcd_ptr->row_dirty[gy] & ROW_DIRTY_CONTENT)) {
+      src += 42;
+      dst += 84;
+      continue;
+    }
+
+    for (gx = 0; gx < 42; gx++) {
+      unsigned long v = depth4_2x[*src++];
+      *row0++ = v;
+      *row1++ = v;
+    }
+
+    dst += 84;
+  }
+
+  lcd_blit_color_bands(&lowdepth_pixmap, lcd_ptr, 2, force_all);
+}
+
+void (*draw_funcs[2][VIDEO_MODE_COUNT])(struct lcd *) = {
+  { lcd_draw_1x_bw, lcd_draw_1x_indexed, lcd_draw_1x_gray2,
+    lcd_draw_1x_depth4, lcd_draw_1x_depth4 },
+  { lcd_draw_2x_bw, lcd_draw_2x_indexed, lcd_draw_2x_gray2,
+    lcd_draw_2x_depth4, lcd_draw_2x_depth4 },
 };
 
 // lcd_mac_cgb.c
@@ -346,8 +512,6 @@ void lcd_draw_cgb(struct lcd *lcd_ptr, int all);
 // called by dmg_step at vblank
 void lcd_draw(struct lcd *lcd_ptr)
 {
-  int video_mode = screen_depth >= 8 ? VIDEO_INDEXED : VIDEO_BW;
-
   PROF_SET(PROF_DRAW);
 
   if (dmg.cgb && dmg.cgb->mode && screen_depth > 1) {

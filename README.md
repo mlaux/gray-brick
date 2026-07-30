@@ -108,11 +108,11 @@ matching the internal ROM name (for example, "ZELDA" for Link's Awakening).
 
 ## Limitations
 
-* Audio sounds like crap on System 6
-  - If anyone knows how to use `SndPlayDoubleBuffer()` on System 6 and not
-    have a ton of popping noises, let me know
-  - Chances are if your machine is fast enough to try audio you're on System 7
-    anyway
+* ~~Audio sounds like crap on System 6~~ fixed in 2.1.0
+  - ~~If anyone knows how to use `SndPlayDoubleBuffer()` on System 6 and not~~
+    ~~have a ton of popping noises, let me know~~
+  - ~~Chances are if your machine is fast enough to try audio you're on System 7~~
+    ~~anyway~~
 * Memory management could be better
   - Clear unused blocks instead of everything
 * ~~LCD rendering is... yeah (see below)~~ this is better now in 2.0.0!

@@ -11,11 +11,12 @@ typedef struct {
 extern int current_palette;
 
 void init_dither_lut(void);
-void init_indexed_lut(WindowPtr wp);
+void init_video_luts(WindowPtr wp);
 
 struct lcd;
 void lcd_draw(struct lcd *lcd_ptr);
-void lcd_blit_color_bands(struct lcd *lcd_ptr, int scale, int all);
+void lcd_blit_color_bands(PixMap *src, struct lcd *lcd_ptr, int scale, int all);
+PixMap *lcd_active_pixmap(void);
 
 void lcd_mac_invalidate(void);
 
