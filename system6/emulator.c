@@ -38,6 +38,7 @@
 #include "arena.h"
 #include "cache.h"
 #include "jit.h"
+#include "blocklist.h"
 #include "settings.h"
 #include "audio_mac.h"
 #include "palette_menu.h"
@@ -86,8 +87,10 @@ static int vbl_installed;
 static unsigned long soft_reset_release_tick;
 
 
-static char save_filename[32];
-// for GetFInfo/SetFInfo
+static char game_title[24];
+static char save_filename[48];
+// game_title_p for the window title, save_filename_p for GetFInfo/SetFInfo
+static Str63 game_title_p;
 static Str63 save_filename_p;
 
 // 2x scaled: 336x288 @ 1bpp = 42 bytes per row (168 GB pixels for scroll offset)
@@ -110,10 +113,13 @@ static void build_save_filename(void)
 {
   int len;
 
-  rom_get_title(&rom, save_filename);
-  len = strlen(save_filename);
+  rom_get_title(&rom, game_title);
+  len = strlen(game_title);
+  game_title_p[0] = len;
+  memcpy(&game_title_p[1], game_title, len);
 
-  // build Pascal string
+  sprintf(save_filename, ":Saved Games:%s save", game_title);
+  len = strlen(save_filename);
   save_filename_p[0] = len;
   memcpy(&save_filename_p[1], save_filename, len);
 }
@@ -213,6 +219,34 @@ void set_status_bar(const char *str)
   DrawString(pstr);
 }
 
+void draw_progress_bar(u16 done, u16 total)
+{
+  static int last_px;
+  Rect bar, fill;
+  int height = (screen_scale == 1) ? 144 : 288;
+  int right = (screen_scale == 1) ? 160 : 320;
+  int w, px;
+
+  SetRect(&bar, right - 68, height + 3, right - 3, height + 8);
+
+  if (done == 0) {
+    FrameRect(&bar);
+    last_px = 0;
+  }
+
+  w = (bar.right - bar.left) - 2;
+  px = total ? (int) (((u32) (u16) w * done) / total) : 0;
+  if (px > w) {
+    px = w;
+  }
+  if (px == last_px) {
+    return;
+  }
+  last_px = px;
+  SetRect(&fill, bar.left + 1, bar.top + 1, bar.left + 1 + px, bar.bottom - 1);
+  PaintRect(&fill);
+}
+
 void DetectScreenDepth(void)
 {
   SysEnvRec env;
@@ -309,8 +343,22 @@ void InitLowDepthOffscreen(void)
   lowdepth_pixmap.pmReserved = 0;
 }
 
+void ensure_folder(ConstStr255Param name)
+{
+  short vRefNum;
+  long dirID, created;
+
+  if (HGetVol(0, &vRefNum, &dirID) != noErr) {
+    return;
+  }
+  DirCreate(vRefNum, dirID, name, &created);
+}
+
 void SaveGame(void)
 {
+  if (dmg.rom->mbc->has_battery) {
+    ensure_folder("\pSaved Games");
+  }
   if (mbc_save_ram(dmg.rom->mbc, save_filename)) {
     FInfo fndrInfo;
     if (GetFInfo(save_filename_p, 0, &fndrInfo) == noErr) {
@@ -327,7 +375,9 @@ void StopEmulation(void)
     return;
   }
 
+  set_status_bar("Saving...");
   SaveGame();
+  blocklist_save(&dmg, game_title);
   RemoveVBL();
 #ifdef GB6_PROFILING
   prof_remove();
@@ -376,10 +426,10 @@ void StartEmulation(void)
   offscreen_rect.bottom = height;
 
   if (screen_depth > 1) {
-    g_wp = NewCWindow(0, &bounds, save_filename_p, true,
+    g_wp = NewCWindow(0, &bounds, game_title_p, true,
           noGrowDocProc, (WindowPtr) -1, true, 0);
   } else {
-    g_wp = NewWindow(0, &bounds, save_filename_p, true,
+    g_wp = NewWindow(0, &bounds, game_title_p, true,
           noGrowDocProc, (WindowPtr) -1, true, 0);
   }
   SetPort(g_wp);
@@ -420,6 +470,9 @@ void StartEmulation(void)
   }
 
   jit_init(&dmg);
+  if (!jit_halted) {
+    blocklist_load(&dmg, game_title);
+  }
 
   if (audio_mac_init(&audio) && sound_enabled) {
     audio_mac_start();
@@ -555,10 +608,10 @@ void SetScreenScale(int scale)
     newBounds.bottom = WINDOW_Y + height + 11;  // +11 for status bar
 
     if (screen_depth > 1) {
-      g_wp = NewCWindow(0, &newBounds, save_filename_p, true,
+      g_wp = NewCWindow(0, &newBounds, game_title_p, true,
             noGrowDocProc, (WindowPtr) -1, true, 0);
     } else {
-      g_wp = NewWindow(0, &newBounds, save_filename_p, true,
+      g_wp = NewWindow(0, &newBounds, game_title_p, true,
             noGrowDocProc, (WindowPtr) -1, true, 0);
     }
     SetPort(g_wp);

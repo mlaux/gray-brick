@@ -270,8 +270,54 @@ int jit_clear_all_blocks(void)
   return 1;
 }
 
-// CPU-cycle budget for the next dispatch: exits land right at the next
-// armed hardware deadline, and HALT/idle fast-forwards skip exactly there
+// return 0 to stop 1 to keep going
+int jit_precompile(u8 bank, u16 pc)
+{
+  struct code_block *block;
+
+  if (cache_lookup(pc, bank)) {
+    return 1;
+  }
+
+  // so that the first uncompiled block doesn't immediately clear everything
+  if (arena_remaining() < arena_size() / 4) {
+    return 0;
+  }
+
+  if (pc >= 0x4000) {
+    dmg_update_rom_bank(compile_ctx.dmg, bank);
+  }
+  compile_ctx.current_bank = bank;
+
+  block = compile_block(pc, &compile_ctx);
+  if (!block) {
+    return 0;
+  }
+
+  arena_shrink(block, sizeof *block,
+      offsetof(struct code_block, code) + block->length);
+
+  if (block->error) {
+    jit_clear_all_blocks();
+    return 0;
+  }
+
+  if (!cache_store(pc, bank, block->code)) {
+    return 0;
+  }
+
+  return 1;
+}
+
+// restore the boot bank mapping and make the new code visible
+void jit_precompile_finish(void)
+{
+  dmg_update_rom_bank(compile_ctx.dmg, 1);
+  if (TrapAvailable(_CacheFlush)) {
+    FlushCodeCache();
+  }
+}
+
 static void update_wake_limit(struct dmg *dmg)
 {
   u32 dist = dmg_cycles_to_next_event(dmg);
@@ -541,4 +587,5 @@ void jit_cleanup(void)
 {
   // we need this memory back to load the next ROM
   arena_destroy();
+  cache_shutdown();
 }

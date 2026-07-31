@@ -33,7 +33,7 @@ extern PixMap lowdepth_pixmap;
 
 void InitLowDepthOffscreen(void);
 
-#define APP_VERSION "2.1.0 ${GIT_SHA}"
+#define APP_VERSION "2.2.0 ${GIT_SHA}"
 
 #define WINDOW_X 8
 #define WINDOW_Y 40
@@ -87,5 +87,9 @@ int LoadRom(Str63, short);
 void SetScreenScale(int scale);
 
 void set_status_bar(const char *str);
+
+void draw_progress_bar(u16 done, u16 total);
+
+void ensure_folder(ConstStr255Param name);
 
 #endif

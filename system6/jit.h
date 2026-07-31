@@ -53,6 +53,10 @@ int jit_run(struct dmg *dmg);
 
 int jit_clear_all_blocks(void);
 
+// batch compilation of a saved block list (blocklist.c)
+int jit_precompile(u8 bank, u16 pc);
+void jit_precompile_finish(void);
+
 void jit_cleanup(void);
 
 #endif

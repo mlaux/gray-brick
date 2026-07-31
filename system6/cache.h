@@ -11,6 +11,9 @@
 // Allocate and zero all cache arrays upfront (call after arena init/reset)
 int cache_init(void);
 
+// NULL the array pointers when the arena backing them is destroyed
+void cache_shutdown(void);
+
 // Returns cached code pointer or NULL
 void *cache_lookup(u16 pc, u8 bank);
 

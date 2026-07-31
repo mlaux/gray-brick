@@ -119,6 +119,13 @@ int cache_init(void)
     return 1;
 }
 
+void cache_shutdown(void)
+{
+    bank0_cache = NULL;
+    upper_cache = NULL;
+    banked_cache = NULL;
+}
+
 // Get current cache array pointers for dispatcher
 void cache_get_arrays(void ***out_bank0, void ****out_banked, void ***out_upper)
 {
