@@ -13,7 +13,7 @@
 
 cd "$(dirname "$0")"
 GB6RUN=../gb6run
-ROOT=../..
+ROOT=../../my-test-games
 OUT="${1:-results.txt}"
 
 # dispatcher configs; divergence between them is itself a finding

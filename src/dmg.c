@@ -21,7 +21,7 @@
 #define INT_JOYPAD  (1 << 4)
 #define NUM_INTERRUPTS 5
 
-// TAC clock select -> cycles per TIMA increment (all powers of two)
+// TAC clock select -> cycles per TIMA increment
 static const u16 timer_divisors[] = { 1024, 16, 64, 256 };
 
 static int dmg_double_speed(struct dmg *dmg)
@@ -29,16 +29,14 @@ static int dmg_double_speed(struct dmg *dmg)
     return dmg->cgb && dmg->cgb->double_speed && !ignore_double_speed;
 }
 
-// the CPU-cycle clock, including in-flight JIT cycles. DIV and TIMA run
-// on this; the frame events run on the frame_cycles PPU clock
+// the CPU-cycle clock, including cycles currently in progress in the JIT
+// DIV and TIMA run on this
 static u32 dmg_now_cpu(struct dmg *dmg)
 {
     return dmg->total_cycles + jit_in_flight();
 }
 
-// the PPU-cycle beam position, frame-relative and unwrapped, including
-// in-flight cycles. deadlines armed from write paths use this so they
-// compare correctly once the sync absorbs the block's cycles
+// the PPU-cycle beam position, frame-relative and unwrapped
 static u32 dmg_now_ppu(struct dmg *dmg)
 {
     u32 in_flight = jit_in_flight();
@@ -63,16 +61,12 @@ static void dmg_budget_touch(struct dmg *dmg)
         dist <<= 1;
     }
     if (dist < jit_ctx.wake_limit) {
-        // shrink the stashed countdown by the same amount so the
-        // in-flight count stays valid and the block's D2 reload sees
-        // the tightened budget
         jit_ctx.read_cycles -= jit_ctx.wake_limit - dist;
         jit_ctx.wake_limit = dist;
     }
 }
 
-// the raster registers as currently written - the single-band state when
-// nothing changed mid-frame
+// single-band state when nothing changed mid-frame
 static void raster_live_regs(struct lcd *lcd, struct raster_regs *regs)
 {
     regs->lcdc = lcd_read(lcd, REG_LCDC);
@@ -85,8 +79,8 @@ static void raster_live_regs(struct lcd *lcd, struct raster_regs *regs)
     regs->obp1 = lcd_read(lcd, REG_OBP1);
 }
 
-// start a new raster frame: the current regs become the line-0 state and
-// the write log empties. runs at the frame wrap and when the LCD turns on
+// start a new raster frame - line 0 state from current regs
+// and clear the log
 static void raster_frame_reset(struct dmg *dmg)
 {
     raster_live_regs(dmg->lcd, &dmg->lcd->frame_regs);
@@ -94,9 +88,7 @@ static void raster_frame_reset(struct dmg *dmg)
     dmg->lcd->raster_overflow = 0;
 }
 
-// a raster register changed mid-frame: log it for the band replay at
-// render time. hblank writes take effect on the next line - the line the
-// game armed them for (most splits run off the hblank STAT interrupt)
+// a raster register changed mid-frame, log it for the band replay
 static void raster_record(
     struct dmg *dmg,
     u16 address,
@@ -112,7 +104,7 @@ static void raster_record(
         return;
     }
     if (line >= 144) {
-        // affects next frame only; its frame-start snapshot picks it up
+        // affects next frame only
         return;
     }
     if (lcd->raster_count == RASTER_LOG_SIZE) {
@@ -134,15 +126,11 @@ void dmg_new(struct dmg *dmg, struct rom *rom, struct lcd *lcd)
     dmg->joypad = 0xf; // nothing pressed
     dmg->action_buttons = 0xf;
 
-    // hardware state as the boot ROM hands it to the cartridge. the LCD is
-    // already on, and games can rely on that: DK '94 waits for its first
-    // vblank before it ever touches LCDC
+    // hardware state as the boot ROM hands it to the cartridge
     lcd_write(lcd, REG_LCDC, 0x91);
     lcd_write(lcd, REG_BGP, 0xfc);
     dmg->interrupt_request_mask = 0xe1;
 
-    // no STAT sources armed until the game writes STAT. the LCD is on, so
-    // the per-frame events start armed; the frame wrap always is
     dmg->event_deadline[EV_STAT] = EV_NONE;
     dmg->event_deadline[EV_VBLANK] = CYCLES_LINE_144;
     dmg->event_deadline[EV_RENDER] = CYCLES_LINE_144;
@@ -230,8 +218,6 @@ void dmg_update_rom_bank(struct dmg *dmg, int bank)
     }
     dmg->current_rom_bank = bank;
 
-    // the per-page offset and the bias cancel, so every page in the
-    // window shares one biased pointer: bank_base - 0x4000
     biased = PAGE_BIAS(&dmg->rom->data[bank * 0x4000], 0x40);
     for (k = 0x40; k <= 0x7f; k += 4) {
         dmg->read_page[k] = biased;
@@ -248,8 +234,6 @@ void dmg_update_rom_bank(struct dmg *dmg, int bank)
 
 void dmg_update_ram_bank(struct dmg *dmg, u8 *ram_base)
 {
-    // same cancellation as dmg_update_rom_bank; NULL stays NULL so the
-    // window falls back to the slow path when RAM is disabled
     u8 *biased = ram_base ? PAGE_BIAS(ram_base, 0xa0) : NULL;
     int k;
 
@@ -295,11 +279,7 @@ void dmg_set_button(struct dmg *dmg, int field, int button, int pressed)
 
 static u8 get_button_state(struct dmg *dmg)
 {
-    // each selected group pulls its pressed bits low. with neither group
-    // selected the low nibble reads 0xf (nothing pressed), not 0 - games
-    // park P1 at $30 between polls and a raw read there shouldn't see
-    // phantom presses. bits 4-5 read back the select lines (0 = selected),
-    // 6-7 are unused and read 1
+    // each selected group pulls its pressed bits low
     u8 ret = 0xcf;
 
     if (dmg->action_selected) {
@@ -317,12 +297,12 @@ static u8 get_button_state(struct dmg *dmg)
     return ret;
 }
 
-// advance the lazy LY counter to the current beam position, including
-// in-flight JIT cycles, without dividing. returns LY; *line_pos gets the
-// cycle offset within the line if non-NULL
+// advance the lazy LY counter to the current "beam" position
 static u8 dmg_current_ly(struct dmg *dmg, u32 *line_pos)
 {
-    u32 current = dmg_now_ppu(dmg);
+    u32 current;
+
+    current = dmg_now_ppu(dmg);
     if (current >= 70224) {
         current -= 70224;
     }
@@ -364,8 +344,9 @@ static u32 stat_event_from(
     u32 best_line = 0;
     u32 c, line;
 
-    // per-line STAT interrupts cost a dispatch each; the user can turn
-    // them off for games (GSC) that arm them but rarely use them
+    // per-line STAT interrupts cost a dispatch each
+    // the user can turn them off for games (GSC) that enable them
+    // but rarely use them
     if (!stat_ints_enabled
             || !(lcd_read(dmg->lcd, REG_LCDC) & LCDC_ENABLE)) {
         return best;
@@ -419,8 +400,6 @@ static u32 stat_event_from(
     return best;
 }
 
-// recompute the pending STAT event from the current beam position
-// including in-flight cycles
 static void dmg_stat_recompute(struct dmg *dmg)
 {
     u32 pos, line;
@@ -428,8 +407,7 @@ static void dmg_stat_recompute(struct dmg *dmg)
     u32 cur = ly * CYCLES_PER_LINE + pos;
 
     if (dmg_now_ppu(dmg) >= CYCLES_PER_FRAME) {
-        // in-flight cycles ran past the end of the frame, so cur wrapped
-        // to a next-frame position
+        // cur wrapped to a next-frame position
         dmg->event_deadline[EV_STAT] = EV_NONE;
         return;
     }
@@ -438,8 +416,6 @@ static void dmg_stat_recompute(struct dmg *dmg)
     dmg->stat_event_line = line;
 }
 
-// moves the armed event due to a STAT/LYC/LCDC write if the beam already
-// crossed it
 static void dmg_stat_touch(struct dmg *dmg)
 {
     if (dmg_now_ppu(dmg) >= dmg->event_deadline[EV_STAT]) {
@@ -448,8 +424,6 @@ static void dmg_stat_touch(struct dmg *dmg)
     dmg_stat_recompute(dmg);
 }
 
-// vblank-start and the mid-frame render fire once per frame while the LCD
-// is on. LCDC writes flip their armed state; the frame wrap rearms them
 static void dmg_update_frame_events(struct dmg *dmg)
 {
     int on = lcd_read(dmg->lcd, REG_LCDC) & LCDC_ENABLE;
@@ -458,6 +432,41 @@ static void dmg_update_frame_events(struct dmg *dmg)
         (on && !dmg->sent_vblank_start) ? CYCLES_LINE_144 : EV_NONE;
     dmg->event_deadline[EV_RENDER] =
         (on && !dmg->rendered_this_frame) ? CYCLES_LINE_144 : EV_NONE;
+}
+
+// enabling the LCD restarts the PPU frame at line 0
+static void dmg_lcd_frame_restart(struct dmg *dmg)
+{
+    u32 partial = dmg->frame_cycles;
+
+    if (!partial) {
+        return;
+    }
+
+    dmg->frame_cycles = 0;
+    dmg->sent_vblank_start = 0;
+    dmg->rendered_this_frame = 0;
+    dmg->lazy_ly = 0;
+    dmg->ly_read_cycle = 0;
+    raster_frame_reset(dmg);
+
+    // need to move these back because frame_cycles was still going even with
+    // the lcd off...
+    if (dmg->event_deadline[EV_TIMA] != EV_NONE) {
+        dmg->event_deadline[EV_TIMA] =
+            dmg->event_deadline[EV_TIMA] > partial
+                ? dmg->event_deadline[EV_TIMA] - partial : 0;
+    }
+    if (dmg->event_deadline[EV_SERIAL] != EV_NONE) {
+        dmg->event_deadline[EV_SERIAL] =
+            dmg->event_deadline[EV_SERIAL] > partial
+                ? dmg->event_deadline[EV_SERIAL] - partial : 0;
+    }
+
+    if (dmg->cgb) {
+        dmg->cgb->hdma_last_ly = 0xff;
+        dmg->cgb->hdma_completed = 0;
+    }
 }
 
 static u32 tima_divisor(struct dmg *dmg)
@@ -485,8 +494,7 @@ static u8 dmg_tima_read(struct dmg *dmg)
     return dmg->timer_mod + (count - 256) % (256 - dmg->timer_mod);
 }
 
-// rearm the overflow deadline from the current base state. the base must
-// be current (rebased by touch or fire) so the distance can't underflow
+// rearm the overflow deadline from the current base state
 static void dmg_tima_recompute(struct dmg *dmg)
 {
     u32 dist;
@@ -505,10 +513,6 @@ static void dmg_tima_recompute(struct dmg *dmg)
     dmg_budget_touch(dmg);
 }
 
-// a timer register write moves the overflow deadline: fire-if-crossed,
-// then materialize the live count into the base pair so the caller can
-// change the clocking underneath it. keep_phase carries the sub-divisor
-// prescaler position across the rebase (divisors are powers of two)
 static void dmg_tima_touch(struct dmg *dmg, int keep_phase)
 {
     u32 now = dmg_now_cpu(dmg);
@@ -535,6 +539,10 @@ void dmg_speed_changed(struct dmg *dmg)
 u8 dmg_read_slow(struct dmg *dmg, u16 address)
 {
     if (address == REG_LY) {
+        if (!(lcd_read(dmg->lcd, REG_LCDC) & LCDC_ENABLE)) {
+            return 0;
+        }
+
         // the compiler detects "ldh a, [$44]; cp N; jr cc" which is the most
         // common case, and skips to that line, so this actually doesn't run
         // that much
@@ -653,9 +661,7 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
         return;
     }
 
-    // pages holding compiled code have their fast write mapping removed,
-    // so writes that modify the code land here and can invalidate it
-    // (FF Legend rewrites its interrupt trampolines in WRAM)
+    // pages holding compiled code have their fast write mapping removed
     if (address >= 0x8000) {
         u8 pidx = (u8) ((address >> 8) - 0x80);
         u8 *saved = dmg->saved_write_page[pidx];
@@ -686,9 +692,7 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
         return;
     }
 
-    // scroll/window/palette/LCDC writes change how the rest of the frame
-    // renders: log value changes against the beam position for the band
-    // replay at render time
+    // log changes to replay on render
     if (address >= REG_LCDC && address <= REG_WX
             && ((0xfcd >> (address - REG_LCDC)) & 1)) {
         u8 old = lcd_read(dmg->lcd, address);
@@ -733,15 +737,12 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
         return;
     }
 
-    // STAT/LYC/LCDC writes change when the next STAT interrupt fires;
-    // LCDC also gates the per-frame events
     if (address == REG_STAT || address == REG_LYC || address == REG_LCDC) {
         u8 was_on = lcd_read(dmg->lcd, REG_LCDC) & LCDC_ENABLE;
 
         lcd_write(dmg->lcd, address, data);
         if (address == REG_LCDC && !was_on && (data & LCDC_ENABLE)) {
-            // LCD turning on starts a fresh frame for the replay log
-            raster_frame_reset(dmg);
+            dmg_lcd_frame_restart(dmg);
         }
         dmg_stat_touch(dmg);
         if (address == REG_LCDC) {
@@ -1018,9 +1019,7 @@ static void dmg_event_fire(struct dmg *dmg, int ev)
 
     switch (ev) {
     case EV_STAT:
-        // several events crossed in one sync merge into a single IF bit,
-        // the same way real hardware merges them when the handler can't
-        // keep up
+        // several events crossed in one sync merge into a single IF bit
         dmg_request_interrupt(dmg, INT_LCDSTAT);
         dmg->event_deadline[EV_STAT] = stat_event_from(dmg,
                 dmg->event_deadline[EV_STAT] + 1, dmg->stat_event_line,
@@ -1029,8 +1028,7 @@ static void dmg_event_fire(struct dmg *dmg, int ev)
         break;
 
     case EV_VBLANK:
-        // vblank start, once per frame. the STAT vblank source (bit 4)
-        // fires through EV_STAT
+        // vblank start, once per frame
         dmg_request_interrupt(dmg, INT_VBLANK);
         dmg->sent_vblank_start = 1;
         dmg->event_deadline[EV_VBLANK] = EV_NONE;
@@ -1051,9 +1049,8 @@ static void dmg_event_fire(struct dmg *dmg, int ev)
         break;
 
     case EV_TIMA: {
-        // overflow: reload from TMA at the exact overflow instant and arm
-        // the next one. several overflows crossed in one sync merge into
-        // a single IF bit, like the STAT events
+        // overflow: reload from TMA at the exact overflow instant
+        // and set the next one
         u32 overshoot = dmg->frame_cycles - dmg->event_deadline[EV_TIMA];
         u32 period = (256 - dmg->timer_mod) * tima_divisor(dmg);
         if (dmg_double_speed(dmg)) {
@@ -1080,8 +1077,7 @@ static void dmg_event_fire(struct dmg *dmg, int ev)
         dmg->stat_event_line = line;
         dmg_update_frame_events(dmg);
 
-        // CPU-clock deadlines are stored frame-relative too; shift them
-        // into the new frame (chronological firing guarantees they are
+        // shift deadlines into the new frame
         // past the wrap point here)
         if (dmg->event_deadline[EV_TIMA] != EV_NONE) {
             dmg->event_deadline[EV_TIMA] -= CYCLES_PER_FRAME;
@@ -1099,10 +1095,7 @@ static void dmg_event_fire(struct dmg *dmg, int ev)
     }
 }
 
-// PPU cycles until the next deadline the CPU must observe. the JIT times
-// dispatcher exits and caps HALT/idle fast-forwards with this so handlers
-// run on the line they expect, interrupt sources count only when their 
-// IE bit is set, the frame wrap is always armed
+// PPU cycles until the next deadline the CPU must observe
 u32 dmg_cycles_to_next_event(struct dmg *dmg)
 {
     u8 ie = dmg->zero_page[0x7f];
@@ -1133,8 +1126,7 @@ u32 dmg_cycles_to_next_event(struct dmg *dmg)
     }
 
     if (best <= dmg->frame_cycles) {
-        // overdue; the sync loop fires it at the very next sync, so ask
-        // for an exit as soon as possible
+        // exit as soon as possible
         return 0;
     }
     return best - dmg->frame_cycles;
@@ -1159,9 +1151,7 @@ void dmg_sync_hw(struct dmg *dmg, int cycles)
     }
 
     // fire every deadline the counter has crossed, in chronological order.
-    // this continues straight through a frame wrap: the wrap fire lowers
-    // frame_cycles and rearms the table, and events already due in the
-    // new frame (a LYC=0 match at cycle 0) fire in this same sync
+    // this continues straight through a frame wrap
     for (;;) {
         u32 best = EV_NONE;
         int ev = -1;
@@ -1186,8 +1176,7 @@ void dmg_ei_di(void *_dmg, u16 enabled)
     struct dmg *dmg = (struct dmg *) _dmg;
     dmg->interrupt_enable = enabled ? 1 : 0;
 
-    // EI/RETI with an interrupt already pending must deliver promptly,
-    // not when the chain's stale budget runs out
+    // EI/RETI with an interrupt already pending must deliver promptly
     if (dmg->interrupt_enable) {
         dmg_budget_touch(dmg);
     }
