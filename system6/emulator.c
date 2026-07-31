@@ -195,9 +195,14 @@ void set_status_bar(const char *str)
   Rect statusRect;
   int height;
 
-  if (!strcmp(str, status_bar)) {
+  if (!g_wp || !strcmp(str, status_bar)) {
     return;
   }
+
+  SetPort(g_wp);
+  TextFont(kFontIDGeneva);
+  TextFace(0);
+  TextSize(9);
 
   for (k = 0; k < 63 && str[k]; k++) {
     status_bar[k] = str[k];
@@ -211,7 +216,7 @@ void set_status_bar(const char *str)
   statusRect.right = (screen_scale == 1) ? 160 : 320;
 
   EraseRect(&statusRect);
-  MoveTo(4, height + 10);
+  MoveTo(2, height + 9);
   for (k = 0; k < 255 && status_bar[k]; k++) {
     pstr[k + 1] = status_bar[k];
   }
@@ -420,7 +425,7 @@ void StartEmulation(void)
   bounds.top = WINDOW_Y;
   bounds.left = WINDOW_X;
   bounds.right = WINDOW_X + width;
-  bounds.bottom = WINDOW_Y + height + 11;  // +11 for status bar
+  bounds.bottom = WINDOW_Y + height + 11; // add for status bar
 
   offscreen_rect.right = width;
   offscreen_rect.bottom = height;

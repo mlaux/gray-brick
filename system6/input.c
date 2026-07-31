@@ -21,18 +21,25 @@ static struct {
   { BUTTON_START, FIELD_ACTION }
 };
 
+#define KEY_COMMAND 0x37
+
+#define KEY_IS_DOWN(raw, code) (((raw)[(code) >> 3] >> ((code) & 7)) & 1)
+
 // edge-detect against the last poll
 void PollGameInput(void)
 {
   KeyMap keys;
   unsigned char *raw = (unsigned char *) keys;
   static unsigned char prev[8];
-  int k;
+  int k, cmd;
 
   GetKeys(keys);
+  cmd = KEY_IS_DOWN(raw, KEY_COMMAND);
+
   for (k = 0; k < 8; k++) {
     int code = keyMappings[k];
-    unsigned char down = (raw[code >> 3] >> (code & 7)) & 1;
+    // treat everything as released while a menu shortcut is being typed
+    unsigned char down = cmd ? 0 : KEY_IS_DOWN(raw, code);
 
     if (down == prev[k]) {
       continue;
