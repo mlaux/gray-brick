@@ -84,6 +84,9 @@ struct dmg {
 
     u8 joypad;
     u8 action_buttons;
+    // computed FF00 value, kept current on select/button changes so
+    // emitted code can read it with one move.b
+    u8 joyp;
     // serial port: writing SC with bit 7 + internal clock arms EV_SERIAL
     // 4096 CPU cycles out; completion reads back the no-partner value
     u8 reg_sb;

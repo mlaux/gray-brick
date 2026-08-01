@@ -48,6 +48,7 @@ struct audio {
     u8 lfsr_width;              // 0 = 15-bit, 1 = 7-bit
     u8 noise_divisor;
     u8 noise_shift;
+    u16 noise_gain;             // 8.8 anti-aliasing gain for the LFSR rate
 
     u8 master_enable;           // NR52 bit 7
     u8 master_vol_left;

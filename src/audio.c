@@ -37,13 +37,15 @@ static int dac_on(struct audio *audio, int ch)
 // for noise channel
 static const u8 divisor_table[8] = { 8, 16, 32, 48, 64, 80, 96, 112 };
 
+// tweak with tools/gen_noise_gain.c
+#include "noise_gain.h"
+
 // precomputed LFSR output, one byte per step so playback is a plain load
 static u8 lfsr15_bytes[32768]; // 15-bit mode, period 32767
 static u8 lfsr7_bytes[128]; // 7-bit mode, period 127
 
 // precomputed bandlimited square wave tables. this sounds better than the
 // basic square wave, but still not great because of the low sample rate.
-// premultiplied by volume so playback is one table read per sample
 // [volume 0-15][duty 0-3][band 0-3][sample 0-31]
 // band 0: divisor >= 512 (< 256 Hz), 21 harmonics
 // band 1: divisor 256-511 (256-512 Hz), 11 harmonics
@@ -77,7 +79,7 @@ static void update_wave_table(struct audio *audio)
             nibble &= 0x0f;
         else
             nibble = (nibble >> 4) & 0x0f;
-        audio->wave_tab[k] = (s8) ((nibble - 8) >> shift);
+        audio->wave_tab[k] = (s8) (((nibble - 8) * 2) >> shift);
     }
 }
 
@@ -90,10 +92,8 @@ static void update_mix_table(struct audio *audio)
         return;
     audio->mixtab_master = master;
 
-    // >>3 would be "most correct" in terms of keeping the original scale
-    // but this scales to -106 - 104 to make it louder
     for (k = 0; k < 256; k++) {
-        s16 v = (s16) ((k - 128) * master) >> 2;
+        s16 v = (s16) ((k - 128) * master) >> 3;
         audio->mixtab[k] = (u8) (v + 128);
     }
 }
@@ -129,14 +129,19 @@ static void update_phase_inc(struct audio_channel *ch, int base)
 
 static void update_phase_inc_noise(struct audio *audio)
 {
-    u32 divisor = divisor_table[audio->noise_divisor];
-    if (audio->noise_shift < 14)
-        divisor <<= audio->noise_shift;
+    u32 divisor;
+    int shift = audio->noise_shift;
 
-    audio->ch4.phase_inc = 0;
-    if (divisor > 0) {
-        audio->ch4.phase_inc = PHASE_INC_NOISE / divisor;
+    // shift 14/15 stops the LFSR from being clocked
+    if (shift > 13) {
+        audio->ch4.phase_inc = 0;
+        audio->noise_gain = 0;
+        return;
     }
+
+    divisor = divisor_table[audio->noise_divisor] << shift;
+    audio->ch4.phase_inc = PHASE_INC_NOISE / divisor;
+    audio->noise_gain = noise_gain[audio->noise_divisor][shift];
 }
 
 static void trigger_non_wave(struct audio_channel *ch, int dac)
@@ -235,6 +240,7 @@ void audio_init(struct audio *audio)
     update_bl_table(&audio->ch2);
     update_bl_table(&audio->ch3);
     update_bl_table(&audio->ch4);
+    update_phase_inc_noise(audio);
 
     // generate 15-bit LFSR output table (period 32767)
     lfsr = 0x7fff;
@@ -449,6 +455,7 @@ static void render_run(struct audio *audio, u8 *buffer, int n, u8 audible)
     const u8 *nz;
     u32 ph1, ph2, ph3, ph4, inc1, inc2, inc3, inc4, nmask;
     s8 pm[2];
+    int amp;
 
     if (!audio->ch1.enabled || audio->ch1.volume == 0)
         active &= ~0x01;
@@ -486,8 +493,10 @@ static void render_run(struct audio *audio, u8 *buffer, int n, u8 audible)
     inc3 = audio->ch3.phase_inc;
     inc4 = audio->ch4.phase_inc;
 
-    pm[0] = -(s8) audio->ch4.volume;
-    pm[1] = audio->ch4.volume;
+    // 2x hardware scale is (volume / 2) * 2, so just volume, then de-alias
+    amp = (audio->ch4.volume * audio->noise_gain + 128) >> 8;
+    pm[0] = -(s8) amp;
+    pm[1] = (s8) amp;
     if (audio->lfsr_width) {
         nz = lfsr7_bytes;
         nmask = 0x7f;

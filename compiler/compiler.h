@@ -124,6 +124,7 @@ struct compile_ctx {
     uint8_t current_bank;       // current ROM bank for cache_store calls
     void *wram_base;            // dmg->main_ram for compile-time WRAM SP detection
     void *hram_base;
+    void *joyp_base;            // &dmg->joyp, the maintained FF00 shadow
 };
 
 void compiler_init(void);

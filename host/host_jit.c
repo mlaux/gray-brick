@@ -559,6 +559,8 @@ void host_jit_init(struct dmg *d)
         (void *) (uintptr_t) (DMG_ADDR + offsetof(struct dmg, main_ram));
     compile_ctx.hram_base =
         (void *) (uintptr_t) (DMG_ADDR + offsetof(struct dmg, zero_page));
+    compile_ctx.joyp_base =
+        (void *) (uintptr_t) (DMG_ADDR + offsetof(struct dmg, joyp));
 
     arena_set_region(&m68k_mem[ARENA_ADDR], ARENA_END - ARENA_ADDR);
     arena_init();

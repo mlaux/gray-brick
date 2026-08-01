@@ -175,6 +175,7 @@ void jit_init(struct dmg *dmg)
   compile_ctx.alloc = arena_alloc;
   compile_ctx.wram_base = dmg->main_ram;
   compile_ctx.hram_base = dmg->zero_page;
+  compile_ctx.joyp_base = &dmg->joyp;
 
   if (!jit_emit_helpers()) {
     set_status_bar("Helper emit fail");

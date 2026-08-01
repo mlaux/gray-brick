@@ -24,6 +24,8 @@
 // TAC clock select -> cycles per TIMA increment
 static const u16 timer_divisors[] = { 1024, 16, 64, 256 };
 
+static void update_joyp(struct dmg *dmg);
+
 static int dmg_double_speed(struct dmg *dmg)
 {
     return dmg->cgb && dmg->cgb->double_speed && !ignore_double_speed;
@@ -125,6 +127,7 @@ void dmg_new(struct dmg *dmg, struct rom *rom, struct lcd *lcd)
 
     dmg->joypad = 0xf; // nothing pressed
     dmg->action_buttons = 0xf;
+    update_joyp(dmg);
 
     // hardware state as the boot ROM hands it to the cartridge
     lcd_write(lcd, REG_LCDC, 0x91);
@@ -250,6 +253,26 @@ static void dmg_request_interrupt(struct dmg *dmg, int nr)
     dmg->interrupt_request_mask |= nr;
 }
 
+static void update_joyp(struct dmg *dmg)
+{
+    // each selected group pulls its pressed bits low
+    u8 ret = 0xcf;
+
+    if (dmg->action_selected) {
+        ret &= 0xf0 | dmg->action_buttons;
+    } else {
+        ret |= 0x20;
+    }
+
+    if (dmg->joypad_selected) {
+        ret &= 0xf0 | dmg->joypad;
+    } else {
+        ret |= 0x10;
+    }
+
+    dmg->joyp = ret;
+}
+
 void dmg_set_button(struct dmg *dmg, int field, int button, int pressed)
 {
     u8 *mod;
@@ -275,26 +298,7 @@ void dmg_set_button(struct dmg *dmg, int field, int button, int pressed)
     } else {
         *mod |= button;
     }
-}
-
-static u8 get_button_state(struct dmg *dmg)
-{
-    // each selected group pulls its pressed bits low
-    u8 ret = 0xcf;
-
-    if (dmg->action_selected) {
-        ret &= 0xf0 | dmg->action_buttons;
-    } else {
-        ret |= 0x20;
-    }
-
-    if (dmg->joypad_selected) {
-        ret &= 0xf0 | dmg->joypad;
-    } else {
-        ret |= 0x10;
-    }
-
-    return ret;
+    update_joyp(dmg);
 }
 
 // advance the lazy LY counter to the current "beam" position
@@ -590,7 +594,7 @@ u8 dmg_read_slow(struct dmg *dmg, u16 address)
 
     // I/O registers
     if (address == 0xff00) {
-        return get_button_state(dmg);
+        return dmg->joyp;
     }
     if (address == REG_TIMER_DIV) {
         u32 div_val = dmg_now_cpu(dmg) - dmg->div_reset_cycle;
@@ -772,6 +776,7 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
     if (address == 0xff00) {
         dmg->joypad_selected = !(data & (1 << 4));
         dmg->action_selected = !(data & (1 << 5));
+        update_joyp(dmg);
         return;
     }
     if (address == REG_TIMER_DIV) {
