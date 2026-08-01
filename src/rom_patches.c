@@ -6,9 +6,31 @@
 static const u8 pokemon_red_patch0[] = { 0xd5 };  /* jr $3ad9 -> jr $3ad6 */
 static const u8 pokemon_red_patch1[] = { 0xd7, 0x3d };  /* call $3e6d -> call $3dd7 */
 
+// PrintLetterDelay.checkButtons: merge the two bit tests into one "and $03",
+// call DelayFrame instead of spinning on Joypad
+static const u8 pokemon_red_letter_orig[] = {
+    0xcd, 0x9a, 0x01, 0xf0, 0xb4, 0xcb, 0x47, 0x28, 0x02, 0x18,
+    0x04, 0xcb, 0x4f, 0x28, 0x05, 0xcd, 0xaf, 0x20, 0x18, 0x05,
+    0xf0, 0xd5, 0xa7, 0x20, 0xe7,
+};
+
+static const u8 pokemon_red_letter[] = {
+    0xf0, 0xd5,       /* ldh a, [hFrameCounter] */
+    0xa7,             /* and a                  */
+    0x28, 0x14,       /* jr z, $390f            */
+    0xcd, 0xaf, 0x20, /* call DelayFrame        */
+    0xcd, 0x9a, 0x01, /* call Joypad            */
+    0xf0, 0xb4,       /* ldh a, [hJoyHeld]      */
+    0xe6, 0x03,       /* and PAD_A | PAD_B      */
+    0x28, 0xef,       /* jr z, $38f6            */
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+};
+
 static const struct rom_patch pokemon_red_patches[] = {
     { 0x3b00, 1, NULL, pokemon_red_patch0 },
     { 0x3889, 2, NULL, pokemon_red_patch1 },
+    { 0x38f6, sizeof(pokemon_red_letter), pokemon_red_letter_orig,
+      pokemon_red_letter },
 };
 
 // see patches/kaeru.asm
@@ -36,8 +58,8 @@ static const struct rom_patch kaeru_patches[] = {
 };
 
 static const struct rom_patch_list all_patches[] = {
-    { "POKEMON RED",   pokemon_red_patches, 2 },
-    { "POKEMON BLUE",  pokemon_red_patches, 2 },
+    { "POKEMON RED",   pokemon_red_patches, 3 },
+    { "POKEMON BLUE",  pokemon_red_patches, 3 },
     { "KAERUNOTAMENI", kaeru_patches,       2 },
 };
 
