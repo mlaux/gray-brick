@@ -734,10 +734,16 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
     // OAM DMA
     if (address == 0xff46) {
         u16 src = data << 8;
-        int k = 0;
-        for (u16 addr = src; addr < src + 0xa0; addr++) {
-            dmg->lcd->oam[k++] = dmg_read(dmg, addr);
+        u8 *page = dmg->read_page[data];
+        if (page) {
+            memcpy(dmg->lcd->oam, page + (s16) src, 0xa0);
+        } else {
+            int k = 0;
+            for (u16 addr = src; addr < src + 0xa0; addr++) {
+                dmg->lcd->oam[k++] = dmg_read(dmg, addr);
+            }
         }
+
         return;
     }
 

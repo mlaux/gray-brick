@@ -17,7 +17,7 @@ struct audio_channel {
     const s8 *bl_table; // bl_square_vol row for volume/duty/band (squares)
     u8 volume;          // 4-bit volume (0-15)
     u8 duty;            // duty cycle (0-3)
-    u8 band;            // bandlimit table index (0-3)
+    u8 band;            // bandlimit table index (0 to BL_NUM_BANDS-1)
     u8 enabled;
 
     // envelope

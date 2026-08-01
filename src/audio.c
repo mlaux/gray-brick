@@ -46,11 +46,7 @@ static u8 lfsr7_bytes[128]; // 7-bit mode, period 127
 
 // precomputed bandlimited square wave tables. this sounds better than the
 // basic square wave, but still not great because of the low sample rate.
-// [volume 0-15][duty 0-3][band 0-3][sample 0-31]
-// band 0: divisor >= 512 (< 256 Hz), 21 harmonics
-// band 1: divisor 256-511 (256-512 Hz), 11 harmonics
-// band 2: divisor 128-255 (512-1024 Hz), 5 harmonics
-// band 3: divisor < 128 (> 1024 Hz), 3 harmonics
+// [volume 0-15][duty 0-3][band][sample 0-31]
 #define BL_TABLE_SIZE 32
 // square/wave phase accumulators are pre-scaled by 32 so the sample index
 // us in bits 16-20, which gcc extracts with swap
@@ -110,19 +106,10 @@ static void update_phase_inc(struct audio_channel *ch, int base)
 
     ch->phase_inc = (base / divisor) << 5;
 
-    // compute band from divisor
-    // divisor >> 7: 0 = >1024Hz, 1 = 512-1024Hz, 2-3 = 256-512Hz, 4+ = <256Hz
-    int d7 = divisor >> 7;
-    if (d7 >= 4) {
-        ch->band = 0;
-    }
-    else if (d7 >= 2) {
-        ch->band = 1;
-    } else if (d7 >= 1) {
-        ch->band = 2;
-    } else {
-        ch->band = 3;
-    }
+    int band = 0;
+    while (divisor < bl_band_min_div[band])
+        band++;
+    ch->band = band;
 
     update_bl_table(ch);
 }
