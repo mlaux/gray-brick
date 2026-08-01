@@ -464,6 +464,8 @@ void StartEmulation(void)
   offscreen_bmp.bounds.bottom = height;
   offscreen_bmp.bounds.right = (width == 320) ? 336 : 168;
   offscreen_bmp.rowBytes = (width == 320) ? 42 : 21;
+  // picks up the renderer's row stride for the current scale/mode
+  lcd_mac_invalidate();
   if (screen_depth > 1) {
     InitColorOffscreen();
     if (VIDEO_IS_LOW_DEPTH(video_mode)) {

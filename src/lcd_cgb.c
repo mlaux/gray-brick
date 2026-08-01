@@ -88,13 +88,21 @@ void lcd_cgb_render_band(
 
     int scx_offset = scx & 7;
 
+    int odd = dmg->lcd->row_stride - 1;
     int sy;
     for (sy = sy_start; sy < sy_end; sy++) {
         u8 *row = out + sy * 42;
         u8 *row_attr = out_attr + sy * 168;
         int window_active = window_enabled && sy >= wy && wx < 160;
 
-        int bg_y = (sy + scy) & 0xff;
+        int bg_y;
+
+        if (sy & odd) {
+            dmg->lcd->window_line += window_active != 0;
+            continue;
+        }
+
+        bg_y = (sy + scy) & 0xff;
         int tile_row = bg_y >> 3;
         int row_in_tile = bg_y & 7;
         int bg_x = scx & ~7;
@@ -216,6 +224,7 @@ void lcd_cgb_render_objs_band(
     u8 *pixels = dmg->lcd->pixels;
     u8 *attrs_buf = dmg->lcd->attrs;
     int bg_enabled = regs->lcdc & LCDC_ENABLE_BG;
+    int odd = dmg->lcd->row_stride - 1;
     u16 sel[40];
 
     int scx_offset = regs->scx & 7;
@@ -246,7 +255,7 @@ void lcd_cgb_render_objs_band(
         int b;
         for (b = 0; b < tile_bytes; b += 2) {
             int row_y = lcd_y + (b >> 1);
-            if (!(sel[k] & (1 << (b >> 1)))) {
+            if (!(sel[k] & (1 << (b >> 1))) || (row_y & odd)) {
                 continue;
             }
 

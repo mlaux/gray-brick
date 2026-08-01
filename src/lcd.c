@@ -138,6 +138,7 @@ void lcd_new(struct lcd *lcd)
     lcd->pixels = pixels;
     lcd->attrs = attr_buffer;
     lcd->row_scx_uniform = 1;
+    lcd->row_stride = 1;
     memset(lcd->row_dirty, ROW_DIRTY_CONTENT | ROW_DIRTY_OFFSET, 144);
     lcd->frame_dirty = ROW_DIRTY_CONTENT | ROW_DIRTY_OFFSET;
     diff_valid = 0;
@@ -166,6 +167,7 @@ int lcd_step(struct lcd *lcd)
 void lcd_diff_rows(struct lcd *lcd, int cgb)
 {
     u8 dirty_all = 0;
+    int stride = lcd->row_stride;
     int y;
 
     if (!diff_valid) {
@@ -180,7 +182,7 @@ void lcd_diff_rows(struct lcd *lcd, int cgb)
         return;
     }
 
-    for (y = 0; y < 144; y++) {
+    for (y = 0; y < 144; y += stride) {
         // rows are 2-byte aligned, which is fine for long access on 68k
         const u32 *row = (const u32 *) (lcd->pixels + y * 42);
         u32 *prev = (u32 *) (prev_pixels + y * 42);
@@ -216,6 +218,9 @@ void lcd_diff_rows(struct lcd *lcd, int cgb)
             prev_row_scx[y] = lcd->row_scx[y];
         }
         lcd->row_dirty[y] = dirty;
+        if (stride == 2) {
+            lcd->row_dirty[y + 1] = dirty;
+        }
         dirty_all |= dirty;
     }
     lcd->frame_dirty = dirty_all;
@@ -439,10 +444,12 @@ void lcd_render_band(
         if (sy_limit < sy_start) sy_limit = sy_start;
         if (sy_limit > sy_end) sy_limit = sy_end;
     }
+    int stride = dmg->lcd->row_stride;
+    int odd = stride - 1;
     int sy;
 
-    // before window: render all 21 BG tiles, no window overlay
-    for (sy = sy_start; sy < sy_limit; sy++) {
+    // before window: render all 21 BG tiles
+    for (sy = (sy_start + odd) & ~odd; sy < sy_limit; sy += stride) {
         int bg_y = (sy + scy) & 0xff;
 
         lcd_render_bg_tiles(
@@ -461,6 +468,10 @@ void lcd_render_band(
         u8 *row = out + sy * 42;
         u8 *opac = bg_opacity + sy * 21;
         int win_y = dmg->lcd->window_line++;
+
+        if (sy & odd) {
+            continue;
+        }
 
         if (wx <= 0) {
             // window covers the whole line and ignores scx
@@ -511,9 +522,10 @@ void lcd_render_blank_band(
     const struct raster_regs *regs)
 {
     u8 fill = 0x55 * (regs->bgp & 3);
+    int odd = dmg->lcd->row_stride - 1;
     int sy;
 
-    for (sy = sy_start; sy < sy_end; sy++) {
+    for (sy = (sy_start + odd) & ~odd; sy < sy_end; sy += dmg->lcd->row_stride) {
         memset(dmg->lcd->pixels + sy * 42, fill, 42);
         memset(bg_opacity + sy * 21, 0, 21);
     }
@@ -620,6 +632,7 @@ void lcd_render_objs_band(
 
     // sprites render at screen position + each row's buffer alignment
     const u8 *row_scx = dmg->lcd->row_scx;
+    int odd = dmg->lcd->row_stride - 1;
 
     u16 sel[40];
     u8 order[40];
@@ -675,7 +688,7 @@ void lcd_render_objs_band(
         int b;
         for (b = 0; b < tile_bytes; b += 2) {
             int row_y = lcd_y + (b >> 1);
-            if (!(rows & (1 << (b >> 1)))) {
+            if (!(rows & (1 << (b >> 1))) || (row_y & odd)) {
                 continue;
             }
 

@@ -19,9 +19,17 @@ int current_palette = 0;
 // set for window updates, palette/scale/mode etc
 static int force_all = 1;
 
+static int half_res_mode(void)
+{
+  return screen_scale == 1 && video_mode == VIDEO_BW;
+}
+
 void lcd_mac_invalidate(void)
 {
   force_all = 1;
+  if (dmg.lcd) {
+    dmg.lcd->row_stride = half_res_mode() ? 2 : 1;
+  }
 }
 
 // packed byte bits:  [7-6]  [5-4]  [3-2]  [1-0]
@@ -32,11 +40,13 @@ void lcd_mac_invalidate(void)
 static unsigned char dither_row0[256];
 static unsigned char dither_row1[256];
 
-// lookup tables for 1x threshold rendering
-// thresh_hi: 4 GB pixels -> 4 bits in high nibble
-// thresh_lo: 4 GB pixels -> 4 bits in low nibble
-static unsigned char thresh_hi[256];
-static unsigned char thresh_lo[256];
+// 4 GB pixels -> 4 screen bits
+// one table per screen row of the doubled line, hi/lo pack two source
+// bytes into one output byte like the 2x tables do
+static unsigned char half_top_hi[256];
+static unsigned char half_top_lo[256];
+static unsigned char half_bot_hi[256];
+static unsigned char half_bot_lo[256];
 
 // LUTs for indexed color modes - map packed byte directly to screen pixels
 // 1x: 4 pixels per packed byte
@@ -51,6 +61,21 @@ static unsigned short gray2_2x[256];  // 8 pixels @ 2bpp = 2 bytes
 static unsigned short depth4_1x[256]; // 4 pixels @ 4bpp = 2 bytes
 static unsigned long depth4_2x[256];  // 8 pixels @ 4bpp = 4 bytes
 
+// 0/4, 1/4, checkerboard, solid
+static int half_dither_bit(int color, int row, int col)
+{
+  if (color == 3) {
+    return 1;
+  }
+  if (color == 2) {
+    return row == col;
+  }
+  if (color == 1) {
+    return row && col;
+  }
+  return 0;
+}
+
 void init_dither_lut(void)
 {
   // 2x2 dither patterns for each GB color (0-3)
@@ -62,6 +87,7 @@ void init_dither_lut(void)
   static const unsigned char pat_top[4] = { 0x00, 0x00, 0x80, 0xc0 };
   static const unsigned char pat_bot[4] = { 0x00, 0x40, 0x40, 0xc0 };
   int idx;
+  int top, bot;
 
   for (idx = 0; idx < 256; idx++) {
     int p0 = (idx >> 6) & 3;
@@ -74,12 +100,15 @@ void init_dither_lut(void)
     dither_row1[idx] = pat_bot[p0] | (pat_bot[p1] >> 2) |
                        (pat_bot[p2] >> 4) | (pat_bot[p3] >> 6);
 
-    // threshold LUTs for 1x mode: color >= 2 is black
-    // thresh_hi produces high nibble, thresh_lo produces low nibble
-    thresh_hi[idx] = ((p0 >= 2) ? 0x80 : 0) | ((p1 >= 2) ? 0x40 : 0) |
-                     ((p2 >= 2) ? 0x20 : 0) | ((p3 >= 2) ? 0x10 : 0);
-    thresh_lo[idx] = ((p0 >= 2) ? 0x08 : 0) | ((p1 >= 2) ? 0x04 : 0) |
-                     ((p2 >= 2) ? 0x02 : 0) | ((p3 >= 2) ? 0x01 : 0);
+    top = (half_dither_bit(p0, 0, 0) << 3) | (half_dither_bit(p1, 0, 1) << 2) |
+          (half_dither_bit(p2, 0, 0) << 1) | half_dither_bit(p3, 0, 1);
+    bot = (half_dither_bit(p0, 1, 0) << 3) | (half_dither_bit(p1, 1, 1) << 2) |
+          (half_dither_bit(p2, 1, 0) << 1) | half_dither_bit(p3, 1, 1);
+
+    half_top_hi[idx] = top << 4;
+    half_top_lo[idx] = top;
+    half_bot_hi[idx] = bot << 4;
+    half_bot_lo[idx] = bot;
   }
 }
 
@@ -262,7 +291,8 @@ static void lcd_blit_bw_bands(struct lcd *lcd_ptr, int scale, int all)
   }
 }
 
-// 1x rendering, >= 2 is black, doesn't look great but it's fine
+// 1x rendering: the renderer only fills even lines (row_stride 2), and
+// each one becomes the two rows of a 2x2 ordered dither cell
 static void lcd_draw_1x_bw(struct lcd *lcd_ptr)
 {
   int gy;
@@ -273,17 +303,23 @@ static void lcd_draw_1x_bw(struct lcd *lcd_ptr)
     return;
   }
 
-  for (gy = 0; gy < 144; gy++) {
+  for (gy = 0; gy < 144; gy += 2) {
     // not ROW_DIRTY_OFFSET bc the actual pixels are the same for that
     if (force_all || (lcd_ptr->row_dirty[gy] & ROW_DIRTY_CONTENT)) {
+      unsigned char *bot = dst + 21;
       int gx;
+
       for (gx = 0; gx < 21; gx++) {
-        // 2 packed bytes = 8 pixels -> 1 output byte
-        dst[gx] = thresh_hi[src[gx * 2]] | thresh_lo[src[gx * 2 + 1]];
+        // 2 packed bytes = 8 pixels -> 1 output byte per screen row
+        unsigned char a = src[gx * 2];
+        unsigned char b = src[gx * 2 + 1];
+
+        dst[gx] = half_top_hi[a] | half_top_lo[b];
+        bot[gx] = half_bot_hi[a] | half_bot_lo[b];
       }
     }
-    src += 42;
-    dst += 21;
+    src += 84;
+    dst += 42;
   }
 
   lcd_blit_bw_bands(lcd_ptr, 1, force_all);

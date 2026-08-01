@@ -988,6 +988,14 @@ static void render_frame(struct dmg *dmg)
     }
     render_band_pass(dmg, start, 144, &regs);
 
+    // half-res: each rendered line covers two screen rows, so the blit
+    // bands and the diff have to see one offset across the pair
+    if (lcd->row_stride == 2) {
+        for (k = 0; k < 144; k += 2) {
+            lcd->row_scx[k + 1] = lcd->row_scx[k];
+        }
+    }
+
     // single blit offset for the whole frame when every band packed its rows
     // at the same scx&7
     uniform = 1;

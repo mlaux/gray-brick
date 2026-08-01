@@ -88,6 +88,9 @@ struct lcd {
     u8 row_scx[144];
     u8 row_scx_uniform;
 
+    // 1 = every line rendered, 2 = half vertical resolution
+    u8 row_stride;
+
     // window internal line counter 
     // advances only on lines the window renders
     u8 window_line;

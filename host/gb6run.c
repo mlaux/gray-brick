@@ -57,7 +57,24 @@ static int opt_scx_stats;
 static int opt_dirty_stats;
 static int opt_mac_sim;
 static int opt_exit_stats;
+static int opt_half_res;
 static const char *opt_insn_log;
+
+// mirror of the 1x B&W dither cell in system6/lcd_mac.c so --half-res
+// dumps show what the Mac actually puts on a 1-bit screen
+static int half_dither_bit(int shade, int row, int col)
+{
+    if (shade == 3) {
+        return 1;
+    }
+    if (shade == 2) {
+        return row == col;
+    }
+    if (shade == 1) {
+        return row && col;
+    }
+    return 0;
+}
 
 // 160x144, gray (1 byte/px) for DMG or RGB (3 bytes/px) for CGB
 static u8 frame_out[160 * 144 * 3];
@@ -69,11 +86,19 @@ static size_t extract_frame(struct lcd *l)
     int x, y;
 
     for (y = 0; y < 144; y++) {
-        const u8 *row = l->pixels + y * 42;
-        int scx_off = l->row_scx[y];
+        // half-res only fills even rows; the odd one is its dither partner
+        int sy = opt_half_res ? (y & ~1) : y;
+        const u8 *row = l->pixels + sy * 42;
+        int scx_off = l->row_scx[sy];
         for (x = 0; x < 160; x++) {
             int px = x + scx_off;
             int shade = (row[px >> 2] >> (6 - 2 * (px & 3))) & 3;
+
+            if (opt_half_res) {
+                frame_out[n++] =
+                    half_dither_bit(shade, y & 1, px & 1) ? 0 : 255;
+                continue;
+            }
 
             if (!cgb_mode) {
                 frame_out[n++] = (u8) ((3 - shade) * 85);
@@ -648,6 +673,7 @@ static void usage(void)
         "  --scx-stats          row_scx uniformity summary to stderr\n"
         "  --dirty-stats        row-diff savings summary + clean-row assertion\n"
         "  --exit-stats         exit budget causes + interrupt deliveries\n"
+        "  --half-res           render 160x72 and dither to 1-bit like 1x mac B&W\n"
         "  --insn-log FILE      log every executed 68k instruction (- for stdout)\n"
         "  --no-stat-ints       drop STAT events from the scheduler (Mac menu toggle)\n"
         "  --chain              chain cached blocks like the Mac dispatcher\n"
@@ -707,6 +733,8 @@ int main(int argc, char *argv[])
         } else if (!strcmp(argv[k], "--frame-skip") && k + 1 < argc) {
             extern int frame_skip;
             frame_skip = atoi(argv[++k]);
+        } else if (!strcmp(argv[k], "--half-res")) {
+            opt_half_res = 1;
         } else if (!strcmp(argv[k], "--exit-stats")) {
             opt_exit_stats = 1;
         } else if (!strcmp(argv[k], "--insn-log") && k + 1 < argc) {
@@ -762,6 +790,7 @@ int main(int argc, char *argv[])
     lcd_init_lut();
     lcd_cgb_init_lut();
     lcd_new(&lcd);
+    lcd.row_stride = opt_half_res ? 2 : 1;
 
     dmg = (struct dmg *) &m68k_mem[DMG_ADDR];
     memset(dmg, 0, sizeof *dmg);
