@@ -33,7 +33,7 @@ extern PixMap lowdepth_pixmap;
 
 void InitLowDepthOffscreen(void);
 
-#define APP_VERSION "2.2.0 ${GIT_SHA}"
+#define APP_VERSION "2.2.1 ${GIT_SHA}"
 
 #define WINDOW_X 8
 #define WINDOW_Y 40
