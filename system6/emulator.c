@@ -233,12 +233,11 @@ static void InitColorOffscreen(void)
   screenPM = (*mainDev)->gdPMap;
   offscreen_ctab = (*screenPM)->pmTable;
 
-  // buffer width is wider than display for scroll offset (168 or 336)
+  // buffer width is wider than display for scroll offset
   width = (screen_scale == 1) ? 168 : 336;
 
-  // PixMap setup - always 8bpp, CopyBits handles depth conversion
   offscreen_pixmap.baseAddr = offscreen_color_buf;
-  offscreen_pixmap.rowBytes = width | 0x8000;  // high bit = PixMap flag
+  offscreen_pixmap.rowBytes = width | 0x8000; // high bit = PixMap flag
   offscreen_pixmap.bounds.top = 0;
   offscreen_pixmap.bounds.left = 0;
   offscreen_pixmap.bounds.bottom = (screen_scale == 1) ? 144 : 288;
@@ -246,9 +245,9 @@ static void InitColorOffscreen(void)
   offscreen_pixmap.pmVersion = 0;
   offscreen_pixmap.packType = 0;
   offscreen_pixmap.packSize = 0;
-  offscreen_pixmap.hRes = 0x00480000;  // 72 dpi
+  offscreen_pixmap.hRes = 0x00480000; // 72 dpi
   offscreen_pixmap.vRes = 0x00480000;
-  offscreen_pixmap.pixelType = 0;  // chunky
+  offscreen_pixmap.pixelType = 0; // chunky
   offscreen_pixmap.pixelSize = 8;
   offscreen_pixmap.cmpCount = 1;
   offscreen_pixmap.cmpSize = 8;

@@ -1,9 +1,6 @@
 *.swp
-emu
 *.gb
 *.gbc
-*.img
-vMac*
 .vscode
 build
 CMakeCache.txt
@@ -11,13 +8,8 @@ CMakeFiles
 cmake_install.cmake
 include
 lib
-imgui.ini
 .DS_Store
-roms
-examples/*.bin
 *.dSYM
 *.o
 test_compiler
 build_native
-*.md
-compiler/tests/sm83_json*

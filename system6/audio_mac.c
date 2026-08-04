@@ -136,7 +136,7 @@ static u32 asc_watch_pushes;
 static volatile u8 asc_vec_claimed;
 static volatile u8 asc_in_push;
 static u32 asc_last_push_tick;
-void asc_thunk_entry(void);
+extern void asc_thunk_entry(void);
 static void asc_watchdog(void);
 
 // this is always 0.....
