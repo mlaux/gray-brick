@@ -514,11 +514,7 @@ int jit_run(struct dmg *dmg)
     if ((u16) jit_regs.d3 >= 0x8000) {
       int p;
       u16 pc = (u16) jit_regs.d3;
-      u32 last = block->end_address;
-      if (last <= pc) {
-        last = 0x10000; // block ran to the top of the address space
-      }
-      last--;
+      u32 last = block->end_address - 1;
 
       cache_mark_upper_range(pc, last);
       for (p = (pc >> 8); p <= (int) (last >> 8); p++) {

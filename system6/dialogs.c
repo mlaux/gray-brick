@@ -533,66 +533,6 @@ static void SetRadioGroup(DialogPtr dp, int first, int last, int selected)
   }
 }
 
-// This is no longer used in 2.0.0 but i'm keeping it in case it ever
-// comes back and to use as an example
-void ShowPreferencesDialog(void)
-{
-  DialogPtr dp;
-  DialogItemIndex itemHit;
-  int videoModeItem, frameSkipItem;
-
-  Rect rect;
-  Handle handle;
-  short type;
-
-  // map current settings to dialog items
-  //videoModeItem = 5 + video_mode;
-  frameSkipItem = 8 + frame_skip;
-
-  CenterDialog(GetResource('DLOG', DLOG_PREFERENCES));
-
-  dp = GetNewDialog(DLOG_PREFERENCES, 0L, (WindowPtr) -1L);
-  GetDialogItem(dp, 18, &type, &handle, &rect);
-  SetDialogItem(dp, 18, type, (Handle) FrameSaveButton, &rect);
-
-  // set initial radio button states
-  SetRadioGroup(dp, 5, 7, videoModeItem);
-  SetRadioGroup(dp, 8, 12, frameSkipItem);
-
-  // disable incompatible video modes
-  if (screen_depth > 1) {
-    GetDialogItem(dp, 6, &type, &handle, &rect);
-    HiliteControl((ControlHandle) handle, 255);
-  }
-  if (screen_depth == 1) {
-    GetDialogItem(dp, 7, &type, &handle, &rect);
-    HiliteControl((ControlHandle) handle, 255);
-  }
-
-  ShowWindow(dp);
-
-  do {
-    ModalDialog(NULL, &itemHit);
-
-    if (itemHit >= 5 && itemHit <= 7) {
-      videoModeItem = itemHit;
-      SetRadioGroup(dp, 5, 7, videoModeItem);
-    } else if (itemHit >= 8 && itemHit <= 12) {
-      frameSkipItem = itemHit;
-      SetRadioGroup(dp, 8, 12, frameSkipItem);
-    }
-  } while (itemHit != ok && itemHit != cancel);
-
-  if (itemHit == ok) {
-    //video_mode = videoModeItem - 5;
-    frame_skip = frameSkipItem - 8;
-    lcd_mac_invalidate();
-    SavePreferences();
-  }
-
-  DisposeDialog(dp);
-}
-
 static short AlertWrapper(short alertID) { return Alert(alertID, NULL); }
 static short CautionAlertWrapper(short alertID) { return CautionAlert(alertID, NULL); }
 static short NoteAlertWrapper(short alertID) { return NoteAlert(alertID, NULL); }
