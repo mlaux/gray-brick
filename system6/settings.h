@@ -1,13 +1,15 @@
 #ifndef _SETTINGS_H
 #define _SETTINGS_H
 
+#include <MacTypes.h>
+
+extern Boolean sound_enabled;
+extern Boolean stat_ints_enabled;
+extern Boolean limit_fps;
 extern int frame_skip;
 extern int screen_scale;
-extern unsigned char sound_enabled;
-extern unsigned char limit_fps;
-extern unsigned char gbc_enabled;
-extern unsigned char ignore_double_speed;
-extern unsigned char stat_ints_enabled;
+extern Boolean gbc_enabled;
+extern Boolean ignore_double_speed;
 
 #define VIDEO_BW 0
 #define VIDEO_INDEXED 1

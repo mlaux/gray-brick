@@ -1,4 +1,8 @@
 #include "Finder.r"
+#include "Processes.r"
+#include "Types.r"
+
+type 'mstr' as 'STR ';
 
 data 'ALRT' (128) {
 	$"004E 0048 008A 016A 0081 4444"                      /* .N.H.ä.j.ÅDD */
@@ -446,8 +450,30 @@ data 'SICN' (128) {
 	$"3FF8 3FF8 3FF8 3FF8 3FF8 3FF8 3FF0 1FE0"
 };
 
-data 'SIZE' (-1) {
-	$"0080 0080 0000 0020 0000"                           /* .Ä. ...... */
+resource 'SIZE' (-1) {
+	reserved,
+	ignoreSuspendResumeEvents,
+	reserved,
+	cannotBackground,
+	needsActivateOnFGSwitch,
+	backgroundAndForeground,
+	dontGetFrontClicks,
+	ignoreAppDiedEvents,
+	is32BitCompatible,
+	notHighLevelEventAware,
+	onlyLocalHLEvents,
+	notStationeryAware,
+	dontUseTextEditServices,
+	notDisplayManagerAware,
+	reserved,
+	reserved,
+	8 * 1024 * 1024,
+	2 * 1024 * 1024
+};
+
+// missing-application name string copied into save and cache files
+data 'STR ' (-16396, purgeable) {
+	$"0A47 7261 7920 4272 6963 6B"                        /* .Gray Brick */
 };
 
 data 'icl4' (128) {
@@ -1015,6 +1041,11 @@ resource 'kind' (128) {
 		'BLST', "Gray Brick block cache",
 	}
 };
+
+resource 'mstr' (100) { "File" };
+resource 'mstr' (101) { "Quit" };
+resource 'mstr' (102) { "File" };
+resource 'mstr' (103) { "Open ROM\0xC9" };
 
 data 'vers' (1) {
 	$"0200 8000 0000 0532 2E32 2E31 1F32 2E32"            /* ..Ä....2.2.1.2.2 */

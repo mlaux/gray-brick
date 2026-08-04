@@ -217,11 +217,22 @@ int ShowOpenBox(void)
   pt.h = qd.screenBits.bounds.right / 2 - stdWidth / 2;
 
   SFGetFile(pt, NULL, RomFileFilter, -1, NULL, NULL, &reply);
-  
+
   if(reply.good) {
+    FInfo fndrInfo;
+
+    // need to verify here too because opening a file from Finder
+    // while the app is already open skips RomFileFilter
+    if (GetFInfo(reply.fName, reply.vRefNum, &fndrInfo) == noErr
+        && fndrInfo.fdType != 'GBRM'
+        && fndrInfo.fdCreator == 'MGBE') {
+      ExplainNotARom(fndrInfo.fdType);
+      return false;
+    }
+
     return LoadRom(reply.fName, reply.vRefNum);
   }
-  
+
   return false;
 }
 

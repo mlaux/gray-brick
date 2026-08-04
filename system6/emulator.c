@@ -49,17 +49,6 @@
 
 #define Ticks (*(volatile u32 *) 0x16a)
 
-static void UpdateMenuItems(void);
-
-// Called by dmg.c when ROM bank switches
-static void on_rom_bank_switch(int new_bank)
-{
-    jit_ctx.current_rom_bank = (u8) new_bank;
-    // force exit to dispatcher ?
-    // only way this is needed is if games switch banks and then don't jump
-    // or call afterwards...
-}
-
 struct rom rom;
 struct lcd lcd;
 struct audio audio;
@@ -67,17 +56,18 @@ struct dmg dmg;
 struct cgb_state cgb_state;
 
 WindowPtr g_wp;
-unsigned char app_running;
-unsigned char sound_enabled;
-unsigned char limit_fps;
-unsigned char gbc_enabled = 1;  // default: GBC support enabled
-unsigned char ignore_double_speed = 0;  // default: emulate double-speed accurately
-unsigned char stat_ints_enabled = 1;  // default: fire STAT interrupt events
-int screen_depth;
-int screen_is_color;
-int video_mode = VIDEO_BW;
+Boolean app_running;
 
-static u32 last_frame_count;
+// Options menu settings
+Boolean sound_enabled = false;
+Boolean stat_ints_enabled = true;
+Boolean limit_fps = false;
+Boolean gbc_enabled = true;
+Boolean ignore_double_speed = false;
+
+int screen_depth;
+Boolean screen_is_color;
+int video_mode = VIDEO_BW;
 
 // VBL sync for frame limiting
 static volatile int vbl_flag;
@@ -86,7 +76,6 @@ static int vbl_installed;
 
 static unsigned long soft_reset_release_tick;
 
-
 static char game_title[24];
 static char save_filename[48];
 // game_title_p for the window title, save_filename_p for GetFInfo/SetFInfo
@@ -94,12 +83,12 @@ static Str63 game_title_p;
 static Str63 save_filename_p;
 
 // 2x scaled: 336x288 @ 1bpp = 42 bytes per row (168 GB pixels for scroll offset)
-char offscreen_buf[42 * 288];
-Rect offscreen_rect = { 0, 0, 288, 320 };  // destination size (window)
+u8 offscreen_buf[42 * 288];
+Rect offscreen_rect = { 0, 0, 288, 320 };
 BitMap offscreen_bmp;
 
-// color/grayscale mode: 336x288 @ 8bpp (168 GB pixels for scroll offset)
-char offscreen_color_buf[336 * 288];
+// color/grayscale mode: 336x288 @ 8bpp
+u8 offscreen_color_buf[336 * 288];
 PixMap offscreen_pixmap;
 CTabHandle offscreen_ctab;
 
@@ -108,6 +97,9 @@ PixMap lowdepth_pixmap;
 
 // Status bar - if set, displayed instead of FPS
 char status_bar[64];
+
+static void UpdateMenuItems(void);
+static void SetScreenScale(int scale);
 
 static void build_save_filename(void)
 {
@@ -124,6 +116,15 @@ static void build_save_filename(void)
   memcpy(&save_filename_p[1], save_filename, len);
 }
 
+// Called by dmg.c when ROM bank switches
+static void on_rom_bank_switch(int new_bank)
+{
+    jit_ctx.current_rom_bank = (u8) new_bank;
+    // force exit to dispatcher ?
+    // only way this is needed is if games switch banks and then don't jump
+    // or call afterwards...
+}
+
 static pascal void VBLHandler(void)
 {
   VBLTaskPtr task;
@@ -132,7 +133,7 @@ static pascal void VBLHandler(void)
   asm volatile("move.l %%a0, %0" : "=g"(task));
 
   vbl_flag = 1;
-  task->vblCount = 1;  // reschedule for next VBL
+  task->vblCount = 1; // reschedule for next VBL
 }
 
 static void InstallVBL(void)
@@ -160,7 +161,7 @@ static void RemoveVBL(void)
   vbl_installed = 0;
 }
 
-void InitToolbox(void)
+static void InitToolbox(void)
 {
   Handle mbar;
   MenuHandle apple;
@@ -186,6 +187,102 @@ void InitToolbox(void)
   DrawMenuBar();
 
   app_running = 1;
+}
+
+static void DetectScreenDepth(void)
+{
+  SysEnvRec env;
+  GDHandle mainDev;
+  PixMapHandle pm;
+
+  screen_depth = 1;
+  screen_is_color = false;
+  video_mode = VIDEO_BW;
+
+  if (SysEnvirons(1, &env) != noErr || !env.hasColorQD) {
+    return;
+  }
+  InitPalettes();
+
+  mainDev = GetMainDevice();
+  if (!mainDev) {
+    return;
+  }
+  pm = (*mainDev)->gdPMap;
+  screen_depth = (*pm)->pixelSize;
+  screen_is_color = TestDeviceAttribute(mainDev, gdDevType);
+
+  if (screen_depth == 2) {
+    // 2bpp color defaults to the same four shades as 2bpp gray
+    video_mode = VIDEO_GRAY2;
+  } else if (screen_depth == 4) {
+    video_mode = screen_is_color ? VIDEO_INDEXED4 : VIDEO_GRAY4;
+  } else if (screen_depth > 1) {
+    video_mode = VIDEO_INDEXED;
+  }
+}
+
+static void InitColorOffscreen(void)
+{
+  GDHandle mainDev;
+  PixMapHandle screenPM;
+  int width;
+
+  // use screen's color table so CopyBits skips color matching
+  mainDev = GetMainDevice();
+  screenPM = (*mainDev)->gdPMap;
+  offscreen_ctab = (*screenPM)->pmTable;
+
+  // buffer width is wider than display for scroll offset (168 or 336)
+  width = (screen_scale == 1) ? 168 : 336;
+
+  // PixMap setup - always 8bpp, CopyBits handles depth conversion
+  offscreen_pixmap.baseAddr = offscreen_color_buf;
+  offscreen_pixmap.rowBytes = width | 0x8000;  // high bit = PixMap flag
+  offscreen_pixmap.bounds.top = 0;
+  offscreen_pixmap.bounds.left = 0;
+  offscreen_pixmap.bounds.bottom = (screen_scale == 1) ? 144 : 288;
+  offscreen_pixmap.bounds.right = width;
+  offscreen_pixmap.pmVersion = 0;
+  offscreen_pixmap.packType = 0;
+  offscreen_pixmap.packSize = 0;
+  offscreen_pixmap.hRes = 0x00480000;  // 72 dpi
+  offscreen_pixmap.vRes = 0x00480000;
+  offscreen_pixmap.pixelType = 0;  // chunky
+  offscreen_pixmap.pixelSize = 8;
+  offscreen_pixmap.cmpCount = 1;
+  offscreen_pixmap.cmpSize = 8;
+  offscreen_pixmap.pmTable = offscreen_ctab;
+  offscreen_pixmap.pmReserved = 0;
+}
+
+static void InitLowDepthOffscreen(void)
+{
+  GDHandle mainDev = GetMainDevice();
+  PixMapHandle screenPM = (*mainDev)->gdPMap;
+  int width = (screen_scale == 1) ? 168 : 336;
+  int height = (screen_scale == 1) ? 144 : 288;
+
+  // can copy directly at 2bpp gray :)
+  lowdepth_pixmap.baseAddr = (Ptr) ((video_mode == VIDEO_GRAY2 && screen_scale == 1)
+      ? lcd.pixels
+      : offscreen_color_buf);
+  lowdepth_pixmap.rowBytes = (width * screen_depth / 8) | 0x8000;
+  lowdepth_pixmap.bounds.top = 0;
+  lowdepth_pixmap.bounds.left = 0;
+  lowdepth_pixmap.bounds.bottom = height;
+  lowdepth_pixmap.bounds.right = width;
+  lowdepth_pixmap.pmVersion = 0;
+  lowdepth_pixmap.packType = 0;
+  lowdepth_pixmap.packSize = 0;
+  lowdepth_pixmap.hRes = 0x00480000;
+  lowdepth_pixmap.vRes = 0x00480000;
+  lowdepth_pixmap.pixelType = 0;
+  lowdepth_pixmap.pixelSize = screen_depth;
+  lowdepth_pixmap.cmpCount = 1;
+  lowdepth_pixmap.cmpSize = screen_depth;
+  lowdepth_pixmap.pmTable = (*screenPM)->pmTable;
+  lowdepth_pixmap.pmReserved = 0;
 }
 
 void set_status_bar(const char *str)
@@ -252,102 +349,6 @@ void draw_progress_bar(u16 done, u16 total)
   PaintRect(&fill);
 }
 
-void DetectScreenDepth(void)
-{
-  SysEnvRec env;
-  GDHandle mainDev;
-  PixMapHandle pm;
-
-  screen_depth = 1;
-  screen_is_color = 0;
-  video_mode = VIDEO_BW;
-
-  if (SysEnvirons(1, &env) != noErr || !env.hasColorQD) {
-    return;
-  }
-  InitPalettes();
-
-  mainDev = GetMainDevice();
-  if (!mainDev) {
-    return;
-  }
-  pm = (*mainDev)->gdPMap;
-  screen_depth = (*pm)->pixelSize;
-  screen_is_color = TestDeviceAttribute(mainDev, gdDevType);
-
-  if (screen_depth == 2) {
-    // 2bpp color defaults to the same four shades as 2bpp gray
-    video_mode = VIDEO_GRAY2;
-  } else if (screen_depth == 4) {
-    video_mode = screen_is_color ? VIDEO_INDEXED4 : VIDEO_GRAY4;
-  } else if (screen_depth > 1) {
-    video_mode = VIDEO_INDEXED;
-  }
-}
-
-void InitColorOffscreen(void)
-{
-  GDHandle mainDev;
-  PixMapHandle screenPM;
-  int width;
-
-  // use screen's color table so CopyBits skips color matching
-  mainDev = GetMainDevice();
-  screenPM = (*mainDev)->gdPMap;
-  offscreen_ctab = (*screenPM)->pmTable;
-
-  // buffer width is wider than display for scroll offset (168 or 336)
-  width = (screen_scale == 1) ? 168 : 336;
-
-  // PixMap setup - always 8bpp, CopyBits handles depth conversion
-  offscreen_pixmap.baseAddr = offscreen_color_buf;
-  offscreen_pixmap.rowBytes = width | 0x8000;  // high bit = PixMap flag
-  offscreen_pixmap.bounds.top = 0;
-  offscreen_pixmap.bounds.left = 0;
-  offscreen_pixmap.bounds.bottom = (screen_scale == 1) ? 144 : 288;
-  offscreen_pixmap.bounds.right = width;
-  offscreen_pixmap.pmVersion = 0;
-  offscreen_pixmap.packType = 0;
-  offscreen_pixmap.packSize = 0;
-  offscreen_pixmap.hRes = 0x00480000;  // 72 dpi
-  offscreen_pixmap.vRes = 0x00480000;
-  offscreen_pixmap.pixelType = 0;  // chunky
-  offscreen_pixmap.pixelSize = 8;
-  offscreen_pixmap.cmpCount = 1;
-  offscreen_pixmap.cmpSize = 8;
-  offscreen_pixmap.pmTable = offscreen_ctab;
-  offscreen_pixmap.pmReserved = 0;
-}
-
-void InitLowDepthOffscreen(void)
-{
-  GDHandle mainDev = GetMainDevice();
-  PixMapHandle screenPM = (*mainDev)->gdPMap;
-  int width = (screen_scale == 1) ? 168 : 336;
-  int height = (screen_scale == 1) ? 144 : 288;
-
-  // can copy directly at 2bpp gray :)
-  lowdepth_pixmap.baseAddr = (video_mode == VIDEO_GRAY2 && screen_scale == 1)
-      ? (Ptr) lcd.pixels
-      : offscreen_color_buf;
-  lowdepth_pixmap.rowBytes = (width * screen_depth / 8) | 0x8000;
-  lowdepth_pixmap.bounds.top = 0;
-  lowdepth_pixmap.bounds.left = 0;
-  lowdepth_pixmap.bounds.bottom = height;
-  lowdepth_pixmap.bounds.right = width;
-  lowdepth_pixmap.pmVersion = 0;
-  lowdepth_pixmap.packType = 0;
-  lowdepth_pixmap.packSize = 0;
-  lowdepth_pixmap.hRes = 0x00480000;
-  lowdepth_pixmap.vRes = 0x00480000;
-  lowdepth_pixmap.pixelType = 0;
-  lowdepth_pixmap.pixelSize = screen_depth;
-  lowdepth_pixmap.cmpCount = 1;
-  lowdepth_pixmap.cmpSize = screen_depth;
-  lowdepth_pixmap.pmTable = (*screenPM)->pmTable;
-  lowdepth_pixmap.pmReserved = 0;
-}
-
 void ensure_folder(ConstStr255Param name)
 {
   short vRefNum;
@@ -359,7 +360,41 @@ void ensure_folder(ConstStr255Param name)
   DirCreate(vRefNum, dirID, name, &created);
 }
 
-void SaveGame(void)
+void set_missing_app_name(ConstStr255Param name)
+{
+  short app_res, doc_res;
+  Handle str;
+
+  app_res = CurResFile();
+  CreateResFile(name);
+  doc_res = OpenResFile(name);
+  if (doc_res == -1) {
+    return;
+  }
+
+  UseResFile(doc_res);
+  if (Get1Resource('STR ', MISSING_APP_NAME_ID)) {
+    CloseResFile(doc_res);
+    UseResFile(app_res);
+    return;
+  }
+
+  UseResFile(app_res);
+  str = GetResource('STR ', MISSING_APP_NAME_ID);
+  if (str) {
+    DetachResource(str);
+    UseResFile(doc_res);
+    AddResource(str, 'STR ', MISSING_APP_NAME_ID, "\p");
+    if (ResError() == noErr) {
+      WriteResource(str);
+    }
+  }
+
+  CloseResFile(doc_res);
+  UseResFile(app_res);
+}
+
+static void SaveGame(void)
 {
   if (dmg.rom->mbc->has_battery) {
     ensure_folder("\pSaved Games");
@@ -371,10 +406,11 @@ void SaveGame(void)
       fndrInfo.fdCreator = 'MGBE';
       SetFInfo(save_filename_p, 0, &fndrInfo);
     }
+    set_missing_app_name(save_filename_p);
   }
 }
 
-void StopEmulation(void)
+static void StopEmulation(void)
 {
   if (!g_wp) {
     return;
@@ -408,7 +444,7 @@ void StopEmulation(void)
   UpdateMenuItems();
 }
 
-void StartEmulation(void)
+static void StartEmulation(void)
 {
   int width, height;
   Rect bounds;
@@ -558,7 +594,7 @@ static void UpdateMenuItems(void)
   }
 }
 
-void SetScreenScale(int scale)
+static void SetScreenScale(int scale)
 {
   int width, height;
 
@@ -633,7 +669,7 @@ void SetScreenScale(int scale)
   SavePreferences();
 }
 
-void SetFrameSkip(int skip)
+static void SetFrameSkip(int skip)
 {
   frame_skip = skip;
   UpdateMenuItems();
@@ -646,6 +682,10 @@ int LoadRom(Str63 fileName, short vRefNum)
   short fileNo;
   long amtRead;
   FInfo fndrInfo;
+  char title[17];
+  const struct rom_patch_list *patch_list;
+
+  SetCursor(*GetCursor(watchCursor));
 
   // stop emulation first to free memory before allocating new ROM
   StopEmulation();
@@ -655,30 +695,26 @@ int LoadRom(Str63 fileName, short vRefNum)
   if(err != noErr) {
     return false;
   }
-  
+
   GetEOF(fileNo, (long *) &rom.length);
   rom.data = (unsigned char *) NewPtr(rom.length);
-  if(rom.data == NULL) {
+  if(!rom.data) {
+    SetCursor(&qd.arrow);
     ShowCenteredAlert(ALRT_NOT_ENOUGH_RAM, "\p", "\p", "\p", "\p", ALERT_NORMAL);
     return false;
   }
-  
+
   amtRead = rom.length;
   FSRead(fileNo, &amtRead, rom.data);
   FSClose(fileNo);
+  SetCursor(&qd.arrow);
 
-  {
-    char title[17];
-    const struct rom_patch_list *patch_list;
-
-    rom_get_title(&rom, title);
-    patch_list = patches_find(title);
-    if (patch_list) {
-      patches_apply(rom.data, rom.length, patch_list);
-    }
+  rom_get_title(&rom, title);
+  patch_list = patches_find(title);
+  if (patch_list) {
+    patches_apply(rom.data, rom.length, patch_list);
   }
 
-  // Read CGB flag from ROM header byte 0x143
   rom.cgb_flag = rom.data[0x143];
 
   rom.mbc = mbc_new(rom.data[0x147]);
@@ -698,7 +734,7 @@ int LoadRom(Str63 fileName, short vRefNum)
         "\ploading the ROM. I'll keep going, but", 
         "\ptry giving me more in Get Info from",
         "\pthe Finder for the best performance.",
-        ALERT_NORMAL
+        ALERT_CAUTION
     );
   }
 
@@ -713,7 +749,7 @@ int LoadRom(Str63 fileName, short vRefNum)
   return true;
 }
 
-void OnMenuAction(long action)
+static void OnMenuAction(long action)
 {
   short menu, item;
   
@@ -836,7 +872,7 @@ void OnMenuAction(long action)
   }
 }
 
-void OnMouseDown(EventRecord *pEvt)
+static void OnMouseDown(EventRecord *pEvt)
 {
   short part;
   WindowPtr clicked;
@@ -908,48 +944,69 @@ static int ProcessEvents(void)
   return 1;
 }
 
+void ExplainNotARom(OSType fType)
+{
+  if (fType == 'SRAM') {
+    ShowCenteredAlert(
+        ALRT_4_LINE,
+        "\pSave files can't be opened directly.",
+        "\pOpen the game instead, and the save",
+        "\pwill be loaded automatically.",
+        "\p",
+        ALERT_NOTE
+    );
+  } else if (fType == 'BLST') {
+    ShowCenteredAlert(
+        ALRT_4_LINE,
+        "\pThis document stores data to speed",
+        "\pup a game you've played before.",
+        "\pOpen the game instead to play it.",
+        "\p",
+        ALERT_NOTE
+    );
+  }
+}
+
 // check for files passed from Finder on launch
 // returns 1 if ROM loaded, 0 if should show open dialog
 static int CheckFinderFiles(void)
 {
-  short action, count;
+  short action, count, k;
+  OSType rejected = 0;
+  int loaded = 0;
   AppFile theFile;
 
   CountAppFiles(&action, &count);
-  if (count == 0) {
-    return 0;
-  }
 
-  GetAppFiles(1, &theFile);
+  for (k = 1; k <= count; k++) {
+    GetAppFiles(k, &theFile);
+    ClrAppFiles(k);
 
-  if (theFile.fType == 'GBRM') {
-    if (LoadRom(theFile.fName, theFile.vRefNum)) {
-      ClrAppFiles(1);
-      return 1;
+    if (theFile.fType == 'GBRM') {
+      if (!loaded) {
+        loaded = LoadRom(theFile.fName, theFile.vRefNum);
+      }
+    } else if (!rejected) {
+      rejected = theFile.fType;
     }
-  } else if (theFile.fType == 'SRAM') {
-    ShowCenteredAlert(
-        ALRT_4_LINE,
-        "\pSave files can't be opened directly.",
-        "\pOpen the ROM instead, and the save",
-        "\pwill be loaded automatically.",
-        "\p",
-        ALERT_CAUTION
-    );
-    ClrAppFiles(1);
-    return 0;
   }
 
-  ClrAppFiles(1);
+  if (loaded) {
+    return 1;
+  }
+
+  ExplainNotARom(rejected);
   return 0;
 }
 
 int main(int argc, char *argv[])
 {
-  int finderResult;
-  u32 last_process, last_poll, now;
+  u32 last_frame_count = 0;
+  u32 last_process = 0;
+  u32 last_poll = 0;
 
   InitToolbox();
+
   DetectScreenDepth();
   if (screen_depth > 1) {
     InstallPalettesMenu();
@@ -958,6 +1015,7 @@ int main(int argc, char *argv[])
     }
     DrawMenuBar();
   }
+
   LoadKeyMappings();
   LoadPreferences();
   UpdateMenuItems();
@@ -966,18 +1024,19 @@ int main(int argc, char *argv[])
   lcd_init_lut();
   lcd_cgb_init_lut();
 
-  finderResult = CheckFinderFiles();
-  if (finderResult == 1 || ShowOpenBox()) {
+  if (CheckFinderFiles() || ShowOpenBox()) {
     StartEmulation();
   }
 
-  last_frame_count = 0;
-  last_process = 0;
-  last_poll = 0;
-
   while (app_running) {
-    now = Ticks;
-    if ((now - last_process >= 15)) {
+    int should_process;
+    u32 now = Ticks;
+
+    // when nothing is open, always process so the UI is snappy
+    // when a game is running, only process 4 times a second
+    should_process = !g_wp || now - last_process >= 15;
+
+    if (should_process) {
       if (!ProcessEvents()) {
         break;
       }
@@ -985,11 +1044,12 @@ int main(int argc, char *argv[])
     }
 
     if (g_wp) {
-      CheckPendingTasks();
       if (now != last_poll) {
+        CheckPendingTasks();
         PollGameInput();
         last_poll = now;
       }
+
       jit_run(&dmg);
 
       if (limit_fps && dmg.frames_rendered != last_frame_count) {

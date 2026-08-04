@@ -98,17 +98,21 @@ void blocklist_save(struct dmg *dmg, const char *title)
     u16 version = BLOCKLIST_VERSION;
     u16 count16;
     u32 crc;
-    u32 count = write_entries(NULL, 0xffff);
+    u32 count;
+
+    SetCursor(*GetCursor(watchCursor));
+
+    count = write_entries(NULL, 0xffff);
 
     if (!count) {
-        return;
+        goto out;
     }
 
     ensure_folder("\pCaches");
     build_filename(title, filename);
     fp = fopen(filename, "w");
     if (!fp) {
-        return;
+        goto out;
     }
 
     crc = rom_crc32(dmg->rom);
@@ -127,6 +131,11 @@ void blocklist_save(struct dmg *dmg, const char *title)
         info.fdCreator = 'MGBE';
         SetFInfo(pname, 0, &info);
     }
+    set_missing_app_name(pname);
+    fclose(fp);
+
+out:
+    SetCursor(&qd.arrow);
 }
 
 void blocklist_load(struct dmg *dmg, const char *title)
@@ -138,10 +147,12 @@ void blocklist_load(struct dmg *dmg, const char *title)
     u32 crc;
     u32 k;
 
+    SetCursor(*GetCursor(watchCursor));
+
     build_filename(title, filename);
     fp = fopen(filename, "r");
     if (!fp) {
-        return;
+        goto out_no_file;
     }
 
     if (fread(&version, sizeof version, 1, fp) != 1
@@ -150,8 +161,7 @@ void blocklist_load(struct dmg *dmg, const char *title)
             || fread(&count, sizeof count, 1, fp) != 1
             || !count
             || crc != rom_crc32(dmg->rom)) {
-        fclose(fp);
-        return;
+        goto out_invalid_list;
     }
 
     set_status_bar("Compiling...");
@@ -176,5 +186,9 @@ void blocklist_load(struct dmg *dmg, const char *title)
     }
 
     jit_precompile_finish();
+
+out_invalid_list:
     fclose(fp);
+out_no_file:
+    SetCursor(&qd.arrow);
 }

@@ -44,8 +44,7 @@
 #define OAM_ATTR_MIRROR_Y (1 << 6)
 #define OAM_ATTR_BEHIND_BG (1 << 7)
 
-// register state a band renders from: the live registers when nothing
-// changed mid-frame, or one step of the replayed write log
+// register state used to render a band
 struct raster_regs {
     u8 lcdc;
     u8 scx, scy;
@@ -54,17 +53,14 @@ struct raster_regs {
     u8 obp0, obp1;
 };
 
-// a mid-frame raster register change, recorded against the beam position
-// and replayed as a band boundary at render time
+// one mid-frame LCD register change
 struct raster_log_entry {
     u8 line;   // first line the value applies to
     u8 reg;    // address - REG_LCD_BASE
     u8 value;
 };
 
-// max observed changed-writes/frame is ~18 (dmg-acid2); pokegold's
-// per-line SCY intro peaks at ~35. overflow falls back to a final-state
-// single-band render
+// overflow falls back to a final-state single-band render
 #define RASTER_LOG_SIZE 64
 
 // row_dirty flags from lcd_diff_rows
@@ -162,7 +158,7 @@ static inline void lcd_set_mode(struct lcd *lcd, int mode)
 int lcd_step(struct lcd *lcd);
 
 // fill row_dirty/frame_dirty by comparing the packed buffer and row_scx
-// against the previous rendered frame; cgb mode also compares attrs
+// against the previous rendered frame, cgb mode also compares attrs
 void lcd_diff_rows(struct lcd *lcd, int cgb);
 
 // output the pixels to the screen

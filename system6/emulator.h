@@ -13,25 +13,25 @@
 #include "rom.h"
 #include "audio.h"
 
-extern WindowPtr g_wp;
-extern int screen_depth;
-extern int screen_is_color;
-extern int video_mode;
-
 extern struct rom rom;
 extern struct lcd lcd;
 extern struct audio audio;
 extern struct dmg dmg;
 
-extern char offscreen_buf[];
+extern WindowPtr g_wp;
+
+extern int screen_depth;
+extern Boolean screen_is_color;
+extern int video_mode;
+
+extern u8 offscreen_buf[];
 extern Rect offscreen_rect;
 extern BitMap offscreen_bmp;
 
-extern char offscreen_color_buf[];
+extern u8 offscreen_color_buf[];
 extern PixMap offscreen_pixmap;
-extern PixMap lowdepth_pixmap;
 
-void InitLowDepthOffscreen(void);
+extern PixMap lowdepth_pixmap;
 
 #define APP_VERSION "2.2.1 ${GIT_SHA}"
 
@@ -42,6 +42,8 @@ void InitLowDepthOffscreen(void);
 
 #define ALRT_NOT_ENOUGH_RAM 128
 #define ALRT_4_LINE 129
+
+#define MISSING_APP_NAME_ID (-16396)
 
 #define MBAR_DEFAULT 128
 
@@ -84,12 +86,14 @@ void InitLowDepthOffscreen(void);
 #define BASE_MEMORY_REQUIRED (2 * 1024 * 1024) 
 
 int LoadRom(Str63, short);
-void SetScreenScale(int scale);
+void ExplainNotARom(OSType);
 
 void set_status_bar(const char *str);
 
 void draw_progress_bar(u16 done, u16 total);
 
 void ensure_folder(ConstStr255Param name);
+
+void set_missing_app_name(ConstStr255Param name);
 
 #endif
