@@ -432,7 +432,10 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
             break;
 
         case 0x18: // jr disp8
-            done = compile_jr(block, ctx, &src_ptr, src_address);
+            compile_jr(block, ctx, &src_ptr, src_address);
+            // always ends the block to avoid compiling following data
+            // as code
+            done = 1;
             break;
 
         case 0x20: // jr nz, disp8

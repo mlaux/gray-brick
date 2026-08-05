@@ -7,8 +7,7 @@
 // helper for reading GB memory during compilation
 #define READ_BYTE(off) (ctx->read(ctx->dmg, src_address + (off)))
 
-// returns 1 if jr ended the block, 0 if it's a backward jump within block
-int compile_jr(
+void compile_jr(
     struct code_block *block,
     struct compile_ctx *ctx,
     uint16_t *src_ptr,
@@ -47,7 +46,7 @@ int compile_jr(
         if (disp >= -3) {
             m68k_disp = (int16_t) target_m68k - (int16_t) (block->length + 2);
             emit_bra_w(block, m68k_disp);
-            return 0;
+            return;
         }
 
         // Larger loop - the flush above subtracted from D2 and set the
@@ -65,7 +64,7 @@ int compile_jr(
         patch_branch_b(block, skip);
         m68k_disp = (int16_t) target_m68k - (int16_t) (block->length + 2);
         emit_bra_w(block, m68k_disp);
-        return 0;
+        return;
     }
 
     // Forward jump or outside block - go through patchable exit
@@ -74,7 +73,6 @@ int compile_jr(
     emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
     emit_move_w_dn(block, REG_68K_D_NEXT_PC, target_gb_pc);
     emit_block_exit(block, target_gb_pc);
-    return 1;
 }
 
 // Compile conditional relative jump (jr nz, jr z, jr nc, jr c)
