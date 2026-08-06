@@ -55,6 +55,38 @@ void compile_ld_sp_imm16(
     }
 }
 
+// D7 holds a 68k CCR (Z=$04, C=$01), not a GB F register. push af has to
+// write out the GB layout (Z=$80, C=$10, low nibble always zero) and pop af
+// has to convert back, otherwise the byte on the stack is meaningless to
+// anything but a matching push/pop pair. Both conversions are a two-bit
+// permutation, done branch-free: the bits move by 4 and 5 places, so one
+// shift plus a fixup of the bit that came out one place short.
+
+// dst = GB F byte built from the CCR in D7. Clobbers dst and tmp.
+static void compile_ccr_to_gbf(struct code_block *block, uint8_t dst, uint8_t tmp)
+{
+    emit_move_b_dn_dn(block, REG_68K_D_FLAGS, dst);
+    emit_andi_b_dn(block, dst, 0x05);       // keep CCR Z and C
+    emit_lsl_b_imm_dn(block, 4, dst);       // Z -> $40, C -> $10
+    emit_move_b_dn_dn(block, dst, tmp);
+    emit_andi_b_dn(block, tmp, 0x40);
+    emit_add_b_dn_dn(block, tmp, dst);      // doubles Z into $80
+}
+
+// D7 = CCR built from the GB F byte in src. Clobbers D7 and tmp; src is
+// preserved so the caller can still extract A from the same register. N and
+// H are dropped, they are not part of the modelled state.
+static void compile_gbf_to_ccr(struct code_block *block, uint8_t src, uint8_t tmp)
+{
+    emit_move_b_dn_dn(block, src, REG_68K_D_FLAGS);
+    emit_andi_b_dn(block, REG_68K_D_FLAGS, 0x90);  // keep GB Z and C
+    emit_lsr_b_imm_dn(block, 4, REG_68K_D_FLAGS);  // Z -> $08, C -> $01
+    emit_move_b_dn_dn(block, REG_68K_D_FLAGS, tmp);
+    emit_andi_b_dn(block, tmp, 0x08);
+    emit_lsr_b_imm_dn(block, 1, tmp);
+    emit_sub_b_dn_dn(block, tmp, REG_68K_D_FLAGS);  // halves Z into $04
+}
+
 // Flags for add sp,e8 and ld hl,sp+e8: both clear Z and set C from the
 // low-byte addition with e8 treated as unsigned. Must run before SP is
 // updated - the flags come from the old SP. Clobbers D0, D1, D7.
@@ -285,6 +317,9 @@ int compile_stack_op(
 
             // flush before the fast/slow split so both paths see the same D2
             flush_cycles(block);
+            // convert F once, ahead of the split: both paths need it, and it
+            // has to precede the tst that sets up the branch anyway
+            compile_ccr_to_gbf(block, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);
             emit_tst_l_disp_an(block, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
             slow_push = block->length;
             emit_beq_b(block, 0);
@@ -292,8 +327,8 @@ int compile_stack_op(
             // Fast path
             emit_subq_w_an(block, REG_68K_A_SP, 2);
             emit_subq_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
-            // [SP] = F (low byte - flags)
-            emit_move_b_dn_ind_an(block, REG_68K_D_FLAGS, REG_68K_A_SP);
+            // [SP] = F (GB layout)
+            emit_move_b_dn_ind_an(block, REG_68K_D_SCRATCH_1, REG_68K_A_SP);
             // [SP+1] = A (high byte)
             emit_move_b_dn_disp_an(block, REG_68K_D_A, 1, REG_68K_A_SP);
             done = block->length;
@@ -303,7 +338,7 @@ int compile_stack_op(
             patch_branch_b(block, slow_push);
             emit_move_b_dn_dn(block, REG_68K_D_A, REG_68K_D_SCRATCH_0);
             emit_rol_w_8(block, REG_68K_D_SCRATCH_0);
-            emit_move_b_dn_dn(block, REG_68K_D_FLAGS, REG_68K_D_SCRATCH_0);
+            emit_move_b_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);
             compile_slow_push_d0(block);
 
             patch_branch_b(block, done);
@@ -417,9 +452,9 @@ int compile_stack_op(
             slow_pop = block->length;
             emit_beq_b(block, 0);
 
-            // Fast path: sets A and F directly
+            // Fast path: sets A directly, F goes to D0 for the join below
             emit_move_b_disp_an_dn(block, 1, REG_68K_A_SP, REG_68K_D_A);  // A = [SP+1]
-            emit_move_b_ind_an_dn(block, REG_68K_A_SP, REG_68K_D_FLAGS);  // F = [SP]
+            emit_move_b_ind_an_dn(block, REG_68K_A_SP, REG_68K_D_SCRATCH_0);  // F = [SP]
             emit_addq_w_an(block, REG_68K_A_SP, 2);
             emit_addq_w_disp_an(block, 2, JIT_CTX_GB_SP, REG_68K_A_CTX);
             done = block->length;
@@ -429,12 +464,15 @@ int compile_stack_op(
             patch_branch_b(block, slow_pop);
             compile_slow_pop_to_d1(block);
             // D1.w = 0xAAFF, A = high byte, F = low byte
-            emit_move_b_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_FLAGS);  // F = low
+            emit_move_b_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);  // F = low
             emit_rol_w_8(block, REG_68K_D_SCRATCH_1);  // D1.b = A
             emit_move_b_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_A);  // A = high
 
             // Patch done branch
             patch_branch_b(block, done);
+
+            // both paths join here, so the conversion is emitted once
+            compile_gbf_to_ccr(block, REG_68K_D_SCRATCH_0, REG_68K_D_SCRATCH_1);
         }
         return 1;
 

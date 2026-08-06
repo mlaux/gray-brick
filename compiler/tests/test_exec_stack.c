@@ -73,9 +73,9 @@ TEST(test_push_af)
         0x10              // 0x0007: stop
     };
     run_program(rom, 0);
-    // H = A = 0xab, L = F = 0x04
+    // H = A = 0xab, L = F in GB layout (Z set = 0x80, not the CCR's 0x04)
     ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 0xab);
-    ASSERT_EQ(get_areg(REG_68K_A_HL) & 0xffff, 0xab04);
+    ASSERT_EQ(get_areg(REG_68K_A_HL) & 0xffff, 0xab80);
 }
 
 TEST(test_pop_af)
@@ -88,8 +88,71 @@ TEST(test_pop_af)
         0x10              // 0x0005: stop
     };
     run_program(rom, 0);
+    // GB F 0x90 (Z|C) becomes the internal CCR 0x04|0x01
     ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 0xcd);
-    ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0xff, 0x90);
+    ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0xff, 0x05);
+}
+
+// F crosses the stack in the GB layout, so a push/pop af pair is not the
+// only thing that can read it. These catch the CCR leaking out verbatim.
+TEST(test_push_af_pop_bc)
+{
+    uint8_t rom[] = {
+        0xaf,             // 0x0000: xor a (A=0, Z set)
+        0x3e, 0xab,       // 0x0001: ld a, 0xab (F unchanged)
+        0xf5,             // 0x0003: push af
+        0xc1,             // 0x0004: pop bc
+        0x10              // 0x0005: stop
+    };
+    run_program(rom, 0);
+    // B = A = 0xab, C = F = 0x80 (GB Z)
+    ASSERT_EQ((get_dreg(REG_68K_D_BC) >> 16) & 0xff, 0xab);
+    ASSERT_EQ(get_dreg(REG_68K_D_BC) & 0xff, 0x80);
+}
+
+TEST(test_push_bc_pop_af)
+{
+    uint8_t rom[] = {
+        0x01, 0x10, 0x34, // 0x0000: ld bc, 0x3410 (B=0x34, C=0x10 = GB C)
+        0xaf,             // 0x0003: xor a (Z set, so pop af must clear it)
+        0xc5,             // 0x0004: push bc
+        0xf1,             // 0x0005: pop af
+        0x10              // 0x0006: stop
+    };
+    run_program(rom, 0);
+    ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 0x34);
+    // GB F 0x10 is C only: CCR 0x01, Z clear
+    ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0xff, 0x01);
+}
+
+// ld sp drops the stack out of native-pointer mode in the test context, so
+// these cover the slow paths of the same two opcodes
+TEST(test_push_af_slow)
+{
+    uint8_t rom[] = {
+        0x31, 0xf0, 0xdf, // 0x0000: ld sp, 0xdff0 (slow mode)
+        0xaf,             // 0x0003: xor a (Z set)
+        0x3e, 0xab,       // 0x0004: ld a, 0xab
+        0xf5,             // 0x0006: push af
+        0xe1,             // 0x0007: pop hl
+        0x10              // 0x0008: stop
+    };
+    run_program(rom, 0);
+    ASSERT_EQ(get_areg(REG_68K_A_HL) & 0xffff, 0xab80);
+}
+
+TEST(test_pop_af_slow)
+{
+    uint8_t rom[] = {
+        0x31, 0xf0, 0xdf, // 0x0000: ld sp, 0xdff0 (slow mode)
+        0x21, 0x90, 0xcd, // 0x0003: ld hl, 0xcd90 (A=0xcd, F=0x90)
+        0xe5,             // 0x0006: push hl
+        0xf1,             // 0x0007: pop af
+        0x10              // 0x0008: stop
+    };
+    run_program(rom, 0);
+    ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 0xcd);
+    ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0xff, 0x05);
 }
 
 // LD HL, SP+n tests
@@ -218,6 +281,10 @@ void register_stack_tests(void)
     printf("\nPush/pop AF:\n");
     RUN_TEST(test_push_af);
     RUN_TEST(test_pop_af);
+    RUN_TEST(test_push_af_pop_bc);
+    RUN_TEST(test_push_bc_pop_af);
+    RUN_TEST(test_push_af_slow);
+    RUN_TEST(test_pop_af_slow);
 
     printf("\nLD HL, SP+n:\n");
     RUN_TEST(test_ld_hl_sp_plus_0);
