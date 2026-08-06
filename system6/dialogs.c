@@ -583,6 +583,7 @@ int SaveScreenshot(void)
   long count;
   PicHandle pic;
   Rect picFrame;
+  Rect srcRect;
   RgnHandle oldClip;
   char header[512];
   int k;
@@ -619,6 +620,11 @@ int SaveScreenshot(void)
   SetPort(g_wp);
   picFrame = offscreen_rect;
 
+  /* visible frame starts row_voff rows into the buffer */
+  srcRect = offscreen_rect;
+  srcRect.top += lcd.row_voff * screen_scale;
+  srcRect.bottom += lcd.row_voff * screen_scale;
+
   /* save and set clip to picture bounds */
   oldClip = NewRgn();
   GetClip(oldClip);
@@ -630,10 +636,10 @@ int SaveScreenshot(void)
     CopyBits(
         (BitMap *) lcd_active_pixmap(),
         (BitMap *) *port->portPixMap,
-        &offscreen_rect, &offscreen_rect, srcCopy, NULL
+        &srcRect, &offscreen_rect, srcCopy, NULL
     );
   } else {
-    CopyBits(&offscreen_bmp, &g_wp->portBits, &offscreen_rect, &offscreen_rect, srcCopy, NULL);
+    CopyBits(&offscreen_bmp, &g_wp->portBits, &srcRect, &offscreen_rect, srcCopy, NULL);
   }
   ClosePicture();
 

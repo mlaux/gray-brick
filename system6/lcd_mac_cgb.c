@@ -100,7 +100,7 @@ static void lcd_draw_1x_cgb(struct lcd *lcd_ptr, int all)
 
     // convert all 168 buffer pixels per row; per-band scroll offsets are
     // handled by the band blit's source rects
-    for (gy = 0; gy < 144; gy++) {
+    for (gy = 0; gy < LCD_BUF_ROWS; gy++) {
         unsigned char *row_attr = attrs + gy * 168;
         int gx;
 
@@ -171,7 +171,7 @@ static void lcd_draw_2x_cgb(struct lcd *lcd_ptr, int all)
 
     // convert all 168 buffer pixels per row; per-band scroll offsets are
     // handled by the band blit's source rects
-    for (gy = 0; gy < 144; gy++) {
+    for (gy = 0; gy < LCD_BUF_ROWS; gy++) {
         // row stride in longs: 336 bytes / 4 = 84 longs
         unsigned long *row0 = dst;
         unsigned long *row1 = dst + 84;

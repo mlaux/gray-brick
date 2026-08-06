@@ -82,13 +82,14 @@ static char save_filename[48];
 static Str63 game_title_p;
 static Str63 save_filename_p;
 
-// 2x scaled: 336x288 @ 1bpp = 42 bytes per row (168 GB pixels for scroll offset)
-u8 offscreen_buf[42 * 288];
+// 2x scaled: 336x304 @ 1bpp = 42 bytes per row (168x152 GB pixels for
+// scroll offsets, the window shows 160x144 of it)
+u8 offscreen_buf[42 * 304];
 Rect offscreen_rect = { 0, 0, 288, 320 };
 BitMap offscreen_bmp;
 
-// color/grayscale mode: 336x288 @ 8bpp
-u8 offscreen_color_buf[336 * 288];
+// color/grayscale mode: 336x304 @ 8bpp
+u8 offscreen_color_buf[336 * 304];
 PixMap offscreen_pixmap;
 CTabHandle offscreen_ctab;
 
@@ -240,7 +241,8 @@ static void InitColorOffscreen(void)
   offscreen_pixmap.rowBytes = width | 0x8000; // high bit = PixMap flag
   offscreen_pixmap.bounds.top = 0;
   offscreen_pixmap.bounds.left = 0;
-  offscreen_pixmap.bounds.bottom = (screen_scale == 1) ? 144 : 288;
+  offscreen_pixmap.bounds.bottom = (screen_scale == 1) ? LCD_BUF_ROWS
+      : LCD_BUF_ROWS * 2;
   offscreen_pixmap.bounds.right = width;
   offscreen_pixmap.pmVersion = 0;
   offscreen_pixmap.packType = 0;
@@ -260,7 +262,7 @@ static void InitLowDepthOffscreen(void)
   GDHandle mainDev = GetMainDevice();
   PixMapHandle screenPM = (*mainDev)->gdPMap;
   int width = (screen_scale == 1) ? 168 : 336;
-  int height = (screen_scale == 1) ? 144 : 288;
+  int height = (screen_scale == 1) ? LCD_BUF_ROWS : LCD_BUF_ROWS * 2;
 
   // can copy directly at 2bpp gray :)
   lowdepth_pixmap.baseAddr = (Ptr) ((video_mode == VIDEO_GRAY2 && screen_scale == 1)
@@ -496,7 +498,7 @@ static void StartEmulation(void)
   offscreen_bmp.baseAddr = offscreen_buf;
   offscreen_bmp.bounds.top = 0;
   offscreen_bmp.bounds.left = 0;
-  offscreen_bmp.bounds.bottom = height;
+  offscreen_bmp.bounds.bottom = (width == 320) ? LCD_BUF_ROWS * 2 : LCD_BUF_ROWS;
   offscreen_bmp.bounds.right = (width == 320) ? 336 : 168;
   offscreen_bmp.rowBytes = (width == 320) ? 42 : 21;
   // picks up the renderer's row stride for the current scale/mode
@@ -616,12 +618,12 @@ static void SetScreenScale(int scale)
   offscreen_rect.bottom = height;
   offscreen_bmp.bounds.top = 0;
   offscreen_bmp.bounds.left = 0;
-  offscreen_bmp.bounds.bottom = height;
+  offscreen_bmp.bounds.bottom = (width == 320) ? LCD_BUF_ROWS * 2 : LCD_BUF_ROWS;
   offscreen_bmp.bounds.right = (width == 320) ? 336 : 168;
   offscreen_bmp.rowBytes = (width == 320) ? 42 : 21;
   offscreen_pixmap.bounds.top = 0;
   offscreen_pixmap.bounds.left = 0;
-  offscreen_pixmap.bounds.bottom = height;
+  offscreen_pixmap.bounds.bottom = (width == 320) ? LCD_BUF_ROWS * 2 : LCD_BUF_ROWS;
   offscreen_pixmap.bounds.right = (width == 320) ? 336 : 168;
   offscreen_pixmap.rowBytes = ((width == 320) ? 336 : 168) | 0x8000;
 

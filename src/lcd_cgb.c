@@ -89,10 +89,11 @@ void lcd_cgb_render_band(
     int scx_offset = scx & 7;
 
     int odd = dmg->lcd->row_stride - 1;
+    int voff = dmg->lcd->row_voff;
     int sy;
     for (sy = sy_start; sy < sy_end; sy++) {
-        u8 *row = out + sy * 42;
-        u8 *row_attr = out_attr + sy * 168;
+        u8 *row = out + (sy + voff) * 42;
+        u8 *row_attr = out_attr + (sy + voff) * 168;
         int window_active = window_enabled && sy >= wy && wx < 160;
 
         int bg_y;
@@ -225,6 +226,7 @@ void lcd_cgb_render_objs_band(
     u8 *attrs_buf = dmg->lcd->attrs;
     int bg_enabled = regs->lcdc & LCDC_ENABLE_BG;
     int odd = dmg->lcd->row_stride - 1;
+    int voff = dmg->lcd->row_voff;
     u16 sel[40];
 
     int scx_offset = regs->scx & 7;
@@ -266,8 +268,8 @@ void lcd_cgb_render_objs_band(
             int x_start = lcd_x < 0 ? -lcd_x : 0;
             int x_end = lcd_x + 8 > 160 ? 160 - lcd_x : 8;
 
-            u8 *row = pixels + row_y * 42;
-            u8 *row_attr = attrs_buf + row_y * 168;
+            u8 *row = pixels + (row_y + voff) * 42;
+            u8 *row_attr = attrs_buf + (row_y + voff) * 168;
             int x;
 
             if (mirror_x) {

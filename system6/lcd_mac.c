@@ -217,24 +217,25 @@ void lcd_blit_color_bands(PixMap *src, struct lcd *lcd_ptr, int scale, int all)
 {
   CGrafPtr port;
   Rect src_rect, dst_rect;
+  int voff = lcd_ptr->row_voff;
   int y0 = 0;
 
   SetPort(g_wp);
   port = (CGrafPtr) g_wp;
 
   while (y0 < 144) {
-    int off = lcd_ptr->row_scx[y0];
-    int dirty = all || lcd_ptr->row_dirty[y0] != 0;
+    int off = lcd_ptr->row_scx[y0 + voff];
+    int dirty = all || lcd_ptr->row_dirty[y0 + voff] != 0;
     int y1 = y0 + 1;
 
-    while (y1 < 144 && lcd_ptr->row_scx[y1] == off
-           && (all || (lcd_ptr->row_dirty[y1] != 0) == dirty)) {
+    while (y1 < 144 && lcd_ptr->row_scx[y1 + voff] == off
+           && (all || (lcd_ptr->row_dirty[y1 + voff] != 0) == dirty)) {
       y1++;
     }
 
     if (dirty) {
-      src_rect.top = y0 * scale;
-      src_rect.bottom = y1 * scale;
+      src_rect.top = (y0 + voff) * scale;
+      src_rect.bottom = (y1 + voff) * scale;
       src_rect.left = off * scale;
       src_rect.right = (off + 160) * scale;
 
@@ -258,23 +259,24 @@ void lcd_blit_color_bands(PixMap *src, struct lcd *lcd_ptr, int scale, int all)
 static void lcd_blit_bw_bands(struct lcd *lcd_ptr, int scale, int all)
 {
   Rect src_rect, dst_rect;
+  int voff = lcd_ptr->row_voff;
   int y0 = 0;
 
   SetPort(g_wp);
 
   while (y0 < 144) {
-    int off = lcd_ptr->row_scx[y0];
-    int dirty = all || lcd_ptr->row_dirty[y0] != 0;
+    int off = lcd_ptr->row_scx[y0 + voff];
+    int dirty = all || lcd_ptr->row_dirty[y0 + voff] != 0;
     int y1 = y0 + 1;
 
-    while (y1 < 144 && lcd_ptr->row_scx[y1] == off
-           && (all || (lcd_ptr->row_dirty[y1] != 0) == dirty)) {
+    while (y1 < 144 && lcd_ptr->row_scx[y1 + voff] == off
+           && (all || (lcd_ptr->row_dirty[y1 + voff] != 0) == dirty)) {
       y1++;
     }
 
     if (dirty) {
-      src_rect.top = y0 * scale;
-      src_rect.bottom = y1 * scale;
+      src_rect.top = (y0 + voff) * scale;
+      src_rect.bottom = (y1 + voff) * scale;
       src_rect.left = off * scale;
       src_rect.right = (off + 160) * scale;
 
@@ -303,7 +305,7 @@ static void lcd_draw_1x_bw(struct lcd *lcd_ptr)
     return;
   }
 
-  for (gy = 0; gy < 144; gy += 2) {
+  for (gy = 0; gy < LCD_BUF_ROWS; gy += 2) {
     // not ROW_DIRTY_OFFSET bc the actual pixels are the same for that
     if (force_all || (lcd_ptr->row_dirty[gy] & ROW_DIRTY_CONTENT)) {
       unsigned char *bot = dst + 21;
@@ -338,7 +340,7 @@ static void lcd_draw_1x_indexed(struct lcd *lcd_ptr)
     return;
   }
 
-  for (gy = 0; gy < 144; gy++) {
+  for (gy = 0; gy < LCD_BUF_ROWS; gy++) {
     // not ROW_DIRTY_OFFSET bc the actual pixels are the same for that
     if (force_all || (lcd_ptr->row_dirty[gy] & ROW_DIRTY_CONTENT)) {
       int gx;
@@ -364,7 +366,7 @@ static void lcd_draw_2x_bw(struct lcd *lcd_ptr)
     return;
   }
 
-  for (gy = 0; gy < 144; gy++) {
+  for (gy = 0; gy < LCD_BUF_ROWS; gy++) {
     unsigned char *row0 = dst;
     unsigned char *row1 = dst + 42;
     int gx;
@@ -402,7 +404,7 @@ static void lcd_draw_2x_indexed(struct lcd *lcd_ptr)
     return;
   }
 
-  for (gy = 0; gy < 144; gy++) {
+  for (gy = 0; gy < LCD_BUF_ROWS; gy++) {
     unsigned long *row0 = dst;
     unsigned long *row1 = dst + 84;
     int gx;
@@ -455,7 +457,7 @@ static void lcd_draw_2x_gray2(struct lcd *lcd_ptr)
     return;
   }
 
-  for (gy = 0; gy < 144; gy++) {
+  for (gy = 0; gy < LCD_BUF_ROWS; gy++) {
     unsigned short *row0 = dst;
     unsigned short *row1 = dst + 42;
     int gx;
@@ -488,7 +490,7 @@ static void lcd_draw_1x_depth4(struct lcd *lcd_ptr)
     return;
   }
 
-  for (gy = 0; gy < 144; gy++) {
+  for (gy = 0; gy < LCD_BUF_ROWS; gy++) {
     if (force_all || (lcd_ptr->row_dirty[gy] & ROW_DIRTY_CONTENT)) {
       int gx;
       for (gx = 0; gx < 42; gx++) {
@@ -512,7 +514,7 @@ static void lcd_draw_2x_depth4(struct lcd *lcd_ptr)
     return;
   }
 
-  for (gy = 0; gy < 144; gy++) {
+  for (gy = 0; gy < LCD_BUF_ROWS; gy++) {
     unsigned long *row0 = dst;
     unsigned long *row1 = dst + 42;
     int gx;
