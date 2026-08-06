@@ -13,7 +13,7 @@
 #define REG_A   0x0004  // D4, 8-bit
 #define REG_BC  0x0105  // D5, split (0x00BB00CC)
 #define REG_DE  0x0106  // D6, split (0x00DD00EE)
-#define REG_F   0x0007  // D7, 8-bit (flags: Z=0x80, N=0x40, H=0x20, C=0x10)
+#define REG_F   0x0007  // D7, 8-bit (internal 68k CCR: Z=0x04, C=0x01; N/H not modelled)
 #define REG_HL  0x0212  // A2, 16-bit contiguous (0xHHLL)
 #define REG_SP  0x0213  // A3, 16-bit contiguous
 

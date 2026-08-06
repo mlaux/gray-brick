@@ -63,7 +63,7 @@
 #define JIT_CTX_CYCLES        44  // u32: accumulated GB cycles
 #define JIT_CTX_PATCH_HELPER  48  // void *patch_helper routine
 #define JIT_CTX_READ_CYCLES   52  // u32: in-flight cycles at dmg_read call
-#define JIT_CTX_DAA_STATE     56  // 2 bytes: [0]=old_A, [1]=N flag (for DAA)
+#define JIT_CTX_DAA_STATE     56  // 2 bytes: [0]=old_A, [1]=DAA_* flags (see alu.c)
 #define JIT_CTX_FRAME_CYCLES_PTR 60  // u32 *frame_cycles_ptr (dmg->frame_cycles)
 #define JIT_CTX_STOP_FUNC   64  // void *stop_func (for STOP/speed switch)
 #define JIT_CTX_EFF_DOUBLE_SPEED 68  // u8: 1 if double speed active AND not ignored
