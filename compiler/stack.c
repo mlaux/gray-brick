@@ -55,6 +55,34 @@ void compile_ld_sp_imm16(
     }
 }
 
+// Flags for add sp,e8 and ld hl,sp+e8: both clear Z and set C from the
+// low-byte addition with e8 treated as unsigned. Must run before SP is
+// updated - the flags come from the old SP. Clobbers D0, D1, D7.
+static void compile_sp_offset_flags(struct code_block *block, int8_t offset)
+{
+    uint8_t addend = (uint8_t) offset;
+
+    if (addend == 0) {
+        // (SP & $ff) + 0 cannot carry, so C=0, and Z=0 as always
+        emit_moveq_dn(block, REG_68K_D_FLAGS, 0);
+        return;
+    }
+
+    emit_move_w_disp_an_dn(block, JIT_CTX_GB_SP, REG_68K_A_CTX,
+            REG_68K_D_SCRATCH_0);
+    emit_andi_w_dn(block, REG_68K_D_SCRATCH_0, 0x00ff);
+    if (addend <= 8) {
+        emit_addq_w_dn(block, REG_68K_D_SCRATCH_0, addend);
+    } else {
+        emit_move_w_dn(block, REG_68K_D_SCRATCH_1, addend);
+        emit_add_w_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);
+    }
+    emit_lsr_w_imm_dn(block, 8, REG_68K_D_SCRATCH_0);
+    // writing the 0/1 carry byte into D7 also clears Z, which is the
+    // required Z=0. X/N/V go with it and are not modelled.
+    emit_move_b_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_FLAGS);
+}
+
 // Slow path for pop: read 16-bit value via dmg_read16, result in D1.w
 // Increments gb_sp by 2 in context. Clobbers D0, D1.
 static void compile_slow_pop_to_d1(struct code_block *block)
@@ -415,6 +443,9 @@ int compile_stack_op(
             int8_t offset = (int8_t) READ_BYTE(*src_ptr);
             (*src_ptr)++;
 
+            // flags come from the old SP, so before the update
+            compile_sp_offset_flags(block, offset);
+
             if (offset != 0) {
                 // update both A3 and gb_sp
                 emit_lea_disp_an_an(block, offset, REG_68K_A_SP, REG_68K_A_SP);
@@ -433,6 +464,8 @@ int compile_stack_op(
         {
             int8_t offset = (int8_t) READ_BYTE(*src_ptr);
             (*src_ptr)++;
+
+            compile_sp_offset_flags(block, offset);
 
             // Load gb_sp from context, not A3, might be native pointer
             emit_move_w_disp_an_dn(block, JIT_CTX_GB_SP, REG_68K_A_CTX, REG_68K_D_SCRATCH_0);

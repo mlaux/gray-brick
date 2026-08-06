@@ -130,6 +130,57 @@ TEST(test_ld_hl_sp_plus_negative)
     ASSERT_EQ(get_areg(REG_68K_A_HL) & 0xffff, 0xdfeb);
 }
 
+// add sp,e8 and ld hl,sp+e8 both clear Z and set C from the low-byte
+// addition, with e8 treated as unsigned
+TEST(test_add_sp_flags_carry)
+{
+    uint8_t rom[] = {
+        0x31, 0xf0, 0xdf, // 0x0000: ld sp, 0xdff0
+        0xaf,             // 0x0003: xor a (Z set)
+        0xe8, 0x20,       // 0x0004: add sp, 0x20 (0xf0+0x20 carries)
+        0x10              // 0x0006: stop
+    };
+    run_program(rom, 0);
+    ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0xff, 0x01);
+}
+
+TEST(test_add_sp_flags_no_carry)
+{
+    uint8_t rom[] = {
+        0x31, 0xf0, 0xdf, // 0x0000: ld sp, 0xdff0
+        0xaf,             // 0x0003: xor a (Z set)
+        0xe8, 0x05,       // 0x0004: add sp, 5 (0xf0+0x05 does not carry)
+        0x10              // 0x0006: stop
+    };
+    run_program(rom, 0);
+    ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0xff, 0x00);
+}
+
+TEST(test_add_sp_flags_negative_offset)
+{
+    // e8 = -8, but C comes from the unsigned byte: 0xf0 + 0xf8 carries
+    uint8_t rom[] = {
+        0x31, 0xf0, 0xdf, // 0x0000: ld sp, 0xdff0
+        0xe8, 0xf8,       // 0x0003: add sp, -8
+        0x10              // 0x0005: stop
+    };
+    run_program(rom, 0);
+    ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0xff, 0x01);
+}
+
+TEST(test_ld_hl_sp_flags)
+{
+    uint8_t rom[] = {
+        0x31, 0xf0, 0xdf, // 0x0000: ld sp, 0xdff0
+        0xaf,             // 0x0003: xor a (Z set)
+        0xf8, 0x20,       // 0x0004: ld hl, sp+0x20
+        0x10              // 0x0006: stop
+    };
+    run_program(rom, 0);
+    ASSERT_EQ(get_areg(REG_68K_A_HL) & 0xffff, 0xe010);
+    ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0xff, 0x01);
+}
+
 // LD SP, HL roundtrip test
 TEST(test_ld_sp_hl_roundtrip)
 {
@@ -172,6 +223,12 @@ void register_stack_tests(void)
     RUN_TEST(test_ld_hl_sp_plus_0);
     RUN_TEST(test_ld_hl_sp_plus_positive);
     RUN_TEST(test_ld_hl_sp_plus_negative);
+
+    printf("\nSP offset flags:\n");
+    RUN_TEST(test_add_sp_flags_carry);
+    RUN_TEST(test_add_sp_flags_no_carry);
+    RUN_TEST(test_add_sp_flags_negative_offset);
+    RUN_TEST(test_ld_hl_sp_flags);
 
     printf("\nLD SP, HL roundtrip:\n");
     RUN_TEST(test_ld_sp_hl_roundtrip);
