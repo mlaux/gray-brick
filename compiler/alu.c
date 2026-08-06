@@ -62,6 +62,11 @@ static int daa_track_needed(
 // set per-op by compile_alu_op from the scan above
 static int daa_track = 1;
 
+// bits in JIT_CTX_DAA_STATE + 1
+#define DAA_N       0x01  // last tracked op was a subtraction
+#define DAA_H_KNOWN 0x02  // bit 4 holds a computed H, do not reconstruct
+#define DAA_H       0x10  // half carry, only meaningful with DAA_H_KNOWN
+
 // DAA tracking: save old_A and set N flag before ALU ops that affect A
 // These are needed for DAA to compute the half-carry (H) and know add vs sub
 static void compile_daa_track_add(struct code_block *block)
@@ -82,8 +87,43 @@ static void compile_daa_track_sub(struct code_block *block)
     // Save old_A to context for H flag computation
     emit_move_b_dn_disp_an(block, REG_68K_D_A, JIT_CTX_DAA_STATE, REG_68K_A_CTX);
     // Set N=1 (subtraction)
-    emit_moveq_dn(block, REG_68K_D_SCRATCH_0, 1);
+    emit_moveq_dn(block, REG_68K_D_SCRATCH_0, DAA_N);
     emit_move_b_dn_disp_an(block, REG_68K_D_SCRATCH_0, JIT_CTX_DAA_STATE + 1, REG_68K_A_CTX);
+}
+
+// adc/sbc record H directly instead of leaving it to be reconstructed from
+// old_A. Reconstruction compares the result's low nibble against old_A's,
+// which is ambiguous when the operand's low nibble is $f and carry-in is
+// set: the nibble sum is exactly 16, so the result's low nibble equals
+// old_A's and the wrap test cannot tell that from "nothing changed". H came
+// out 0 when it should be 1 and daa then adjusted A by 6 too little.
+//
+// For both addition and subtraction the carry (borrow) out of bit 3 is bit 4
+// of operand_a ^ operand_b ^ result, which holds for any carry-in. Stash
+// the raw operand in D3, then fold in A and the result.
+static void compile_daa_seed_operand(struct code_block *block, uint8_t operand_reg)
+{
+    if (!daa_track)
+        return;
+    emit_move_b_dn_dn(block, operand_reg, REG_68K_D_NEXT_PC);
+}
+
+static void compile_daa_store_h(
+    struct code_block *block,
+    uint8_t old_a_reg,
+    uint8_t result_reg,
+    uint8_t n_flag
+) {
+    if (!daa_track)
+        return;
+    emit_eor_b_dn_dn(block, old_a_reg, REG_68K_D_NEXT_PC);
+    emit_eor_b_dn_dn(block, result_reg, REG_68K_D_NEXT_PC);
+    emit_andi_b_dn(block, REG_68K_D_NEXT_PC, DAA_H);
+    // D3 is exactly 0 or DAA_H now, so addq folds in the marker bits
+    emit_addq_b_dn(block, REG_68K_D_NEXT_PC, DAA_H_KNOWN | n_flag);
+    emit_move_b_dn_disp_an(block, REG_68K_D_NEXT_PC, JIT_CTX_DAA_STATE + 1, REG_68K_A_CTX);
+    // old_A in JIT_CTX_DAA_STATE is deliberately left stale: with
+    // DAA_H_KNOWN set, compile_daa never reads it
 }
 
 // DAA - Decimal Adjust Accumulator
@@ -92,6 +132,7 @@ static void compile_daa(struct code_block *block)
 {
     size_t branch_to_sub, branch_add_h_done;
     size_t branch_to_finish;
+    size_t have_h, h_set, h_clear;
     size_t skip;
 
     // Save original A lower nibble into D1 for H computation later
@@ -99,9 +140,10 @@ static void compile_daa(struct code_block *block)
     emit_move_b_dn_dn(block, REG_68K_D_A, REG_68K_D_SCRATCH_1);
     emit_andi_b_dn(block, REG_68K_D_SCRATCH_1, 0x0F);  // D1 = original A & 0xF
 
-    // Load N flag into D0 and test it (we'll reload old_A later in each path)
+    // D0 = DAA state flags; stays live across both paths, so the H
+    // reconstruction below loads old_A into D3 instead
     emit_move_b_disp_an_dn(block, JIT_CTX_DAA_STATE + 1, REG_68K_A_CTX, REG_68K_D_SCRATCH_0);
-    emit_tst_b_dn(block, REG_68K_D_SCRATCH_0);
+    emit_btst_imm_dn(block, 0, REG_68K_D_SCRATCH_0);  // DAA_N
     branch_to_sub = block->length;
     emit_bne_b(block, 0);  // branch to subtraction path if N=1
 
@@ -120,20 +162,34 @@ static void compile_daa(struct code_block *block)
     patch_branch_b(block, skip);
 
     // Now check H || (A & 0x0F) > 9 -> add 0x06
-    // Load old_A into D0 for H computation
-    emit_move_b_disp_an_dn(block, JIT_CTX_DAA_STATE, REG_68K_A_CTX, REG_68K_D_SCRATCH_0);
-    // D0 = old_A, D1 = original A & 0xF
-    // Compute H: D1 < (D0 & 0xF)?
-    emit_andi_b_dn(block, REG_68K_D_SCRATCH_0, 0x0F);  // D0 = old_A & 0xF
-    emit_cmp_b_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_SCRATCH_1);  // cmp D0, D1
+    emit_btst_imm_dn(block, 1, REG_68K_D_SCRATCH_0);  // DAA_H_KNOWN
+    have_h = block->length;
+    emit_bne_b(block, 0);
+
+    // Reconstruct H from old_A: D3 = old_A & 0xF, D1 = original A & 0xF,
+    // H = D1 < D3. Exact for add/sub/inc/dec, which have no carry-in.
+    emit_move_b_disp_an_dn(block, JIT_CTX_DAA_STATE, REG_68K_A_CTX, REG_68K_D_NEXT_PC);
+    emit_andi_b_dn(block, REG_68K_D_NEXT_PC, 0x0F);
+    emit_cmp_b_dn_dn(block, REG_68K_D_NEXT_PC, REG_68K_D_SCRATCH_1);  // cmp D3, D1
+    h_clear = block->length;
+    emit_bcc_s(block, 0);  // if D1 >= D3 (carry clear), H=0, check nibble value
+    h_set = block->length;
+    emit_bra_b(block, 0);
+
+    // H recorded by adc
+    patch_branch_b(block, have_h);
+    emit_btst_imm_dn(block, 4, REG_68K_D_SCRATCH_0);  // DAA_H
     skip = block->length;
-    emit_bcc_s(block, 0);  // if D1 >= D0 (carry clear), H=0, check nibble value
+    emit_beq_b(block, 0);
+
     // H=1, add 0x06
+    patch_branch_b(block, h_set);
     emit_addi_b_dn(block, REG_68K_D_A, 0x06);
     branch_add_h_done = block->length;
     emit_bra_b(block, 0);  // skip to finish
 
     // H=0, check if original (A & 0x0F) > 9 (D1 still has this value)
+    patch_branch_b(block, h_clear);
     patch_branch_b(block, skip);
     emit_cmp_b_imm_dn(block, REG_68K_D_SCRATCH_1, 0x09);
     skip = block->length;
@@ -154,14 +210,29 @@ static void compile_daa(struct code_block *block)
     emit_subi_b_dn(block, REG_68K_D_A, 0x60);
     patch_branch_b(block, skip);
 
-    // Compute H: D1 > (old_A & 0xF) for subtraction
-    // Load old_A & 0xF into D0
-    emit_move_b_disp_an_dn(block, JIT_CTX_DAA_STATE, REG_68K_A_CTX, REG_68K_D_SCRATCH_0);
-    emit_andi_b_dn(block, REG_68K_D_SCRATCH_0, 0x0F);  // D0 = old_A & 0xF
-    emit_cmp_b_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_SCRATCH_1);  // cmp D0, D1
+    // H -> sub 0x06
+    emit_btst_imm_dn(block, 1, REG_68K_D_SCRATCH_0);  // DAA_H_KNOWN
+    have_h = block->length;
+    emit_bne_b(block, 0);
+
+    // Reconstruct H: D1 > (old_A & 0xF) for subtraction
+    emit_move_b_disp_an_dn(block, JIT_CTX_DAA_STATE, REG_68K_A_CTX, REG_68K_D_NEXT_PC);
+    emit_andi_b_dn(block, REG_68K_D_NEXT_PC, 0x0F);
+    emit_cmp_b_dn_dn(block, REG_68K_D_NEXT_PC, REG_68K_D_SCRATCH_1);  // cmp D3, D1
+    h_clear = block->length;
+    emit_bls_b(block, 0);  // if D1 <= D3 (lower or same), no H, skip
+    h_set = block->length;
+    emit_bra_b(block, 0);
+
+    // H recorded by sbc
+    patch_branch_b(block, have_h);
+    emit_btst_imm_dn(block, 4, REG_68K_D_SCRATCH_0);  // DAA_H
     skip = block->length;
-    emit_bls_b(block, 0);  // if D1 <= D0 (lower or same), no H, skip
+    emit_beq_b(block, 0);
+
+    patch_branch_b(block, h_set);
     emit_subi_b_dn(block, REG_68K_D_A, 0x06);
+    patch_branch_b(block, h_clear);
     patch_branch_b(block, skip);
 
     // === Finish: set Z flag === (sub path falls through)
@@ -181,9 +252,6 @@ static void compile_daa(struct code_block *block)
 // Does A = A + D1 + carry using 16-bit arithmetic
 static void compile_adc_core(struct code_block *block)
 {
-    // Track for DAA: save old_A and set N=0 (addition)
-    compile_daa_track_add(block);
-
     // Zero-extend operand: andi.w #0xff, D1
     emit_andi_w_dn(block, REG_68K_D_SCRATCH_1, 0x00ff);
 
@@ -198,13 +266,20 @@ static void compile_adc_core(struct code_block *block)
     emit_addq_w_dn(block, REG_68K_D_SCRATCH_0, 1);
     patch_branch_b(block, no_carry);
 
+    // Track for DAA: D1 is still the raw operand and D4 is still old_A
+    compile_daa_seed_operand(block, REG_68K_D_SCRATCH_1);
+
     // Add operand: add.w D1, D0
     emit_add_w_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);
+
+    // Record H before the result overwrites old_A (clobbers the CCR, which
+    // nothing below needs - tst.b re-establishes it)
+    compile_daa_store_h(block, REG_68K_D_A, REG_68K_D_SCRATCH_0, 0);
 
     // Store result: move.b D0, D4
     emit_move_b_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_A);
 
-    // Set flags 
+    // Set flags
     // Z from 8-bit result, C from bit 8 of 16-bit result
     emit_tst_b_dn(block, REG_68K_D_A);
     emit_move_sr_dn(block, REG_68K_D_FLAGS);     // save Z
@@ -217,15 +292,16 @@ static void compile_adc_core(struct code_block *block)
 // Does A = A - D1 - carry using 16-bit arithmetic
 static void compile_sbc_core(struct code_block *block)
 {
-    // Track for DAA: save old_A and set N=1 (subtraction)
-    compile_daa_track_sub(block);
-
     // Zero-extend operand: andi.w #0xff, D1
     emit_andi_w_dn(block, REG_68K_D_SCRATCH_1, 0x00ff);
 
     // Zero-extend A into D0: moveq #0, D0; move.b D4, D0
     emit_moveq_dn(block, REG_68K_D_SCRATCH_0, 0);
     emit_move_b_dn_dn(block, REG_68K_D_A, REG_68K_D_SCRATCH_0);
+
+    // Track for DAA: stash the raw operand, the borrow adjust below folds
+    // the borrow into D1 and H needs the unadjusted value
+    compile_daa_seed_operand(block, REG_68K_D_SCRATCH_1);
 
     // Add old borrow to subtrahend
     emit_btst_imm_dn(block, 0, REG_68K_D_FLAGS);
@@ -239,6 +315,9 @@ static void compile_sbc_core(struct code_block *block)
 
     // Save borrow before we clobber CCR
     emit_scc(block, 0x05, REG_68K_D_SCRATCH_1);  // scs D1: D1 = $ff if borrow
+
+    // Record H before the result overwrites old_A
+    compile_daa_store_h(block, REG_68K_D_A, REG_68K_D_SCRATCH_0, DAA_N);
 
     // Store result: move.b D0, D4
     emit_move_b_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_A);

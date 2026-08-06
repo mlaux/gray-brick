@@ -320,6 +320,74 @@ TEST(test_daa_no_adjustment)
     ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 0x46);
 }
 
+// H after adc/sbc with carry-in cannot be reconstructed from old_A and the
+// result: when the operand's low nibble is $f and carry-in is set the nibble
+// sum is exactly 16, so the result's low nibble is unchanged. adc/sbc record
+// H directly instead.
+TEST(test_daa_adc_carry_in_nibble_wrap)
+{
+    // A=$96, B=$ff, carry-in 1 -> adc gives A=$96, C=1, H=1
+    // daa: +$60 (C) -> $f6, +$06 (H) -> $fc
+    uint8_t rom[] = {
+        0x3e, 0x96,       // ld a, $96
+        0x06, 0xff,       // ld b, $ff
+        0x37,             // scf -> C = 1
+        0x88,             // adc a, b -> A = $96, C = 1, H = 1
+        0x27,             // daa -> A = $fc
+        0x10              // stop
+    };
+    run_program(rom, 0);
+    ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 0xfc);
+}
+
+TEST(test_daa_sbc_borrow_in_nibble_wrap)
+{
+    // A=$20, B=$0f, borrow-in 1 -> sbc gives A=$10, C=0, H=1
+    // daa: -$06 (H) -> $0a
+    uint8_t rom[] = {
+        0x3e, 0x20,       // ld a, $20
+        0x06, 0x0f,       // ld b, $0f
+        0x37,             // scf -> C = 1
+        0x98,             // sbc a, b -> A = $10, C = 0, H = 1
+        0x27,             // daa -> A = $0a
+        0x10              // stop
+    };
+    run_program(rom, 0);
+    ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 0x0a);
+}
+
+TEST(test_daa_adc_carry_in_no_half_carry)
+{
+    // A=$11, B=$11, carry-in 1 -> $23, no nibble carry, so daa must not
+    // adjust (BCD: 11 + 11 + 1 = 23)
+    uint8_t rom[] = {
+        0x3e, 0x11,       // ld a, $11
+        0x06, 0x11,       // ld b, $11
+        0x37,             // scf -> C = 1
+        0x88,             // adc a, b -> A = $23, H = 0
+        0x27,             // daa -> A = $23
+        0x10              // stop
+    };
+    run_program(rom, 0);
+    ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 0x23);
+}
+
+TEST(test_daa_adc_no_carry_in)
+{
+    // adc with carry-in clear still has to set H the ordinary way:
+    // BCD 09 + 08 = 17
+    uint8_t rom[] = {
+        0xaf,             // xor a -> C = 0
+        0x3e, 0x09,       // ld a, $09
+        0x06, 0x08,       // ld b, $08
+        0x88,             // adc a, b -> A = $11, H = 1
+        0x27,             // daa -> A = $17
+        0x10              // stop
+    };
+    run_program(rom, 0);
+    ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 0x17);
+}
+
 // Test that dec a preserves carry flag (Pokemon Crystal xor_a_dec_a pattern)
 TEST(test_dec_a_preserves_carry)
 {
@@ -412,6 +480,10 @@ void register_alu_tests(void)
     RUN_TEST(test_daa_add_both_nibbles);
     RUN_TEST(test_daa_sub_lower_nibble);
     RUN_TEST(test_daa_no_adjustment);
+    RUN_TEST(test_daa_adc_carry_in_nibble_wrap);
+    RUN_TEST(test_daa_sbc_borrow_in_nibble_wrap);
+    RUN_TEST(test_daa_adc_carry_in_no_half_carry);
+    RUN_TEST(test_daa_adc_no_carry_in);
 
     printf("\nInc/dec carry preservation:\n");
     RUN_TEST(test_dec_a_preserves_carry);
