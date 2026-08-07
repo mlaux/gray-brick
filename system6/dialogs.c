@@ -555,10 +555,6 @@ short ShowCenteredAlert(
   ParamText(s0, s1, s2, s3);
 
   alrt = GetResource('ALRT', alertID);
-  if (alrt == nil) {
-    return funcs[alertType](alertID);
-  }
-
   bounds = (Rect *) *alrt;
   screen = qd.screenBits.bounds;
   screen.top += GetMBarHeight();

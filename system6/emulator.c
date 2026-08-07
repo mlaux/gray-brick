@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
 #include <Quickdraw.h>
 #include <Fonts.h>
 #include <Windows.h>
@@ -19,6 +20,7 @@
 #include <Palettes.h>
 #include <Resources.h>
 #include <Retrace.h>
+#include <Gestalt.h>
 
 #include "emulator.h"
 
@@ -123,6 +125,16 @@ static void on_rom_bank_switch(int new_bank)
     // force exit to dispatcher ?
     // only way this is needed is if games switch banks and then don't jump
     // or call afterwards...
+}
+
+static Boolean vm_is_on(void)
+{
+    long response;
+
+    if (Gestalt(gestaltVMAttr, &response) != noErr)
+        return false;
+
+    return (response & (1L << gestaltVMPresent)) != 0;
 }
 
 static pascal void VBLHandler(void)
@@ -1005,6 +1017,17 @@ int main(int argc, char *argv[])
   u32 last_poll = 0;
 
   InitToolbox();
+
+  if (vm_is_on()) {
+    ShowCenteredAlert(
+      ALRT_4_LINE,
+      "\pVirtual memory is turned on.",
+      "\pDisable virtual memory in the",
+      "\pMemory control panel for better",
+      "\pperformance.",
+      ALERT_CAUTION
+    );
+  }
 
   DetectScreenDepth();
   if (screen_depth > 1) {
