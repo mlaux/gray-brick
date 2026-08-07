@@ -239,9 +239,7 @@ void run_code(struct code_block *block)
 
     // Set A4 to runtime context
     m68k_set_reg(M68K_REG_A4, JIT_CTX_ADDR);
-    // countdown enters at the full budget
-    m68k_set_reg(M68K_REG_D0 + REG_68K_D_CYCLE_COUNT,
-                 m68k_read_memory_32(JIT_CTX_ADDR + JIT_CTX_WAKE_LIMIT));
+    m68k_set_reg(M68K_REG_D0 + REG_68K_D_CYCLE_COUNT, 0);
 
     m68k_execute(1000);
 }
@@ -284,9 +282,7 @@ void run_program(uint8_t *gb_rom, uint16_t start_pc)
 
     // Set A4 to runtime context
     m68k_set_reg(M68K_REG_A4, JIT_CTX_ADDR);
-    // countdown enters at the full budget
-    m68k_set_reg(M68K_REG_D0 + REG_68K_D_CYCLE_COUNT,
-                 m68k_read_memory_32(JIT_CTX_ADDR + JIT_CTX_WAKE_LIMIT));
+    m68k_set_reg(M68K_REG_D0 + REG_68K_D_CYCLE_COUNT, 0);
 
     while (1) {
         // Look up or compile block
@@ -354,9 +350,7 @@ void set_frame_cycles(uint32_t cycles)
 
 uint32_t get_cycle_count(void)
 {
-    // D2 counts down from wake_limit; executed = wake_limit - D2
-    return m68k_read_memory_32(JIT_CTX_ADDR + JIT_CTX_WAKE_LIMIT)
-         - m68k_get_reg(NULL, M68K_REG_D0 + REG_68K_D_CYCLE_COUNT);
+    return m68k_get_reg(NULL, M68K_REG_D0 + REG_68K_D_CYCLE_COUNT);
 }
 
 // The next run_block_with_frame_cycles[_mem] call uses this wake limit
@@ -426,9 +420,7 @@ void run_block_with_frame_cycles_mem(
 
     // Set A4 to runtime context
     m68k_set_reg(M68K_REG_A4, JIT_CTX_ADDR);
-    // countdown enters at the full budget
-    m68k_set_reg(M68K_REG_D0 + REG_68K_D_CYCLE_COUNT,
-                 m68k_read_memory_32(JIT_CTX_ADDR + JIT_CTX_WAKE_LIMIT));
+    m68k_set_reg(M68K_REG_D0 + REG_68K_D_CYCLE_COUNT, 0);
 
     // Initialize GB stack pointer (A3 = base + SP), fast mode as above
     m68k_set_reg(M68K_REG_A3, GB_MEM_BASE + DEFAULT_GB_SP);
@@ -479,9 +471,7 @@ void run_block_with_budget(uint8_t *gb_rom, uint32_t budget)
     }
 
     m68k_set_reg(M68K_REG_A4, JIT_CTX_ADDR);
-    // countdown enters at the full budget
-    m68k_set_reg(M68K_REG_D0 + REG_68K_D_CYCLE_COUNT,
-                 m68k_read_memory_32(JIT_CTX_ADDR + JIT_CTX_WAKE_LIMIT));
+    m68k_set_reg(M68K_REG_D0 + REG_68K_D_CYCLE_COUNT, 0);
 
     m68k_execute(10000);
 
@@ -544,9 +534,7 @@ void execute_prepared_block(void)
     }
 
     m68k_set_reg(M68K_REG_A4, JIT_CTX_ADDR);
-    // countdown enters at the full budget
-    m68k_set_reg(M68K_REG_D0 + REG_68K_D_CYCLE_COUNT,
-                 m68k_read_memory_32(JIT_CTX_ADDR + JIT_CTX_WAKE_LIMIT));
+    m68k_set_reg(M68K_REG_D0 + REG_68K_D_CYCLE_COUNT, 0);
     m68k_set_reg(M68K_REG_A5, PAGE_TABLE_READ);
     m68k_set_reg(M68K_REG_A6, PAGE_TABLE_WRITE);
 

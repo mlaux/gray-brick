@@ -44,7 +44,7 @@ static struct code_block helper_block;
 // C-call sequence for dmg_read - addr in D1.w, result in D0.b
 static void emit_c_read_call(struct code_block *block)
 {
-    // stash the countdown for lazy DIV/LY evaluation
+    // stash the cycle count for lazy DIV/LY evaluation and reload after
     emit_move_l_dn_disp_an(block, REG_68K_D_CYCLE_COUNT, JIT_CTX_READ_CYCLES, REG_68K_A_CTX); // 4
     emit_push_w_dn(block, REG_68K_D_SCRATCH_1); // 2
     emit_push_l_disp_an(block, JIT_CTX_DMG, REG_68K_A_CTX); // 4

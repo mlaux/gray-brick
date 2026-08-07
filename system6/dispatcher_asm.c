@@ -5,7 +5,7 @@
 #define CACHEFLUSH_OFFSET 102
 
 // compiled blocks JMP here instead of RTS. This routine:
-// 1. Checks the countdown in D2: <= 0 means the wake deadline is due, RTS to C
+// 1. Checks if accumulated cycles in D2 >= jit_ctx.wake_limit, if so, RTS to C
 // 2. Determines which cache to use based on PC in D3
 // 3. Looks up block in appropriate cache, if found -> JMP to it
 // 4. Otherwise -> RTS to C to compile the block
@@ -14,10 +14,10 @@ static void dispatcher_code_asm(void)
 {
     asm volatile(
         "\t"
-        "tst.b 16(%%a4)\n\t" // check trace_enabled
-        "bne.s .Ldisp_exit\n\t" // if set, always return to C
-        "tst.l %%d2\n\t" // countdown: <= 0 means the wake deadline is due
-        "ble.s .Ldisp_exit\n\t"
+        "tst.b 16(%%a4)\n\t"       // trace_enabled
+        "bne.s .Ldisp_exit\n\t"
+        "cmp.l 80(%%a4), %%d2\n\t" // wake_limit
+        "bcc.s .Ldisp_exit\n\t"
 
         "cmpi.w #0x4000, %%d3\n\t"
         "bcs.s .Ldisp_bank0\n\t"
@@ -27,7 +27,7 @@ static void dispatcher_code_asm(void)
         "\n"
 
     ".Ldisp_upper:\n\t"
-        "movea.l 28(%%a4), %%a0\n\t"
+        "movea.l 28(%%a4), %%a0\n\t" // upper_cache
         "moveq #0, %%d0\n\t"
         "move.w %%d3, %%d0\n\t"
         "subi.w #0x8000, %%d0\n\t"
@@ -39,7 +39,7 @@ static void dispatcher_code_asm(void)
         "\n"
 
     ".Ldisp_bank0:\n\t"
-        "movea.l 20(%%a4), %%a0\n\t"
+        "movea.l 20(%%a4), %%a0\n\t" // bank0_cache
         "moveq #0, %%d0\n\t"
         "move.w %%d3, %%d0\n\t"
         "lsl.l #2, %%d0\n\t"
@@ -50,9 +50,9 @@ static void dispatcher_code_asm(void)
         "\n"
 
     ".Ldisp_banked:\n\t"
-        "movea.l 24(%%a4), %%a0\n\t"
+        "movea.l 24(%%a4), %%a0\n\t" // banked_cache
         "moveq #0, %%d0\n\t"
-        "move.b 17(%%a4), %%d0\n\t"
+        "move.b 17(%%a4), %%d0\n\t" // current_rom_bank
         "lsl.l #2, %%d0\n\t"
         "movea.l (%%a0,%%d0.l), %%a0\n\t"
         "cmpa.w #0, %%a0\n\t"

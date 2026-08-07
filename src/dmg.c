@@ -35,22 +35,22 @@ static int dmg_double_speed(struct dmg *dmg)
 // DIV and TIMA run on this
 static u32 dmg_now_cpu(struct dmg *dmg)
 {
-    return dmg->total_cycles + jit_in_flight();
+    return dmg->total_cycles + jit_ctx.read_cycles;
 }
 
-// the PPU-cycle beam position, frame-relative and unwrapped
+// the frame relative "beam" position
 static u32 dmg_now_ppu(struct dmg *dmg)
 {
-    u32 in_flight = jit_in_flight();
+    u32 read = jit_ctx.read_cycles;
     if (dmg_double_speed(dmg)) {
-        in_flight >>= 1;
+        read >>= 1;
     }
-    return dmg->frame_cycles + in_flight;
+    return dmg->frame_cycles + read;
 }
 
-// a write just moved a deadline, but the running dispatch snapshotted
-// wake_limit before it, handle this case
-static void dmg_budget_touch(struct dmg *dmg)
+// handle the case where a write just moved a deadline, but the running
+// dispatch snapshotted wake_limit before it
+static void dmg_budget_update(struct dmg *dmg)
 {
     u32 dist = dmg_cycles_to_next_event(dmg);
 
@@ -63,7 +63,6 @@ static void dmg_budget_touch(struct dmg *dmg)
         dist <<= 1;
     }
     if (dist < jit_ctx.wake_limit) {
-        jit_ctx.read_cycles -= jit_ctx.wake_limit - dist;
         jit_ctx.wake_limit = dist;
     }
 }
@@ -478,7 +477,7 @@ static u32 tima_divisor(struct dmg *dmg)
     return timer_divisors[dmg->timer_control & 3];
 }
 
-// live TIMA value derived from the base pair, like DIV
+// get live TIMA value derived from the base pair
 static u8 dmg_tima_read(struct dmg *dmg)
 {
     u32 elapsed, count;
@@ -493,8 +492,7 @@ static u8 dmg_tima_read(struct dmg *dmg)
         return count;
     }
 
-    // in-flight cycles ran past an overflow EV_TIMA hasn't fired yet;
-    // the counter has already reloaded from TMA
+    // EV_TIMA hasn't fired yet, but the counter has already been reloaded from TMA
     return dmg->timer_mod + (count - 256) % (256 - dmg->timer_mod);
 }
 
@@ -514,7 +512,7 @@ static void dmg_tima_recompute(struct dmg *dmg)
         dist >>= 1;
     }
     dmg->event_deadline[EV_TIMA] = dmg_now_ppu(dmg) + dist;
-    dmg_budget_touch(dmg);
+    dmg_budget_update(dmg);
 }
 
 static void dmg_tima_touch(struct dmg *dmg, int keep_phase)
@@ -758,7 +756,7 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
         if (address == REG_LCDC) {
             dmg_update_frame_events(dmg);
         }
-        dmg_budget_touch(dmg);
+        dmg_budget_update(dmg);
         return;
     }
 
@@ -773,7 +771,7 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
         dmg->zero_page[address - 0xff80] = data;
         // IE gates which deadlines can exit/wake
         if (address == 0xffff) {
-            dmg_budget_touch(dmg);
+            dmg_budget_update(dmg);
         }
         return;
     }
@@ -819,7 +817,7 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
     }
     if (address == 0xff0f) {
         dmg->interrupt_request_mask = data;
-        dmg_budget_touch(dmg);
+        dmg_budget_update(dmg);
         return;
     }
     if (address == 0xff01) {
@@ -830,7 +828,7 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
         // there is never a link partner, so an internal-clock transfer
         // completes 4096 CPU cycles out (8 bits at 8192 Hz) and an
         // external-clock one never does, exactly like an unplugged cable.
-        // clearing bit 7 aborts an in-flight transfer
+        // clearing bit 7 aborts a transfer
         u32 dist;
         dmg->reg_sc = data & 0x81;
         if ((data & 0x81) == 0x81) {
@@ -842,7 +840,7 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
         } else {
             dmg->event_deadline[EV_SERIAL] = EV_NONE;
         }
-        dmg_budget_touch(dmg);
+        dmg_budget_update(dmg);
         return;
     }
 
@@ -1197,6 +1195,6 @@ void dmg_ei_di(void *_dmg, u16 enabled)
 
     // EI/RETI with an interrupt already pending must deliver promptly
     if (dmg->interrupt_enable) {
-        dmg_budget_touch(dmg);
+        dmg_budget_update(dmg);
     }
 }

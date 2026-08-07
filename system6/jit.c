@@ -61,7 +61,7 @@ static void prof_write16(void *dmg, u16 address, u16 data)
 
 // register state that persists between block executions
 struct {
-  u32 d2; // cycle countdown from wake_limit, executed = wake_limit - d2
+  u32 d2; // accumulated cycles, output
   u32 d3; // next pc, output only
   u32 d4, d5, d6, d7; // a, bc, de, f
   u32 a2, a3, a4; // hl, sp, ctx
@@ -222,16 +222,14 @@ void jit_init(struct dmg *dmg)
   jit_ctx.ly_clamp_skips = 0;
   sync_cache_pointers();
 
-  jit_regs.d2 = jit_ctx.wake_limit; // countdown starts at the full budget
-  jit_ctx.read_cycles = jit_ctx.wake_limit; // in-flight count 0
+  jit_regs.d2 = 0;
+  jit_ctx.read_cycles = 0;
   jit_regs.d3 = 0x100; // initial PC
-  // A register: 0x11 for CGB, 0x01 for DMG
   jit_regs.d4 = (dmg->cgb && dmg->cgb->mode) ? 0x11 : 0x01;
   jit_regs.d5 = 0x00000013; // BC
   jit_regs.d6 = 0x000000d8; // DE
   jit_regs.d7 = 0x05; // flags
   jit_regs.a2 = 0x014d; // HL
-  // A3 = native pointer to HRAM at GB SP 0xFFFE
   // HRAM is at dmg->zero_page (0xFF80-0xFFFF), 0xFFFE - 0xFF80 = 0x7E
   jit_regs.a3 = (unsigned long) (dmg->zero_page + 0x7e);
   jit_regs.a4 = (unsigned long) &jit_ctx;
@@ -560,16 +558,15 @@ int jit_run(struct dmg *dmg)
       return 0;
   }
 
-  // sync hardware with cycles accumulated by compiled code, D2 counts
-  // down from wake_limit
+  // sync hardware with cycles accumulated by compiled code
   PROF_SET(PROF_SYNC);
-  dmg_sync_hw(dmg, jit_ctx.wake_limit - jit_regs.d2);
+  dmg_sync_hw(dmg, jit_regs.d2);
   if (dmg->interrupt_enable) {
     check_interrupts(dmg);
   }
   update_wake_limit(dmg);
-  jit_regs.d2 = jit_ctx.wake_limit;
-  jit_ctx.read_cycles = jit_ctx.wake_limit;
+  jit_regs.d2 = 0;
+  jit_ctx.read_cycles = 0;
   PROF_SET(PROF_OTHER);
 
   call_count++;

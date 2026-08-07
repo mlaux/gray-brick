@@ -375,14 +375,6 @@ void emit_addi_l_dn(struct code_block *block, uint8_t dreg, uint32_t imm)
     emit_long(block, imm);
 }
 
-// subi.l #imm, Dn
-void emit_subi_l_dn(struct code_block *block, uint8_t dreg, uint32_t imm)
-{
-    // 0000 0100 10 000 rrr
-    emit_word(block, 0x0480 | dreg);
-    emit_long(block, imm);
-}
-
 // or.b Ds, Dd (result to Dd)
 void emit_or_b_dn_dn(struct code_block *block, uint8_t src, uint8_t dest)
 {
@@ -878,13 +870,6 @@ void emit_tst_b_dn(struct code_block *block, uint8_t dreg)
     emit_word(block, 0x4a00 | dreg);
 }
 
-// tst.l Dn - test long in data register (sets Z and N flags)
-void emit_tst_l_dn(struct code_block *block, uint8_t dreg)
-{
-    // 0100 1010 10 000 rrr
-    emit_word(block, 0x4a80 | dreg);
-}
-
 // lsr.w #count, Dn - logical shift right word by immediate (1-8)
 void emit_lsr_w_imm_dn(struct code_block *block, uint8_t count, uint8_t dreg)
 {
@@ -1250,21 +1235,6 @@ void emit_bcs_b(struct code_block *block, int8_t disp)
     emit_word(block, 0x6500 | ((uint8_t) disp));
 }
 
-// bgt.b - branch if greater than (signed) with 8-bit displacement
-void emit_bgt_b(struct code_block *block, int8_t disp)
-{
-    // 0110 1110 dddd dddd
-    emit_word(block, 0x6e00 | ((uint8_t) disp));
-}
-
-// bgt.w - branch if greater than (signed) with 16-bit displacement
-void emit_bgt_w(struct code_block *block, int16_t disp)
-{
-    // 0110 1110 0000 0000, then displacement word
-    emit_word(block, 0x6e00);
-    emit_word(block, disp);
-}
-
 // ble.b - branch if less than or equal (signed) with 8-bit displacement
 void emit_ble_b(struct code_block *block, int8_t disp)
 {
@@ -1365,16 +1335,16 @@ void emit_cmp_l_disp_an_dn(
     emit_word(block, disp);
 }
 
-// subtract and <= 0 means time to exit
+// emit_add_cycles - add GB cycles to D2, picks optimal instruction
 void emit_add_cycles(struct code_block *block, int cycles)
 {
     if (cycles <= 0) {
         return;
     }
     if (cycles <= 8) {
-        emit_subq_l_dn(block, REG_68K_D_CYCLE_COUNT, cycles);
+        emit_addq_l_dn(block, REG_68K_D_CYCLE_COUNT, cycles);
     } else {
-        emit_subi_l_dn(block, REG_68K_D_CYCLE_COUNT, cycles);
+        emit_addi_l_dn(block, REG_68K_D_CYCLE_COUNT, cycles);
     }
 }
 
@@ -1386,11 +1356,11 @@ void emit_add_cycles(struct code_block *block, int cycles)
 // 14 bytes total
 void emit_patchable_exit(struct code_block *block)
 {
-    // tst.l d2 (2 bytes)
-    emit_tst_l_dn(block, REG_68K_D_CYCLE_COUNT);
+    // cmp.l JIT_CTX_WAKE_LIMIT(a4), d2 (4 bytes)
+    emit_cmp_l_disp_an_dn(block, JIT_CTX_WAKE_LIMIT, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
 
-    // ble.s +6 = skip over movea.l + jsr to rts (2 bytes)
-    emit_ble_b(block, 6);
+    // bcc.s +6 = skip over movea.l + jsr to rts (2 bytes)
+    emit_bcc_s(block, 6);
 
     // movea.l JIT_CTX_PATCH_HELPER(a4), a0 (4 bytes)
     emit_movea_l_disp_an_an(block, JIT_CTX_PATCH_HELPER, REG_68K_A_CTX, REG_68K_A_SCRATCH_1);

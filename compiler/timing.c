@@ -11,15 +11,19 @@
 #define LINE_CYCLES  456
 #define FRAME_CYCLES 70224
 
-// fast-forward the countdown to 0 (the wake deadline) and exit at
-// next_pc so the wait re-checks
+// fast-forward D2 to jit_ctx.wake_limit and exit at next_pc so the wait re-checks
 static void emit_wake_skip(struct code_block *block, int next_pc)
 {
 #ifdef GB6_PROFILING
-    emit_add_l_dn_disp_an(block, REG_68K_D_CYCLE_COUNT, JIT_CTX_SKIPPED,
+    // skipped = wake_limit - D2
+    emit_move_l_disp_an_dn(block, JIT_CTX_WAKE_LIMIT, REG_68K_A_CTX,
+            REG_68K_D_SCRATCH_0);
+    emit_sub_l_dn_dn(block, REG_68K_D_CYCLE_COUNT, REG_68K_D_SCRATCH_0);
+    emit_add_l_dn_disp_an(block, REG_68K_D_SCRATCH_0, JIT_CTX_SKIPPED,
             REG_68K_A_CTX);
 #endif
-    emit_moveq_dn(block, REG_68K_D_CYCLE_COUNT, 0);
+    // move.l JIT_CTX_WAKE_LIMIT(a4), d2
+    emit_move_l_disp_an_dn(block, JIT_CTX_WAKE_LIMIT, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
     // move.l #next_pc, d3
     emit_move_l_dn(block, REG_68K_D_NEXT_PC, next_pc);
     emit_rts(block);
@@ -37,23 +41,20 @@ static void emit_ly_wait_clamp(struct code_block *block, uint16_t loop_pc)
     emit_add_l_dn_dn(block, REG_68K_D_CYCLE_COUNT, REG_68K_D_CYCLE_COUNT);
     patch_branch_b(block, single_speed);
 
-    // d1 = wake_limit - dist: the countdown value at the wait's end.
-    // borrow means the target is past the wake deadline
     emit_move_l_disp_an_dn(block, JIT_CTX_WAKE_LIMIT, REG_68K_A_CTX,
             REG_68K_D_SCRATCH_1);
-    emit_sub_l_dn_dn(block, REG_68K_D_CYCLE_COUNT, REG_68K_D_SCRATCH_1);
+    emit_cmp_l_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_CYCLE_COUNT);
     size_t in_reach = block->length;
-    emit_bcc_s(block, 0);
+    emit_bls_b(block, 0);
 
 #ifdef GB6_PROFILING
     emit_addq_l_disp_an(block, 1, JIT_CTX_LY_SKIPS, REG_68K_A_CTX);
 #endif
-    emit_moveq_dn(block, REG_68K_D_CYCLE_COUNT, 0);
+    emit_move_l_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_CYCLE_COUNT);
     emit_move_l_dn(block, REG_68K_D_NEXT_PC, loop_pc);
     emit_rts(block);
 
     patch_branch_b(block, in_reach);
-    emit_move_l_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_CYCLE_COUNT);
 }
 
 // the loop condition is already false, fall through
@@ -255,11 +256,8 @@ void compile_ly_wait_reg(
     compile_get_gb_reg_d0(block, gb_reg);
 
     int exit_cycles = pending_cycles + tail_cycles;
-    // the wait paths overwrite D2, subsuming any pending cycles
     pending_cycles = 0;
 
-    // stash the target in A: every fall-through leaves A derived from it,
-    // and a loop-head exit re-runs the loop, which reloads A anyway
     emit_move_l_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_A);
 
     // d0 = target line start
@@ -409,9 +407,10 @@ void compile_delay_loop(
     emit_lsl_w_imm_dn(block, 4, REG_68K_D_SCRATCH_0);
     emit_subq_w_dn(block, REG_68K_D_SCRATCH_0, 8);
 
-    // d1 = budget remaining (the countdown itself); <= 0 means the wake
-    // deadline is already due
-    emit_move_l_dn_dn(block, REG_68K_D_CYCLE_COUNT, REG_68K_D_SCRATCH_1);
+    // d1 = wake_limit - d2 = budget remaining <= 0 means need to exit
+    emit_move_l_disp_an_dn(block, JIT_CTX_WAKE_LIMIT, REG_68K_A_CTX,
+            REG_68K_D_SCRATCH_1);
+    emit_sub_l_dn_dn(block, REG_68K_D_CYCLE_COUNT, REG_68K_D_SCRATCH_1);
     past_wake = block->length;
     emit_ble_b(block, 0);
     emit_cmp_l_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_SCRATCH_1);
@@ -431,7 +430,7 @@ void compile_delay_loop(
     emit_move_l_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);
     emit_lsl_w_imm_dn(block, 4, REG_68K_D_SCRATCH_1);
     emit_subq_w_dn(block, REG_68K_D_SCRATCH_1, 4);
-    emit_sub_l_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_CYCLE_COUNT);
+    emit_add_l_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_CYCLE_COUNT);
     emit_sub_w_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_NEXT_PC);
     if (dec_op == 0x05) {
         emit_swap(block, REG_68K_D_BC);
@@ -449,14 +448,14 @@ void compile_delay_loop(
 
     // forced j drained the counter: final jr untaken is 4 cheaper
     patch_branch_b(block, done_exit);
-    emit_addq_l_dn(block, REG_68K_D_CYCLE_COUNT, 4);
+    emit_subq_l_dn(block, REG_68K_D_CYCLE_COUNT, 4);
     emit_ori_b_dn(block, REG_68K_D_FLAGS, 0x04);
     emit_move_l_dn(block, REG_68K_D_NEXT_PC, next_pc);
     emit_rts(block);
 
     // full: charge 16N - 8, counter = 0, Z=1, block continues
     patch_branch_b(block, full);
-    emit_sub_l_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_CYCLE_COUNT);
+    emit_add_l_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_CYCLE_COUNT);
     if (dec_op == 0x05) {
         emit_swap(block, REG_68K_D_BC);
         emit_andi_w_dn(block, REG_68K_D_BC, 0xff00);
@@ -479,8 +478,7 @@ void compile_halt(struct code_block *block, int next_pc)
 // detects ldh a, [nn]; and a / or a; jr z/nz back to the ldh.
 // instead of spinning until the cycle limit forces an exit, check the flag
 // once, and if the loop would repeat, skip straight to the next wake
-// deadline the same way HALT does. the interrupt handler runs, sets the
-// flag, and control returns to loop_pc where the flag is checked again.
+// deadline the same way HALT does
 void compile_hram_idle_wait(
     struct code_block *block,
     uint8_t addr_lo,

@@ -162,15 +162,12 @@ static void sync_ctx_from_68k(void)
     jit_ctx.read_cycles = m68_r32(JIT_CTX_ADDR + JIT_CTX_READ_CYCLES);
 }
 
-// dmg_budget_touch tightens wake_limit mid-call (on the Mac jit_ctx is
+// dmg_budget_update tightens wake_limit mid-call (on the Mac jit_ctx is
 // the memory compiled code reads; here the 68k side needs the copy
 // refreshed so in-block loop-back checks and wake skips see it)
 static void sync_budget_to_68k(void)
 {
     ctx_w32(JIT_CTX_WAKE_LIMIT, jit_ctx.wake_limit);
-    // budget_touch shrinks the stashed countdown in tandem; the block
-    // reloads D2 from this after the call
-    ctx_w32(JIT_CTX_READ_CYCLES, jit_ctx.read_cycles);
 }
 
 // --insn-log: every instruction Musashi executes, one line each, with
@@ -285,7 +282,7 @@ void host_gate(unsigned int index, unsigned int sp)
         if (host_insn_log) {
             fprintf(host_insn_log, "= exit d3=%x d2=%u\n",
                     m68k_get_reg(NULL, M68K_REG_D3),
-                    jit_ctx.wake_limit - m68k_get_reg(NULL, M68K_REG_D2));
+                    m68k_get_reg(NULL, M68K_REG_D2));
         }
         block_returned = 1;
         m68k_end_timeslice();
@@ -617,8 +614,8 @@ void host_jit_init(struct dmg *d)
     ctx_w32(JIT_CTX_DISPATCH, CHAIN_STUB_ADDR);
     ctx_w32(JIT_CTX_PATCH_HELPER, CHAIN_STUB_ADDR);
     ctx_w32(JIT_CTX_FRAME_CYCLES_PTR, FRAME_SHADOW_ADDR);
-    ctx_w32(JIT_CTX_READ_CYCLES, jit_ctx.wake_limit);
-    jit_ctx.read_cycles = jit_ctx.wake_limit;
+    ctx_w32(JIT_CTX_READ_CYCLES, 0);
+    jit_ctx.read_cycles = 0;
     ctx_w16(JIT_CTX_DAA_STATE, 0);
     ctx_w16(JIT_CTX_GB_SP, jit_ctx.gb_sp);
     ctx_w32(JIT_CTX_STACK_IN_RAM, jit_ctx.stack_in_ram);
@@ -652,7 +649,7 @@ void host_jit_init(struct dmg *d)
     }
 
     // boot-ROM handoff state, mirroring jit_init
-    m68k_set_reg(M68K_REG_D2, jit_ctx.wake_limit);
+    m68k_set_reg(M68K_REG_D2, 0);
     m68k_set_reg(M68K_REG_D3, 0x100);
     m68k_set_reg(M68K_REG_D4, (dmg->cgb && dmg->cgb->mode) ? 0x11 : 0x01);
     m68k_set_reg(M68K_REG_D5, 0x00000013);
@@ -731,7 +728,7 @@ enter:
         fprintf(host_insn_log, "= enter %02x:%04x arena=%06x d2=%u frame=%u\n",
                 jit_ctx.current_rom_bank, d3,
                 (u32) ((u8 *) code - m68k_mem),
-                jit_ctx.wake_limit - m68k_get_reg(NULL, M68K_REG_D2),
+                m68k_get_reg(NULL, M68K_REG_D2),
                 dmg->frame_cycles);
     }
 
@@ -757,7 +754,7 @@ enter:
     // mimic the Mac's native chaining (dispatcher asm + patched exits):
     // follow cached successors without hardware sync until the budget
     // expires, a block misses, or the exit was a plain-rts fast-forward
-    if (host_chain && exit_chainable && (s32) d2 > 0) {
+    if (host_chain && exit_chainable && d2 < jit_ctx.wake_limit) {
         code = cache_lookup(d3, jit_ctx.current_rom_bank);
         if (code) {
             goto enter;
@@ -765,10 +762,7 @@ enter:
     }
 
     sync_ctx_from_68k();
-    // D2 counts down; wake_limit and the countdown were tightened in
-    // tandem by any mid-block budget_touch, so this difference is the
-    // executed total either way
-    executed = jit_ctx.wake_limit - d2;
+    executed = d2;
     host_total_ppu += jit_ctx.effective_double_speed ? (executed >> 1)
                                                      : executed;
     dmg_sync_hw(dmg, executed);
@@ -776,9 +770,9 @@ enter:
         check_interrupts();
     }
     update_wake_limit();
-    m68k_set_reg(M68K_REG_D2, jit_ctx.wake_limit);
-    jit_ctx.read_cycles = jit_ctx.wake_limit;
-    ctx_w32(JIT_CTX_READ_CYCLES, jit_ctx.wake_limit);
+    m68k_set_reg(M68K_REG_D2, 0);
+    jit_ctx.read_cycles = 0;
+    ctx_w32(JIT_CTX_READ_CYCLES, 0);
     sync_page_tables();
 
     if (host_insn_log) {
