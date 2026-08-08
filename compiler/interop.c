@@ -100,7 +100,6 @@ const struct code_block *compile_emit_helpers(uint32_t base, void *hram_base)
 
     patch_branch_b(b, unmapped);
     if (hram_base) {
-        // $ffff is IE, so need to go to C
         emit_cmpi_w_imm_dn(b, 0xff80, REG_68K_D_SCRATCH_1);
         lo = b->length;
         emit_bcs_b(b, 0);
@@ -141,10 +140,10 @@ const struct code_block *compile_emit_helpers(uint32_t base, void *hram_base)
 
     if (hram_base) {
         patch_branch_b(b, unmapped);
-        // $ffff is IE, so need to go to C
         emit_cmpi_w_imm_dn(b, 0xff80, REG_68K_D_SCRATCH_1);
         lo = b->length;
         emit_bcs_b(b, 0);
+        // $ffff is IE, so need to go to C
         emit_cmpi_w_imm_dn(b, 0xffff, REG_68K_D_SCRATCH_1);
         ie = b->length;
         emit_beq_b(b, 0);

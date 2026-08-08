@@ -9,9 +9,7 @@ struct dmg;
 
 struct mbc {
   int type;
-  // per-type handler for 0x0000-0x7fff writes, set by mbc_new. also
-  // installed as jit_ctx.mbc_write_func so constant-address write sites
-  // call it directly. returns 1 if handled
+  // per-type handler for 0x0000-0x7fff writes
   int (*write)(struct dmg *dmg, u16 addr, u8 data);
   int has_battery;
   int has_rtc;

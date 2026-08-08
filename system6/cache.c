@@ -15,6 +15,11 @@ static void ***banked_cache;
 static u8 upper_page_lo[0x80];
 static u8 upper_page_hi[0x80];
 
+// how many pages back the earliest block covering this page starts- blocks
+// are cached by start address, so invalidating a page has to reach back far
+// enough to catch blocks that spilled into it
+static u8 upper_page_reach[0x80];
+
 // Look up cached code pointer for given PC and bank
 void *cache_lookup(u16 pc, u8 bank)
 {
@@ -72,6 +77,9 @@ void cache_mark_upper_range(u16 start, u16 end)
         if (hi > upper_page_hi[idx]) {
             upper_page_hi[idx] = hi;
         }
+        if (p - (start >> 8) > upper_page_reach[idx]) {
+            upper_page_reach[idx] = p - (start >> 8);
+        }
     }
 }
 
@@ -99,9 +107,24 @@ int cache_upper_4k_has_code(u16 addr)
 void cache_invalidate_upper_page(u8 page)
 {
     int idx = page - 0x80;
-    memset(&upper_cache[idx << 8], 0, 256 * sizeof(void *));
-    upper_page_lo[idx] = 0xff;
-    upper_page_hi[idx] = 0;
+    int first = idx;
+    int k;
+
+    // widen until no block starting before "first" reaches into the range
+    for (k = idx; k >= first; k--) {
+        int start = k - upper_page_reach[k];
+        if (start < first) {
+            first = start;
+        }
+    }
+
+    memset(&upper_cache[first << 8], 0,
+            ((idx - first + 1) << 8) * sizeof(void *));
+    for (k = first; k <= idx; k++) {
+        upper_page_lo[k] = 0xff;
+        upper_page_hi[k] = 0;
+        upper_page_reach[k] = 0;
+    }
 }
 
 // Allocate and zero all cache arrays upfront
@@ -110,6 +133,7 @@ int cache_init(void)
 {
     memset(upper_page_lo, 0xff, sizeof upper_page_lo);
     memset(upper_page_hi, 0, sizeof upper_page_hi);
+    memset(upper_page_reach, 0, sizeof upper_page_reach);
 
     bank0_cache = arena_alloc(BANK0_CACHE_SIZE * sizeof(void *));
     if (!bank0_cache) {
