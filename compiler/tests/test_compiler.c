@@ -483,12 +483,12 @@ void run_block_with_budget(uint8_t *gb_rom, uint32_t budget)
 // Page table fast path testing
 // ============================================================================
 
-#define PAGE_TABLE_READ  0x9000  // 256 entries * 4 bytes
+#define PAGE_TABLE_READ  0x9000  // 16 entries * 4 bytes
 #define PAGE_TABLE_WRITE 0x9400
 
 // biased entry: entry + (s16)gb_address = host address (see PAGE_BIAS)
 #define TEST_PAGE_ENTRY(host, page) \
-    ((uint32_t)(host) - ((uint32_t)(page) << 8) + ((page) >= 0x80 ? 0x10000 : 0))
+    ((uint32_t)(host) - ((uint32_t)(page) << 12) + ((page) >= 8 ? 0x10000 : 0))
 
 static struct code_block *prepared_block;
 
@@ -502,13 +502,11 @@ void prepare_block_with_pages(uint8_t *gb_rom)
     memset(mem, 0, MEM_SIZE);
     setup_runtime_stubs();
 
-    map_test_page(PAGE_TABLE_READ, 0x7f, PAGE_BUF_7F);
-    map_test_page(PAGE_TABLE_READ, 0x80, PAGE_BUF_80);
-    map_test_page(PAGE_TABLE_READ, 0xc0, PAGE_BUF_C0);
-    map_test_page(PAGE_TABLE_READ, 0xc1, PAGE_BUF_C1);
-    map_test_page(PAGE_TABLE_WRITE, 0x80, PAGE_BUF_80);
-    map_test_page(PAGE_TABLE_WRITE, 0xc0, PAGE_BUF_C0);
-    map_test_page(PAGE_TABLE_WRITE, 0xc1, PAGE_BUF_C1);
+    map_test_page(PAGE_TABLE_READ, 0x7, PAGE_BUF_7);
+    map_test_page(PAGE_TABLE_READ, 0x8, PAGE_BUF_8);
+    map_test_page(PAGE_TABLE_READ, 0xc, PAGE_BUF_C);
+    map_test_page(PAGE_TABLE_WRITE, 0x8, PAGE_BUF_8);
+    map_test_page(PAGE_TABLE_WRITE, 0xc, PAGE_BUF_C);
 
     test_gb_rom = gb_rom;
     prepared_block = compile_block(0, test_compile_ctx);

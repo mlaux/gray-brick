@@ -50,19 +50,21 @@ enum {
 
 // page table entries are biased so that entry + (s16)gb_address yields the
 // host pointer. the JIT indexes pages with (An,Dn.w) addressing, which sign
-// extends the full GB address, so pages >= 0x80 get 0x10000 added to cancel
+// extends the full GB address, so pages >= 8 get 0x10000 added to cancel
 // the sign extension. C code must index entries as page[(s16)address]
 #define PAGE_BIAS(ptr, page) \
-    ((u8 *)(ptr) - (((u32)(page)) << 8) + (((page) >= 0x80) ? 0x10000 : 0))
+    ((u8 *)(ptr) - (((u32)(page)) << 12) + (((page) >= 8) ? 0x10000 : 0))
 
 struct dmg {
     u8 zero_page[0x80];
-    // page table for fast memory access (256 pages of 256 bytes each)
-    u8 *read_page[256];
-    u8 *write_page[256];
+    // page table for fast memory access (16 pages of 4KB each).
+    // page 0xf is never mapped: 0xf000-0xfdff echo, OAM, I/O and HRAM
+    // all take the slow path (HRAM is mostly resolved at compile time)
+    u8 *read_page[16];
+    u8 *write_page[16];
     // original write_page entries for upper pages unmapped because they
     // hold compiled code (self-modifying code detection), NULL otherwise
-    u8 *saved_write_page[0x80];
+    u8 *saved_write_page[8];
 
     struct rom *rom;
     struct lcd *lcd;

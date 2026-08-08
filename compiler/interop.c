@@ -20,19 +20,14 @@ void compile_page_lookup(
     uint8_t addr_dreg,
     uint8_t dest_areg
 ) {
-    if (compiler_68020) {
-        // lsr.w #8, addr
-        emit_lsr_w_imm_dn(block, 8, addr_dreg);
-        // movea.l (table,addr.w*4), dest
-        emit_movea_l_idx_scale4_an_an(block, table_areg, addr_dreg, dest_areg);
-    } else {
-        // fold the entry scaling into the shift:
-        // (addr >> 8) * 4 == (addr >> 6) & 0x3fc
-        emit_lsr_w_imm_dn(block, 6, addr_dreg);
-        emit_andi_w_dn(block, addr_dreg, 0x03fc);
-        // movea.l (table,addr.w), dest
-        emit_movea_l_idx_an_an(block, 0, table_areg, addr_dreg, dest_areg);
-    }
+    // (addr >> 12) * 4 == (addr >> 10) & 0x3c. shift immediates only go
+    // up to 8, but rol.w #6 puts bits 15-12 into bits 5-2 and the mask
+    // discards the low bits rotated in above them - works on every 68k,
+    // so both codegen modes share this path
+    emit_rol_w_imm_dn(block, 6, addr_dreg);
+    emit_andi_w_dn(block, addr_dreg, 0x003c);
+    // movea.l (table,addr.w), dest
+    emit_movea_l_idx_an_an(block, 0, table_areg, addr_dreg, dest_areg);
 }
 
 // shared helper entry addresses, set by compile_emit_helpers
@@ -331,21 +326,21 @@ void compile_call_dmg_read16(struct code_block *block)
     // flush before the fast/slow split so both paths see the same D2
     flush_cycles(block);
 
-    // Check if both bytes on same page (addr & 0xff != 0xff)
-    // If low byte is 0xff, second byte would cross to next page
+    // Check if both bytes on same page (addr & 0xfff != 0xfff)
+    // If the low bits are all set, the second byte crosses to next page
     // move.w d1, d0
     emit_move_w_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);
-    // andi.w #$00ff, d0
-    emit_andi_w_dn(block, REG_68K_D_SCRATCH_0, 0x00ff);
-    // cmpi.w #$00ff, d0
-    emit_cmpi_w_imm_dn(block, 0x00ff, REG_68K_D_SCRATCH_0);
+    // andi.w #$0fff, d0
+    emit_andi_w_dn(block, REG_68K_D_SCRATCH_0, 0x0fff);
+    // cmpi.w #$0fff, d0
+    emit_cmpi_w_imm_dn(block, 0x0fff, REG_68K_D_SCRATCH_0);
     cross = block->length;
     emit_beq_b(block, 0);
 
     // Page table lookup
     // move.w d1, d0
     emit_move_w_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);
-    // a0 = read_page[addr >> 8]
+    // a0 = read_page[addr >> 12]
     compile_page_lookup(block, REG_68K_A_READ_PAGE, REG_68K_D_SCRATCH_0, REG_68K_A_SCRATCH_1);
     // move.l a0, d0 - sets Z, d0 is dead
     emit_move_l_an_dn(block, REG_68K_A_SCRATCH_1, REG_68K_D_SCRATCH_0);
@@ -402,20 +397,20 @@ void compile_call_dmg_write16_d0(struct code_block *block)
     // move.w d0, d3
     emit_move_w_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_NEXT_PC);
 
-    // Check if both bytes on same page (addr & 0xff != 0xff)
+    // Check if both bytes on same page (addr & 0xfff != 0xfff)
     // move.w d1, d0
     emit_move_w_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);
-    // andi.w #$00ff, d0
-    emit_andi_w_dn(block, REG_68K_D_SCRATCH_0, 0x00ff);
-    // cmpi.w #$00ff, d0
-    emit_cmpi_w_imm_dn(block, 0x00ff, REG_68K_D_SCRATCH_0);
+    // andi.w #$0fff, d0
+    emit_andi_w_dn(block, REG_68K_D_SCRATCH_0, 0x0fff);
+    // cmpi.w #$0fff, d0
+    emit_cmpi_w_imm_dn(block, 0x0fff, REG_68K_D_SCRATCH_0);
     cross = block->length;
     emit_beq_b(block, 0);
 
     // Page table lookup
     // move.w d1, d0
     emit_move_w_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);
-    // a0 = write_page[addr >> 8]
+    // a0 = write_page[addr >> 12]
     compile_page_lookup(block, REG_68K_A_WRITE_PAGE, REG_68K_D_SCRATCH_0, REG_68K_A_SCRATCH_1);
     // move.l a0, d0 - sets Z, d0 is dead
     emit_move_l_an_dn(block, REG_68K_A_SCRATCH_1, REG_68K_D_SCRATCH_0);

@@ -82,6 +82,20 @@ int cache_upper_range_hit(u16 addr)
     return off >= upper_page_lo[idx] && off <= upper_page_hi[idx];
 }
 
+// any compiled code left anywhere in addr's 4K memory page?
+int cache_upper_4k_has_code(u16 addr)
+{
+    int base = ((addr >> 8) & ~0xf) - 0x80;
+    int k;
+
+    for (k = 0; k < 16; k++) {
+        if (upper_page_lo[base + k] <= upper_page_hi[base + k]) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 void cache_invalidate_upper_page(u8 page)
 {
     int idx = page - 0x80;

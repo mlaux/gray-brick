@@ -18,8 +18,8 @@
 // A2 = HL (contiguous: 0xHHLL)
 // A3 = SP
 // A4 = runtime context pointer
-// A5 = read page table base (dmg + 0x80)
-// A6 = write page table base (dmg + 0x480)
+// A5 = read page table base (dmg->read_page, 16 4KB pages)
+// A6 = write page table base (dmg->write_page)
 // A7 = 68k stack pointer
 
 #define REG_68K_D_SCRATCH_0 0

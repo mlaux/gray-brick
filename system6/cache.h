@@ -29,6 +29,7 @@ void cache_get_arrays(void ***out_bank0, void ****out_banked, void ***out_upper)
 // land on compiled source bytes invalidate the page's blocks
 void cache_mark_upper_range(u16 start, u16 end);
 int cache_upper_range_hit(u16 addr);
+int cache_upper_4k_has_code(u16 addr);
 void cache_invalidate_upper_page(u8 page);
 
 #endif

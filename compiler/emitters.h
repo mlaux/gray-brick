@@ -14,6 +14,7 @@ void emit_move_w_dn(struct code_block *block, uint8_t reg, int16_t imm);
 void emit_move_l_dn(struct code_block *block, uint8_t reg, int32_t imm);
 
 void emit_rol_w_8(struct code_block *block, uint8_t reg);
+void emit_rol_w_imm_dn(struct code_block *block, uint8_t count, uint8_t reg);
 void emit_ror_w_8(struct code_block *block, uint8_t reg);
 void emit_swap(struct code_block *block, uint8_t reg);
 

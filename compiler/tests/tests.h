@@ -118,12 +118,11 @@ void run_block_with_budget(uint8_t *gb_rom, uint32_t budget);
 void set_wake_limit(uint32_t limit);
 
 // Page table fast path testing: real biased page tables in Musashi memory
-// (see PAGE_BIAS in src/dmg.h for the entry format). GB pages 0x7f, 0x80,
-// 0xc0, 0xc1 are mapped to these host buffers
-#define PAGE_BUF_7F 0x9800  // GB 0x7f00-0x7fff (read only)
-#define PAGE_BUF_80 0x9900  // GB 0x8000-0x80ff
-#define PAGE_BUF_C0 0x9a00  // GB 0xc000-0xc0ff
-#define PAGE_BUF_C1 0x9b00  // GB 0xc100-0xc1ff
+// (see PAGE_BIAS in src/dmg.h for the entry format). GB 4K pages 0x7, 0x8
+// and 0xc are mapped to these host buffers
+#define PAGE_BUF_7 0xa000  // GB 0x7000-0x7fff (read only)
+#define PAGE_BUF_8 0xb000  // GB 0x8000-0x8fff
+#define PAGE_BUF_C 0xe000  // GB 0xc000-0xcfff
 
 // set up tables/stubs and compile the block; poke memory with set_mem_byte
 // between these two calls

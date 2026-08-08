@@ -66,6 +66,12 @@ void emit_rol_w_8(struct code_block *block, uint8_t reg)
     emit_word(block, 0xe158 | reg);
 }
 
+void emit_rol_w_imm_dn(struct code_block *block, uint8_t count, uint8_t reg)
+{
+    // 1110 ccc d ss i 11 rrr - d=1 (left), ss=01 (word), i=0 (immediate)
+    emit_word(block, 0xe158 | ((count & 7) << 9) | reg);
+}
+
 // ror.w #8, Dn
 void emit_ror_w_8(struct code_block *block, uint8_t reg)
 {

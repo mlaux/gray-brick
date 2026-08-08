@@ -340,7 +340,7 @@ TEST(test_page_fast_read)
         0x10              // stop
     };
     prepare_block_with_pages(rom);
-    set_mem_byte(PAGE_BUF_C0 + 5, 0x5a);
+    set_mem_byte(PAGE_BUF_C + 5, 0x5a);
     execute_prepared_block();
     ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 0x5a);
 }
@@ -355,7 +355,7 @@ TEST(test_page_fast_write)
     };
     prepare_block_with_pages(rom);
     execute_prepared_block();
-    ASSERT_EQ(get_mem_byte(PAGE_BUF_C0 + 5), 0x77);
+    ASSERT_EQ(get_mem_byte(PAGE_BUF_C + 5), 0x77);
 }
 
 TEST(test_page_fast_read_sign_boundary)
@@ -370,8 +370,8 @@ TEST(test_page_fast_read_sign_boundary)
         0x10              // stop
     };
     prepare_block_with_pages(rom);
-    set_mem_byte(PAGE_BUF_7F + 0xff, 0x11);
-    set_mem_byte(PAGE_BUF_80, 0x22);
+    set_mem_byte(PAGE_BUF_7 + 0xfff, 0x11);
+    set_mem_byte(PAGE_BUF_8, 0x22);
     execute_prepared_block();
     ASSERT_EQ((get_dreg(REG_68K_D_BC) >> 16) & 0xff, 0x11);
     ASSERT_EQ(get_dreg(REG_68K_D_BC) & 0xff, 0x22);
@@ -390,46 +390,46 @@ TEST(test_page_fast_pop_push)
         0x10              // stop
     };
     prepare_block_with_pages(rom);
-    set_mem_byte(PAGE_BUF_C1 + 0x80, 0x34);
-    set_mem_byte(PAGE_BUF_C1 + 0x81, 0x12);
+    set_mem_byte(PAGE_BUF_C + 0x180, 0x34);
+    set_mem_byte(PAGE_BUF_C + 0x181, 0x12);
     execute_prepared_block();
     // BC split format 0x00BB00CC
     ASSERT_EQ(get_dreg(REG_68K_D_BC) & 0x00ff00ff, 0x00120034);
-    ASSERT_EQ(get_mem_byte(PAGE_BUF_C1 + 0x3e), 0x34);
-    ASSERT_EQ(get_mem_byte(PAGE_BUF_C1 + 0x3f), 0x12);
+    ASSERT_EQ(get_mem_byte(PAGE_BUF_C + 0x13e), 0x34);
+    ASSERT_EQ(get_mem_byte(PAGE_BUF_C + 0x13f), 0x12);
 }
 
 TEST(test_page_read16_cross_falls_back)
 {
-    // low byte at 0xc0ff, high byte at 0xc100 crosses the page boundary,
-    // so the fast path must fall back to the stub (which reads literal
-    // addresses in test memory)
+    // low byte at 0xcfff, high byte at 0xd000 crosses the 4K page
+    // boundary, so the fast path must fall back to the stub (which reads
+    // literal addresses in test memory)
     uint8_t rom[] = {
-        0x31, 0xff, 0xc0, // ld sp, 0xc0ff
+        0x31, 0xff, 0xcf, // ld sp, 0xcfff
         0xc1,             // pop bc
         0x10              // stop
     };
     prepare_block_with_pages(rom);
-    set_mem_byte(0xc0ff, 0x78);
-    set_mem_byte(0xc100, 0x56);
+    set_mem_byte(0xcfff, 0x78);
+    set_mem_byte(0xd000, 0x56);
     execute_prepared_block();
     ASSERT_EQ(get_dreg(REG_68K_D_BC) & 0x00ff00ff, 0x00560078);
 }
 
 TEST(test_page_write16_cross_falls_back)
 {
-    // push with sp = 0xc101 writes 0xc0ff/0xc100, crossing the page
+    // push with sp = 0xd001 writes 0xcfff/0xd000, crossing the 4K page
     // boundary - must fall back to the stub
     uint8_t rom[] = {
         0x01, 0x34, 0x12, // ld bc, 0x1234
-        0x31, 0x01, 0xc1, // ld sp, 0xc101
+        0x31, 0x01, 0xd0, // ld sp, 0xd001
         0xc5,             // push bc
         0x10              // stop
     };
     prepare_block_with_pages(rom);
     execute_prepared_block();
-    ASSERT_EQ(get_mem_byte(0xc0ff), 0x34);
-    ASSERT_EQ(get_mem_byte(0xc100), 0x12);
+    ASSERT_EQ(get_mem_byte(0xcfff), 0x34);
+    ASSERT_EQ(get_mem_byte(0xd000), 0x12);
 }
 
 void register_load_tests(void)

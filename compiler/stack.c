@@ -31,8 +31,8 @@ void compile_ld_sp_imm16(
     } else if (ctx && ctx->wram_base && gb_sp >= 0xd000 && gb_sp <= 0xe000) {
         // Switchable WRAM ($D000-$DFFF): use page table for correct bank.
         // resolve through the page of SP-1
-        // SP = $e000 (top-of-WRAM stack) then resolves through page $df
-        uint8_t page = (gb_sp - 1) >> 8;
+        // SP = $e000 (top-of-WRAM stack) then resolves through page $d
+        uint8_t page = (gb_sp - 1) >> 12;
         // D0 = page * 4 (index into page table)
         emit_move_w_dn(block, REG_68K_D_SCRATCH_0, (int16_t)(page * 4));
         // A3 = read_page[page] (biased entry, see PAGE_BIAS in dmg.h)
@@ -471,9 +471,9 @@ int compile_stack_op(
                 emit_bcc_opcode_w(block, COND_HI, 0);  // branch if out of range
 
                 // WRAM path: use page table for correct bank
-                // A3 = read_page[(HL-1) >> 8] + (s16)HL (entries are
+                // A3 = read_page[(HL-1) >> 12] + (s16)HL (entries are
                 // biased). page of HL-1, same rule as the compile-time
-                // path: HL = $e000 anchors in page $df
+                // path: HL = $e000 anchors in page $d
                 emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
                 // D0 = HL - 1, page lookup does the shift
                 emit_move_w_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);

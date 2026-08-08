@@ -805,12 +805,13 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
                             (uint32_t) (uintptr_t) ctx->wram_base + (addr - 0xc000),
                             REG_68K_D_A);
                 } else if ((addr >= 0x8000 && addr < 0xa000)
-                        || (addr >= 0xd000 && addr < 0xfe00)) {
+                        || (addr >= 0xd000 && addr < 0xf000)) {
                     // VRAM/banked WRAM/echo pages are always mapped
                     // (possibly rebanked), so resolve through read_page
-                    // with no null check
+                    // with no null check. 0xf000-0xfdff echo shares the
+                    // unmapped page 0xf and stays on the C path
                     emit_move_w_dn(block, REG_68K_D_SCRATCH_0,
-                            (addr >> 8) * 4);
+                            (addr >> 12) * 4);
                     emit_movea_l_idx_an_an(block, 0, REG_68K_A_READ_PAGE,
                             REG_68K_D_SCRATCH_0, REG_68K_A_SCRATCH_1);
                     emit_move_b_disp_an_dn(block, (int16_t) addr,

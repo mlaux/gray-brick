@@ -137,7 +137,7 @@ static void sync_page_tables(void)
 {
     int k;
 
-    for (k = 0; k < 256; k++) {
+    for (k = 0; k < 16; k++) {
         u8 *rp = dmg->read_page[k];
         u8 *wp = dmg->write_page[k];
         m68_w32(READ_TABLE_ADDR + k * 4, rp ? (u32) (rp - m68k_mem) : 0);
@@ -371,9 +371,9 @@ static int clear_all_blocks(void)
         return 0;
     }
 
-    for (k = 0; k < 0x80; k++) {
+    for (k = 0; k < 8; k++) {
         if (dmg->saved_write_page[k]) {
-            dmg->write_page[k + 0x80] = dmg->saved_write_page[k];
+            dmg->write_page[k + 8] = dmg->saved_write_page[k];
             dmg->saved_write_page[k] = NULL;
         }
     }
@@ -428,9 +428,9 @@ static void *compile_checked(u32 pc)
         last--;
 
         cache_mark_upper_range(pc, last);
-        for (p = (pc >> 8); p <= (int) (last >> 8); p++) {
-            if (dmg->write_page[p] && !dmg->saved_write_page[p - 0x80]) {
-                dmg->saved_write_page[p - 0x80] = dmg->write_page[p];
+        for (p = (pc >> 12); p <= (int) (last >> 12); p++) {
+            if (dmg->write_page[p] && !dmg->saved_write_page[p - 8]) {
+                dmg->saved_write_page[p - 8] = dmg->write_page[p];
                 dmg->write_page[p] = 0;
             }
         }

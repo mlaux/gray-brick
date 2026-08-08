@@ -178,8 +178,6 @@ static int mbc3_write(struct dmg *dmg, u16 addr, u8 data)
   }
 
   if (addr >= 0x2000 && addr <= 0x3fff) {
-    extern int bankswitch;
-    bankswitch++;
     // ROM Bank Number (7 bits)
     mbc->rom_bank = data & 0x7f;
     int use_bank = mbc->rom_bank ? mbc->rom_bank : 1;

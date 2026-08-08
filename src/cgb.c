@@ -247,36 +247,24 @@ int cgb_write_reg(struct cgb_state *cgb, struct dmg *dmg, u16 address, u8 data)
 
 void cgb_update_vram_bank(struct cgb_state *cgb, struct dmg *dmg)
 {
-    int k;
     u8 *bank_base = &dmg->video_ram[cgb->vram_bank * 0x2000];
 
-    for (k = 0x80; k <= 0x9f; k++) {
-        u8 *page = &bank_base[(k - 0x80) << 8];
-        dmg->read_page[k] = PAGE_BIAS(page, k);
-        dmg->write_page[k] = PAGE_BIAS(page, k);
-    }
+    dmg->read_page[0x8] = PAGE_BIAS(bank_base, 0x8);
+    dmg->write_page[0x8] = dmg->read_page[0x8];
+    dmg->read_page[0x9] = PAGE_BIAS(&bank_base[0x1000], 0x9);
+    dmg->write_page[0x9] = dmg->read_page[0x9];
 }
 
 void cgb_update_wram_bank(struct cgb_state *cgb, struct dmg *dmg)
 {
-    int k;
     // SVBK 0 is treated as 1
     int bank = cgb->wram_bank ? cgb->wram_bank : 1;
     u8 *bank_base = &dmg->main_ram[bank * 0x1000];
 
-    // Update $D000-$DFFF (pages 0xd0-0xdf)
-    for (k = 0xd0; k <= 0xdf; k++) {
-        u8 *page = &bank_base[(k - 0xd0) << 8];
-        dmg->read_page[k] = PAGE_BIAS(page, k);
-        dmg->write_page[k] = PAGE_BIAS(page, k);
-    }
-
-    // Update echo RAM $F000-$FDFF (pages 0xf0-0xfd)
-    for (k = 0xf0; k <= 0xfd; k++) {
-        u8 *page = &bank_base[(k - 0xf0) << 8];
-        dmg->read_page[k] = PAGE_BIAS(page, k);
-        dmg->write_page[k] = PAGE_BIAS(page, k);
-    }
+    // $D000-$DFFF; the echo at $F000-$FDFF is slow-path and follows
+    // this mapping through the forward in dmg_read_slow/dmg_write_slow
+    dmg->read_page[0xd] = PAGE_BIAS(bank_base, 0xd);
+    dmg->write_page[0xd] = dmg->read_page[0xd];
 }
 
 int cgb_speed_switch(struct cgb_state *cgb)

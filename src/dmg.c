@@ -149,70 +149,42 @@ void dmg_init_pages(struct dmg *dmg)
     int k;
 
     // start with everything as slow path
-    for (k = 0; k < 256; k++) {
+    for (k = 0; k < 16; k++) {
         dmg->read_page[k] = NULL;
         dmg->write_page[k] = NULL;
     }
 
-    // ROM bank 0: 0x0000-0x3fff (pages 0x00-0x3f)
-    for (k = 0x00; k <= 0x3f; k++) {
-        dmg->read_page[k] = PAGE_BIAS(&dmg->rom->data[k << 8], k);
-    }
-
-    // ROM bank 1: 0x4000-0x7fff (pages 0x40-0x7f)
-    // MBC will update this when switching banks
-    for (k = 0x40; k <= 0x7f; k++) {
-        dmg->read_page[k] = PAGE_BIAS(&dmg->rom->data[k << 8], k);
+    // ROM: 0x0000-0x3fff fixed, 0x4000-0x7fff banked (pages 4-7,
+    // MBC updates these when switching banks)
+    for (k = 0; k <= 7; k++) {
+        dmg->read_page[k] = PAGE_BIAS(&dmg->rom->data[k << 12], k);
     }
     dmg->current_rom_bank = 1;
 
-    // video RAM: 0x8000-0x9fff (pages 0x80-0x9f)
+    // video RAM: 0x8000-0x9fff
     // Uses bank 0 initially, cgb_update_vram_bank() can switch for CGB
-    for (k = 0x80; k <= 0x9f; k++) {
-        u8 *page = &dmg->video_ram[(k - 0x80) << 8];
-        dmg->read_page[k] = PAGE_BIAS(page, k);
-        dmg->write_page[k] = PAGE_BIAS(page, k);
-    }
+    dmg->read_page[0x8] = PAGE_BIAS(dmg->video_ram, 0x8);
+    dmg->write_page[0x8] = dmg->read_page[0x8];
+    dmg->read_page[0x9] = PAGE_BIAS(&dmg->video_ram[0x1000], 0x9);
+    dmg->write_page[0x9] = dmg->read_page[0x9];
 
-    // external RAM: 0xa000-0xbfff (pages 0xa0-0xbf)
-    // leave NULL - MBC handles this
+    // external RAM 0xa000-0xbfff stays NULL - MBC handles this
 
-    // work RAM bank 0: 0xc000-0xcfff (pages 0xc0-0xcf) - always fixed
-    for (k = 0xc0; k <= 0xcf; k++) {
-        u8 *page = &dmg->main_ram[(k - 0xc0) << 8];
-        dmg->read_page[k] = PAGE_BIAS(page, k);
-        dmg->write_page[k] = PAGE_BIAS(page, k);
-    }
+    // work RAM: 0xc000-0xcfff fixed, 0xd000-0xdfff switchable in CGB
+    // (initially bank 1)
+    dmg->read_page[0xc] = PAGE_BIAS(dmg->main_ram, 0xc);
+    dmg->write_page[0xc] = dmg->read_page[0xc];
+    dmg->read_page[0xd] = PAGE_BIAS(&dmg->main_ram[0x1000], 0xd);
+    dmg->write_page[0xd] = dmg->read_page[0xd];
 
-    // work RAM bank 1: 0xd000-0xdfff (pages 0xd0-0xdf) - switchable in CGB
-    // Initially points to bank 1 (offset 0x1000)
-    for (k = 0xd0; k <= 0xdf; k++) {
-        u8 *page = &dmg->main_ram[0x1000 + ((k - 0xd0) << 8)];
-        dmg->read_page[k] = PAGE_BIAS(page, k);
-        dmg->write_page[k] = PAGE_BIAS(page, k);
-    }
-
-    // echo RAM: 0xe000-0xfdff (pages 0xe0-0xfd)
-    // Mirrors 0xc000-0xddff (bank 0 + current switchable bank)
-    for (k = 0xe0; k <= 0xef; k++) {
-        // Echo of 0xc000-0xcfff (bank 0)
-        u8 *page = &dmg->main_ram[(k - 0xe0) << 8];
-        dmg->read_page[k] = PAGE_BIAS(page, k);
-        dmg->write_page[k] = PAGE_BIAS(page, k);
-    }
-    for (k = 0xf0; k <= 0xfd; k++) {
-        // Echo of 0xd000-0xddff (switchable bank)
-        u8 *page = &dmg->main_ram[0x1000 + ((k - 0xf0) << 8)];
-        dmg->read_page[k] = PAGE_BIAS(page, k);
-        dmg->write_page[k] = PAGE_BIAS(page, k);
-    }
-
-    // pages 0xfe and 0xff stay NULL for special handling
+    // echo of 0xc000-0xcfff. the rest of echo (0xf000-0xfdff) shares
+    // page 0xf with OAM/IO/HRAM and goes through the slow path
+    dmg->read_page[0xe] = PAGE_BIAS(dmg->main_ram, 0xe);
+    dmg->write_page[0xe] = dmg->read_page[0xe];
 }
 
 void dmg_update_rom_bank(struct dmg *dmg, int bank)
 {
-    int k;
     u8 *biased;
 
     if (dmg->current_rom_bank == bank) {
@@ -220,13 +192,11 @@ void dmg_update_rom_bank(struct dmg *dmg, int bank)
     }
     dmg->current_rom_bank = bank;
 
-    biased = PAGE_BIAS(&dmg->rom->data[bank * 0x4000], 0x40);
-    for (k = 0x40; k <= 0x7f; k += 4) {
-        dmg->read_page[k] = biased;
-        dmg->read_page[k + 1] = biased;
-        dmg->read_page[k + 2] = biased;
-        dmg->read_page[k + 3] = biased;
-    }
+    biased = PAGE_BIAS(&dmg->rom->data[bank * 0x4000], 4);
+    dmg->read_page[4] = biased;
+    dmg->read_page[5] = biased;
+    dmg->read_page[6] = biased;
+    dmg->read_page[7] = biased;
 
     // Notify JIT of bank switch
     if (dmg->rom_bank_switch_hook) {
@@ -236,15 +206,12 @@ void dmg_update_rom_bank(struct dmg *dmg, int bank)
 
 void dmg_update_ram_bank(struct dmg *dmg, u8 *ram_base)
 {
-    u8 *biased = ram_base ? PAGE_BIAS(ram_base, 0xa0) : NULL;
-    int k;
+    u8 *biased = ram_base ? PAGE_BIAS(ram_base, 0xa) : NULL;
 
-    for (k = 0xa0; k <= 0xbf; k += 2) {
-        dmg->read_page[k] = biased;
-        dmg->write_page[k] = biased;
-        dmg->read_page[k + 1] = biased;
-        dmg->write_page[k + 1] = biased;
-    }
+    dmg->read_page[0xa] = biased;
+    dmg->write_page[0xa] = biased;
+    dmg->read_page[0xb] = biased;
+    dmg->write_page[0xb] = biased;
 }
 
 static void dmg_request_interrupt(struct dmg *dmg, int nr)
@@ -540,6 +507,12 @@ void dmg_speed_changed(struct dmg *dmg)
 
 u8 dmg_read_slow(struct dmg *dmg, u16 address)
 {
+    // echo RAM 0xf000-0xfdff shares page 0xf with OAM/IO, so it lands
+    // here; forward to the mirrored WRAM address
+    if (address >= 0xe000 && address < 0xfe00) {
+        return dmg_read(dmg, address - 0x2000);
+    }
+
     if (address == REG_LY) {
         if (!(lcd_read(dmg->lcd, REG_LCDC) & LCDC_ENABLE)) {
             return 0;
@@ -645,7 +618,7 @@ u8 dmg_read(void *_dmg, u16 address)
 {
     u8 val;
     struct dmg *dmg = (struct dmg *) _dmg;
-    u8 *page = dmg->read_page[address >> 8];
+    u8 *page = dmg->read_page[address >> 12];
     if (page) {
         // entries are biased, index with the sign-extended address
         val = page[(s16) address];
@@ -665,18 +638,22 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
 
     // pages holding compiled code have their fast write mapping removed
     if (address >= 0x8000) {
-        u8 pidx = (u8) ((address >> 8) - 0x80);
+        u8 pidx = (u8) ((address >> 12) - 8);
         u8 *saved = dmg->saved_write_page[pidx];
 
         // a write that leaves the byte unchanged can't invalidate anything
         // the compiler derived from it
         if (cache_upper_range_hit(address)
                 && (!saved || saved[(s16) address] != data)) {
-            // self-modifying code - drop this page's compiled blocks
+            // self-modifying code - drop this 256B page's compiled blocks
             cache_invalidate_upper_page((u8) (address >> 8));
             if (saved) {
-                dmg->write_page[address >> 8] = saved;
-                dmg->saved_write_page[pidx] = NULL;
+                // fast writes come back only once the whole 4K page is
+                // free of compiled code
+                if (!cache_upper_4k_has_code(address)) {
+                    dmg->write_page[address >> 12] = saved;
+                    dmg->saved_write_page[pidx] = NULL;
+                }
                 saved[(s16) address] = data;
                 return;
             }
@@ -686,6 +663,13 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
             saved[(s16) address] = data;
             return;
         }
+    }
+
+    // echo RAM 0xf000-0xfdff shares page 0xf with OAM/IO; forward to the
+    // mirrored WRAM address
+    if (address >= 0xe000 && address < 0xfe00) {
+        dmg_write(dmg, address - 0x2000, data);
+        return;
     }
 
     // external RAM not enabled, or RTC register selected
@@ -732,7 +716,7 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
     // OAM DMA
     if (address == 0xff46) {
         u16 src = data << 8;
-        u8 *page = dmg->read_page[data];
+        u8 *page = dmg->read_page[data >> 4];
         if (page) {
             memcpy(dmg->lcd->oam, page + (s16) src, 0xa0);
         } else {
@@ -855,7 +839,7 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
 void dmg_write(void *_dmg, u16 address, u8 data)
 {
     struct dmg *dmg = (struct dmg *) _dmg;
-    u8 *page = dmg->write_page[address >> 8];
+    u8 *page = dmg->write_page[address >> 12];
     if (page) {
         // entries are biased, index with the sign-extended address
         page[(s16) address] = data;

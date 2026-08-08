@@ -25,8 +25,8 @@ struct dmg;
 #define JIT_CTX_ADDR       0x000500  // 68k-side jit_context (A4)
                                      // (0x60 bytes - full at JIT_CTX_MBC_WRITE)
 #define FRAME_SHADOW_ADDR  0x000560  // big-endian copy of dmg->frame_cycles
-#define READ_TABLE_ADDR    0x000600  // 68k-side page tables (A5/A6)
-#define WRITE_TABLE_ADDR   0x000a00
+#define READ_TABLE_ADDR    0x000600  // 68k-side page tables (A5/A6),
+#define WRITE_TABLE_ADDR   0x000a00  // 16 4KB pages = 64 bytes each
 #define STACK_TOP          0x003000  // 68k stack, grows down
 #define DMG_ADDR           0x008000  // struct dmg (holds wram/vram/hram)
 #define MBC_ADDR           0x020000  // struct mbc (holds cart ram)

@@ -284,9 +284,9 @@ int jit_clear_all_blocks(void)
 
   // every block is gone, so restore fast writes for pages that were
   // unmapped because they held compiled code
-  for (k = 0; k < 0x80; k++) {
+  for (k = 0; k < 8; k++) {
     if (dmg->saved_write_page[k]) {
-      dmg->write_page[k + 0x80] = dmg->saved_write_page[k];
+      dmg->write_page[k + 8] = dmg->saved_write_page[k];
       dmg->saved_write_page[k] = NULL;
     }
   }
@@ -386,13 +386,11 @@ static void update_profiling_status_bar(u32 frames_now)
 {
   char buf[64];
   static u32 last_frames_rendered = 0;
-  static u32 last_bankswitch = 0;
-  extern int bankswitch;
 
   u32 now = TickCount();
   u32 elapsed = now - last_report_tick;
   u32 frames_delta;
-  u32 fps, bss;
+  u32 fps;
 
   if (elapsed < 30 || last_report_tick == 0) {
     if (last_report_tick == 0) {
@@ -404,9 +402,7 @@ static void update_profiling_status_bar(u32 frames_now)
 
   frames_delta = frames_now - last_frames_rendered;
   fps = (frames_delta * 60) / elapsed;
-  bss = ((bankswitch - last_bankswitch) * 60) / elapsed;
   last_frames_rendered = frames_now;
-  last_bankswitch = bankswitch;
   last_report_tick = now;
 
 #ifdef GB6_PROFILING
@@ -458,7 +454,7 @@ static void update_profiling_status_bar(u32 frames_now)
   }
 #endif
 
-  sprintf(buf, "%lu FPS %lu BS", fps, bss);
+  sprintf(buf, "%lu FPS", fps);
   set_status_bar(buf);
 }
 
@@ -544,9 +540,9 @@ int jit_run(struct dmg *dmg)
       u32 last = block->end_address - 1;
 
       cache_mark_upper_range(pc, last);
-      for (p = (pc >> 8); p <= (int) (last >> 8); p++) {
-        if (dmg->write_page[p] && !dmg->saved_write_page[p - 0x80]) {
-          dmg->saved_write_page[p - 0x80] = dmg->write_page[p];
+      for (p = (pc >> 12); p <= (int) (last >> 12); p++) {
+        if (dmg->write_page[p] && !dmg->saved_write_page[p - 8]) {
+          dmg->saved_write_page[p - 8] = dmg->write_page[p];
           dmg->write_page[p] = 0;
         }
       }
