@@ -462,6 +462,8 @@ static void StartEmulation(void)
   int width, height;
   Rect bounds;
 
+  SetCursor(*GetCursor(watchCursor));
+
   // set up dimensions based on scale
   if (screen_scale == 1) {
     width = 160;
@@ -543,6 +545,7 @@ static void StartEmulation(void)
 #endif
 
   UpdateMenuItems();
+  SetCursor(&qd.arrow);
 }
 
 static void CheckPendingTasks(void)
@@ -706,6 +709,7 @@ int LoadRom(Str63 fileName, short vRefNum)
   err = FSOpen(fileName, vRefNum, &fileNo);
   
   if(err != noErr) {
+    SetCursor(&qd.arrow);
     return false;
   }
 
