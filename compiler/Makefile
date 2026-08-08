@@ -6,8 +6,8 @@ MUSASHI_DIR = musashi
 MUSASHI_OBJS = $(MUSASHI_DIR)/m68kcpu.o $(MUSASHI_DIR)/m68kops.o $(MUSASHI_DIR)/softfloat/softfloat.o
 
 # Compiler library
-COMPILER_SRCS = compiler.c emitters.c branches.c flags.c interop.c cb_prefix.c reg_loads.c alu.c stack.c instructions.c timing.c
-COMPILER_OBJS = compiler.o emitters.o branches.o flags.o interop.o cb_prefix.o reg_loads.o alu.o stack.o instructions.o timing.o
+COMPILER_SRCS = compiler.c emitters.c branches.c flags.c interop.c cb_prefix.c reg_loads.c mem_loads.c alu.c stack.c instructions.c timing.c
+COMPILER_OBJS = compiler.o emitters.o branches.o flags.o interop.o cb_prefix.o reg_loads.o mem_loads.o alu.o stack.o instructions.o timing.o
 
 # Test binary
 TEST_BIN = tests/test_compiler

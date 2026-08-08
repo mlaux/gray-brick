@@ -636,13 +636,11 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
         return;
     }
 
-    // pages holding compiled code have their fast write mapping removed
+    // pages with compiled code have their fast write mapping removed
     if (address >= 0x8000) {
         u8 pidx = (u8) ((address >> 12) - 8);
         u8 *saved = dmg->saved_write_page[pidx];
 
-        // a write that leaves the byte unchanged can't invalidate anything
-        // the compiler derived from it
         if (cache_upper_range_hit(address)
                 && (!saved || saved[(s16) address] != data)) {
             // self-modifying code - drop this 256B page's compiled blocks

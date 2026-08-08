@@ -12,7 +12,7 @@ MUSASHI_OBJS = $(MUSASHI_DIR)/m68kcpu.o $(MUSASHI_DIR)/m68kops.o \
 SRC_NAMES = dmg lcd lcd_cgb mbc cgb audio rom rom_patches
 SRC_OBJS = $(SRC_NAMES:%=$(BUILD)/src_%.o)
 
-COMP_NAMES = compiler emitters branches flags interop cb_prefix reg_loads \
+COMP_NAMES = compiler emitters branches flags interop cb_prefix reg_loads mem_loads \
              alu stack instructions timing
 COMP_OBJS = $(COMP_NAMES:%=$(BUILD)/comp_%.o)
 

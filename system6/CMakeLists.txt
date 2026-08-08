@@ -24,6 +24,7 @@ add_application("Gray Brick"
     ../compiler/flags.c
     ../compiler/cb_prefix.c
     ../compiler/reg_loads.c
+    ../compiler/mem_loads.c
     ../compiler/alu.c
     ../compiler/instructions.c
     ../compiler/stack.c
