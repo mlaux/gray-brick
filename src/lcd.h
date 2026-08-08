@@ -6,9 +6,6 @@
 #define LCD_WIDTH 160
 #define LCD_HEIGHT 144
 
-// packed buffer rows: 19 tile rows so rows can pack at scy & 7 the same
-// way columns pack at scx & 7. screen row y lives at buffer row
-// y + row_voff
 #define LCD_BUF_ROWS 152
 
 #define REG_LCD_BASE 0xff40
@@ -89,9 +86,7 @@ struct lcd {
     u8 row_scx[LCD_BUF_ROWS];
     u8 row_scx_uniform;
 
-    // scy&7 alignment of the whole frame: screen row y is packed at
-    // buffer row y + row_voff. 0 when scy changes mid-frame (bands with
-    // different offsets would collide in the buffer)
+    // scy&7 alignment of the whole frame, 0 when scy changes mid-frame
     u8 row_voff;
 
     // 1 = every line rendered, 2 = half vertical resolution

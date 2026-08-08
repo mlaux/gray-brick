@@ -22,8 +22,7 @@ void compile_page_lookup(
 ) {
     // (addr >> 12) * 4 == (addr >> 10) & 0x3c. shift immediates only go
     // up to 8, but rol.w #6 puts bits 15-12 into bits 5-2 and the mask
-    // discards the low bits rotated in above them - works on every 68k,
-    // so both codegen modes share this path
+    // removes the rotated low bits
     emit_rol_w_imm_dn(block, 6, addr_dreg);
     emit_andi_w_dn(block, addr_dreg, 0x003c);
     // movea.l (table,addr.w), dest
@@ -49,8 +48,7 @@ static void emit_c_read_call(struct code_block *block)
     emit_move_l_disp_an_dn(block, JIT_CTX_READ_CYCLES, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
 }
 
-// C-call sequence for a write-shaped function (dmg, addr, data) taken
-// from the jit_ctx slot at fn_offset - addr in D1.w, value in D0.b
+// C call sequence for a void (*)(long, word, byte) member of dmg
 static void emit_c_write_call_via(struct code_block *block, int16_t fn_offset)
 {
     emit_move_l_dn_disp_an(block, REG_68K_D_CYCLE_COUNT, JIT_CTX_READ_CYCLES, REG_68K_A_CTX);
@@ -68,7 +66,7 @@ static void emit_c_write_call(struct code_block *block)
     emit_c_write_call_via(block, JIT_CTX_WRITE);
 }
 
-// start the next entry on a 16-byte I-cache line (base is 16-aligned)
+// start the next entry on a 16-byte I-cache line, not sure if this matters
 static void pad_align16(struct code_block *block)
 {
     while (block->length & 15) {
@@ -167,8 +165,7 @@ const struct code_block *compile_emit_helpers(uint32_t base, void *hram_base)
 
     pad_align16(b);
 
-    // ROM-range write (MBC registers): no page can ever map it, so go
-    // straight to mbc_write_func
+    // ROM-range write (MBC registers): go straight to mbc_write_func
     jit_helpers.write8_mbc_a = base + b->length;
     emit_move_b_dn_dn(b, REG_68K_D_A, REG_68K_D_SCRATCH_0);
     emit_c_write_call_via(b, JIT_CTX_MBC_WRITE);

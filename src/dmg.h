@@ -32,33 +32,27 @@ struct audio;
 #define CYCLES_PER_LINE 456
 #define CYCLES_LINE_144 (CYCLES_PER_FRAME - (10 * CYCLES_PER_LINE))
 
-// deadline table sources. event_deadline holds the frame-relative PPU cycle
-// of each source's next firing, EV_NONE when unarmed. EV_WRAP is always
-// armed so a minimum deadline always exists; it stays last so simultaneous
-// events resolve to the real source first
 enum {
     EV_STAT,
     EV_VBLANK,
     EV_RENDER,
     EV_TIMA,
     EV_SERIAL,
-    EV_WRAP,
+    EV_WRAP, // always active to provide a fallback
     EV_COUNT
 };
 
 #define EV_NONE 0xffffffff
 
-// page table entries are biased so that entry + (s16)gb_address yields the
-// host pointer. the JIT indexes pages with (An,Dn.w) addressing, which sign
-// extends the full GB address, so pages >= 8 get 0x10000 added to cancel
-// the sign extension. C code must index entries as page[(s16)address]
+// (An,Dn.w) sign extends the GB address
+// pages >= 8 get 0x10000 added to cancel the sign extension
 #define PAGE_BIAS(ptr, page) \
     ((u8 *)(ptr) - (((u32)(page)) << 12) + (((page) >= 8) ? 0x10000 : 0))
 
 struct dmg {
     u8 zero_page[0x80];
     // page table for fast memory access (16 pages of 4KB each).
-    // page 0xf is never mapped: 0xf000-0xfdff echo, OAM, I/O and HRAM
+    // page 0xf is never mapped - 0xf000-0xfdff echo, OAM, I/O and HRAM
     // all take the slow path (HRAM is mostly resolved at compile time)
     u8 *read_page[16];
     u8 *write_page[16];
@@ -71,8 +65,9 @@ struct dmg {
     struct audio *audio;
     struct cgb_state *cgb;  // NULL in DMG mode
 
-    u8 main_ram[0x8000];   // 32KB WRAM for CGB (8 x 4KB banks), only 8KB used in DMG
-    u8 video_ram[0x4000];  // 16KB VRAM for CGB (2 x 8KB banks), only 8KB used in DMG
+    u8 *main_ram;
+    u8 *video_ram;
+
     u32 frames_rendered;
     int joypad_selected;
     int action_selected;

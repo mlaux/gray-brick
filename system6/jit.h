@@ -6,7 +6,7 @@
 
 #define HALT_SENTINEL 0xffffffff
 
-// runtime context for JIT, must match JIT_CTX offsets in compiler.h
+// runtime context for JIT - TODO remove all the padding from fields i removed
 typedef struct {
     /*  0 */ void *dmg;
     /*  4 */ void *read_func;

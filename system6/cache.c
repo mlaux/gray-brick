@@ -15,9 +15,7 @@ static void ***banked_cache;
 static u8 upper_page_lo[0x80];
 static u8 upper_page_hi[0x80];
 
-// how many pages back the earliest block covering this page starts- blocks
-// are cached by start address, so invalidating a page has to reach back far
-// enough to catch blocks that spilled into it
+// how many pages back the earliest block covering this page starts
 static u8 upper_page_reach[0x80];
 
 // Look up cached code pointer for given PC and bank

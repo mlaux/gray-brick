@@ -371,7 +371,7 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
             break;
 
         case 0x10: // stop - CGB speed switch or end of execution
-            src_ptr++;  // skip the padding byte (0x00) after STOP opcode
+            src_ptr++; // skip the padding byte (0x00) after STOP opcode
             compile_call_stop(block, src_address + src_ptr);
             done = 1;
             break;

@@ -18,10 +18,7 @@ void compile_ld_sp_imm16(
     emit_move_w_dn(block, REG_68K_D_SCRATCH_1, gb_sp);
     emit_move_w_dn_disp_an(block, REG_68K_D_SCRATCH_1, JIT_CTX_GB_SP, REG_68K_A_CTX);
 
-    // compile-time WRAM/HRAM detection. stacks less than 2 bytes above
-    // the bottom of a region ($c000/$c001, $ff80/$ff81) stay in slow
-    // mode: the first push writes at SP-2, below the region, and a
-    // native A3 would walk out of the buffer
+    // compile-time WRAM/HRAM detection
     if (ctx && ctx->wram_base && gb_sp >= 0xc002 && gb_sp < 0xd000) {
         // WRAM bank 0 ($C000-$CFFF): always fixed, use compile-time address
         uint32_t addr = (uint32_t) ctx->wram_base + (gb_sp - 0xc000);
@@ -29,9 +26,8 @@ void compile_ld_sp_imm16(
         emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 1);
         emit_move_l_dn_disp_an(block, REG_68K_D_SCRATCH_1, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
     } else if (ctx && ctx->wram_base && gb_sp >= 0xd000 && gb_sp <= 0xe000) {
-        // Switchable WRAM ($D000-$DFFF): use page table for correct bank.
-        // resolve through the page of SP-1
-        // SP = $e000 (top-of-WRAM stack) then resolves through page $d
+        // Switchable WRAM ($D000-$DFFF): use page table for correct bank
+        // SP = $e000 (top-of-WRAM stack) needs to use page $d
         uint8_t page = (gb_sp - 1) >> 12;
         // D0 = page * 4 (index into page table)
         emit_move_w_dn(block, REG_68K_D_SCRATCH_0, (int16_t)(page * 4));

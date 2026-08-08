@@ -21,6 +21,11 @@
 #define INT_JOYPAD  (1 << 4)
 #define NUM_INTERRUPTS 5
 
+// 32KB WRAM for CGB (8 x 4KB banks), only 8KB used in DMG
+static u8 dmg_main_ram[0x8000];
+// 16KB VRAM for CGB (2 x 8KB banks), only 8KB used in DMG
+static u8 dmg_vram[0x4000];
+
 // TAC clock select -> cycles per TIMA increment
 static const u16 timer_divisors[] = { 1024, 16, 64, 256 };
 
@@ -121,6 +126,8 @@ static void raster_record(
 
 void dmg_new(struct dmg *dmg, struct rom *rom, struct lcd *lcd)
 {
+    dmg->main_ram = dmg_main_ram;
+    dmg->video_ram = dmg_vram;
     dmg->rom = rom;
     dmg->lcd = lcd;
 
@@ -507,8 +514,7 @@ void dmg_speed_changed(struct dmg *dmg)
 
 u8 dmg_read_slow(struct dmg *dmg, u16 address)
 {
-    // echo RAM 0xf000-0xfdff shares page 0xf with OAM/IO, so it lands
-    // here; forward to the mirrored WRAM address
+    // echo RAM (part of f000 page)
     if (address >= 0xe000 && address < 0xfe00) {
         return dmg_read(dmg, address - 0x2000);
     }
@@ -663,8 +669,7 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
         }
     }
 
-    // echo RAM 0xf000-0xfdff shares page 0xf with OAM/IO; forward to the
-    // mirrored WRAM address
+    // f000-ffdf hit the slow path
     if (address >= 0xe000 && address < 0xfe00) {
         dmg_write(dmg, address - 0x2000, data);
         return;
@@ -968,9 +973,8 @@ static void render_frame(struct dmg *dmg)
         raster_live_regs(lcd, &regs);
     }
 
-    // pack rows at scy & 7 so fine vertical scrolls only move the blit
-    // offset. bands with different scy would collide in the buffer, so
-    // those frames pack at 0 like before
+    // start the rows at scy & 7 so fine vertical scrolls only move the blit
+    // offset, only if the whole screen has the same SCY
     voff = regs.scy & 7;
     for (k = 0; replay && k < lcd->raster_count; k++) {
         const struct raster_log_entry *e = &lcd->raster_log[k];

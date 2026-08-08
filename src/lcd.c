@@ -186,8 +186,7 @@ void lcd_diff_rows(struct lcd *lcd, int cgb)
         return;
     }
 
-    // the whole frame moved in the buffer: every row blits from a new
-    // source position, content diffs below still gate the converts
+    // the whole frame moved in the buffer
     u8 voff_dirty = 0;
     if (voff != prev_voff) {
         prev_voff = voff;
