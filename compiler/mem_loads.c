@@ -32,9 +32,9 @@ static void compile_ldh_a_u8_direct(
     struct compile_ctx *ctx,
     uint8_t addr
 ) {
-    if (addr == 0x00 && ctx && ctx->joyp_base) {
+    if (addr == 0x00 && ctx && ctx->joyp_ptr) {
         emit_move_b_abs32_dn(block,
-                (uint32_t) (uintptr_t) ctx->joyp_base, REG_68K_D_A);
+                (uint32_t) (uintptr_t) ctx->joyp_ptr, REG_68K_D_A);
         return;
     }
     if (addr >= 0x80) {
@@ -211,9 +211,9 @@ void compile_ld_a_u16(
     if (fold) {
         uint8_t val = ctx->read(ctx->dmg, addr);
         emit_moveq_dn(block, REG_68K_D_A, val);
-    } else if (addr == 0xff00 && ctx->joyp_base) {
+    } else if (addr == 0xff00 && ctx->joyp_ptr) {
         emit_move_b_abs32_dn(block,
-                (uint32_t) (uintptr_t) ctx->joyp_base,
+                (uint32_t) (uintptr_t) ctx->joyp_ptr,
                 REG_68K_D_A);
     } else if (addr >= 0xff80 && ctx->hram_base) {
         // HRAM/IE: fixed address

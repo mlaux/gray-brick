@@ -687,7 +687,6 @@ static void usage(void)
         "  --insn-log FILE      log every executed 68k instruction (- for stdout)\n"
         "  --no-stat-ints       drop STAT events from the scheduler (Mac menu toggle)\n"
         "  --chain              chain cached blocks like the Mac dispatcher\n"
-        "  --cpu 68000|68020    codegen + emulated cpu (default 68020)\n"
         "  --trace              per-dispatch state line to stderr\n"
         "  --status             print status bar messages to stderr\n");
 }
@@ -703,20 +702,8 @@ int main(int argc, char *argv[])
     char title[17];
     int k;
 
-    compiler_68020 = 1;
-
     for (k = 1; k < argc; k++) {
-        if (!strcmp(argv[k], "--cpu") && k + 1 < argc) {
-            k++;
-            if (!strcmp(argv[k], "68000")) {
-                compiler_68020 = 0;
-            } else if (!strcmp(argv[k], "68020")) {
-                compiler_68020 = 1;
-            } else {
-                usage();
-                return 1;
-            }
-        } else if (!strcmp(argv[k], "--frames") && k + 1 < argc) {
+        if (!strcmp(argv[k], "--frames") && k + 1 < argc) {
             max_frames = atol(argv[++k]);
         } else if (!strcmp(argv[k], "--until-serial") && k + 1 < argc) {
             until_serial = argv[++k];
@@ -841,10 +828,9 @@ int main(int argc, char *argv[])
 
     host_jit_init(dmg);
 
-    fprintf(stderr, "gb6run: \"%s\" mbc $%02x%s, %s%s\n",
+    fprintf(stderr, "gb6run: \"%s\" mbc $%02x%s, %s\n",
             title, rom.data[0x147], dmg->cgb ? ", cgb mode" : "",
-            compiler_68020 ? "68020" : "68000",
-            host_chain ? ", chain" : "");
+            host_chain ? "chain" : "");
 
     while (!jit_halted) {
         if (!host_jit_run()) {

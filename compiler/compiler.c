@@ -18,7 +18,6 @@
 // helper for reading GB memory during compilation
 #define READ_BYTE(off) (ctx->read(ctx->dmg, src_address + (off)))
 
-int compiler_68020;
 uint16_t m68k_offsets[256];
 
 int pending_cycles;
@@ -80,11 +79,6 @@ static void scan_branch_targets(
         }
         off = next;
     }
-}
-
-void compiler_init(void)
-{
-    // nothing for now
 }
 
 // Reconstruct BC from split format (0x00BB00CC) into D1.w as 0xBBCC
@@ -670,14 +664,6 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
         // the fused register LY wait is the biggest expected sequence
         if (emitted > 176) {
             fprintf(stderr, "warning: instruction %02x emitted %zu bytes\n", op, emitted);
-        }
-
-        if (ctx->single_instruction && !done) {
-            flush_cycles(block);
-            emit_moveq_dn(block, REG_68K_D_NEXT_PC, 0);
-            emit_move_w_dn(block, REG_68K_D_NEXT_PC, src_address + src_ptr);
-            emit_block_exit(block, (uint16_t) (src_address + src_ptr));
-            break;
         }
     }
 

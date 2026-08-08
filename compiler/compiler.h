@@ -18,8 +18,8 @@
 // A2 = HL (contiguous: 0xHHLL)
 // A3 = SP
 // A4 = runtime context pointer
-// A5 = read page table base (dmg->read_page, 16 4KB pages)
-// A6 = write page table base (dmg->write_page)
+// A5 = read page table base (dmg + 0x80)
+// A6 = write page table base (dmg + 0x480)
 // A7 = 68k stack pointer
 
 #define REG_68K_D_SCRATCH_0 0
@@ -119,33 +119,22 @@ typedef void *(*alloc_fn)(size_t size);
 struct compile_ctx {
     void *dmg;                  // for memory reads
     dmg_read_fn read;
-    int single_instruction;     // if set, compile only one instruction then dispatch
     cache_store_fn cache_store; // NULL in tests, registers mid-block entries
     alloc_fn alloc;             // NULL uses malloc, otherwise arena_alloc
     uint8_t current_bank;       // current ROM bank for cache_store calls
     void *wram_base;            // dmg->main_ram for compile-time WRAM SP detection
     void *hram_base;
-    void *joyp_base;            // &dmg->joyp, the maintained FF00 shadow
+    void *joyp_ptr;             // &dmg->joyp, the maintained FF00 shadow
     uint16_t bank_reg_lo;       // MBC ROM-bank select range for the
     uint16_t bank_reg_hi;       // same-bank write skip, both 0 = off
 };
-
-void compiler_init(void);
 
 struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx);
 
 // Free a compiled block
 void block_free(struct code_block *block);
 
-// Emit helpers (exposed for testing)
-void emit_byte(struct code_block *block, uint8_t byte);
-void emit_word(struct code_block *block, uint16_t word);
-
 void compile_join_bc(struct code_block *block, int dreg);
 void compile_join_de(struct code_block *block, int dreg);
-
-// non-zero when the host CPU is a 68020 or better, which allows scaled
-// index addressing in the emitted page table lookups
-extern int compiler_68020;
 
 #endif

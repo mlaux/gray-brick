@@ -178,8 +178,7 @@ static void insn_hook(unsigned int pc)
 {
     char dis[128];
 
-    m68k_disassemble(dis, pc, compiler_68020 ? M68K_CPU_TYPE_68020
-                                             : M68K_CPU_TYPE_68000);
+    m68k_disassemble(dis, pc, M68K_CPU_TYPE_68000);
     fprintf(host_insn_log, "%06x %6d  %s\n",
             pc & 0xffffff, m68k_cycles_run(), dis);
 }
@@ -557,8 +556,6 @@ void host_jit_init(struct dmg *d)
 
     dmg = d;
 
-    compiler_init();
-
     compile_ctx.dmg = dmg;
     compile_ctx.read = dmg_read;
     compile_ctx.cache_store = cache_store;
@@ -571,7 +568,7 @@ void host_jit_init(struct dmg *d)
         (void *) (uintptr_t) (DMG_ADDR + offsetof(struct dmg, main_ram));
     compile_ctx.hram_base =
         (void *) (uintptr_t) (DMG_ADDR + offsetof(struct dmg, zero_page));
-    compile_ctx.joyp_base =
+    compile_ctx.joyp_ptr =
         (void *) (uintptr_t) (DMG_ADDR + offsetof(struct dmg, joyp));
 
     // ROM-bank select range for the compiler's same-bank write skip,
@@ -633,9 +630,6 @@ void host_jit_init(struct dmg *d)
     jit_ctx.wake_limit = CYCLES_PER_FRAME;
 
     // 68k-side jit_ctx
-    // NOT opaque: emitted ldh fast paths dereference this and index
-    // zero_page as the first struct member, so it must be the 68k-space
-    // address of the dmg struct (the gate itself uses the host pointer)
     ctx_w32(JIT_CTX_DMG, DMG_ADDR);
     ctx_w32(JIT_CTX_READ, gate_stub(GATE_READ));
     ctx_w32(JIT_CTX_WRITE, gate_stub(GATE_WRITE));
@@ -657,18 +651,16 @@ void host_jit_init(struct dmg *d)
     dmg->rom_bank_switch_hook = rom_bank_hook;
 
     m68k_init();
-    m68k_set_cpu_type(compiler_68020 ? M68K_CPU_TYPE_68020
-                                     : M68K_CPU_TYPE_68000);
+    m68k_set_cpu_type(M68K_CPU_TYPE_68000);
     m68k_pulse_reset();
 
     if (host_insn_log) {
         fprintf(host_insn_log,
-                "# gb6run insn log, cpu=%s\n"
+                "# gb6run insn log\n"
                 "# return-stub=%06x exc-stub=%06x chain-stub=%06x "
                 "gate-stubs=%06x+16*k\n"
                 "# jit-ctx=%06x arena=%06x..%06x\n"
                 "# columns: pc, musashi cycles this timeslice, disasm\n",
-                compiler_68020 ? "68020" : "68000",
                 RETURN_STUB_ADDR, EXC_STUB_ADDR, CHAIN_STUB_ADDR,
                 GATE_STUB_BASE, JIT_CTX_ADDR, ARENA_ADDR, ARENA_END);
         m68k_set_instr_hook_callback(insn_hook);

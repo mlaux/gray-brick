@@ -163,12 +163,6 @@ void jit_init(struct dmg *dmg)
   long cpu_type;
 
   set_status_bar("Loading...");
-  compiler_init();
-
-  // scaled index addressing needs a 68020 or better
-  compiler_68020 = Gestalt(gestaltProcessorType, &cpu_type) == noErr
-      && cpu_type >= gestalt68020;
-
   if (!arena_init()) {
     set_status_bar("Arena alloc fail");
     jit_halted = 1;
@@ -181,11 +175,9 @@ void jit_init(struct dmg *dmg)
   compile_ctx.alloc = arena_alloc;
   compile_ctx.wram_base = dmg->main_ram;
   compile_ctx.hram_base = dmg->zero_page;
-  compile_ctx.joyp_base = &dmg->joyp;
+  compile_ctx.joyp_ptr = &dmg->joyp;
 
-  // ROM-bank select range for the compiler's same-bank write skip.
-  // MBC5's 0x3000 reg carries bank bit 8, which the u8 shadow can't see,
-  // and MBC2 decodes by address bit 8 - both stay on the generic path
+  // ROM-bank select range for the compiler's same-bank write skip (MBC1 and 3 only)
   compile_ctx.bank_reg_lo = 0;
   compile_ctx.bank_reg_hi = 0;
   if (dmg->rom->mbc) {

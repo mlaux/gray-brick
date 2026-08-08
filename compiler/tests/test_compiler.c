@@ -549,33 +549,15 @@ int main(int argc, char *argv[])
     (void)argv;
 
     printf("Initializing...\n");
-    compiler_init();
     m68k_init();
+    m68k_set_cpu_type(M68K_CPU_TYPE_68000);
 
     // Initialize test compile context
     test_ctx.dmg = NULL;
     test_ctx.read = test_read;
 
-    // run the whole suite for both CPU variants: 68000 uses the shift-based
-    // page lookup, 68020 uses scaled index addressing
-    printf("\n======== 68000 ========\n");
-    m68k_set_cpu_type(M68K_CPU_TYPE_68000);
-    compiler_68020 = 0;
-    // record helper entry addresses for compile_block; the bytes are
-    // (re-)copied into memory by setup_runtime_stubs
-    compile_emit_helpers(HELPER_BASE, NULL);
-
-    register_load_tests();
-    register_alu_tests();
-    register_branch_tests();
-    register_cb_tests();
-    register_stack_tests();
-    register_timing_tests();
-    register_cgb_tests();
-
-    printf("\n======== 68020 ========\n");
-    m68k_set_cpu_type(M68K_CPU_TYPE_68020);
-    compiler_68020 = 1;
+    // record helper entry addresses for compile_block, the bytes are
+    // copied into memory by setup_runtime_stubs
     compile_emit_helpers(HELPER_BASE, NULL);
 
     register_load_tests();
