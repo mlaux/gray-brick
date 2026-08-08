@@ -16,19 +16,20 @@ static u8 tile_decode_base[256][4];
 
 // Packed pixel buffer: 4 pixels per byte, 42 bytes per row (168 pixels)
 // Renders 21 tiles starting at tile-aligned position for fast path always
-static u8 pixels[42 * 144];
+static u8 pixels[42 * LCD_BUF_ROWS];
 
 // CGB attribute buffer: 1 byte per pixel, stores palette/priority
-static u8 attr_buffer[168 * 144];
+static u8 attr_buffer[168 * LCD_BUF_ROWS];
 
 // previous rendered frame for lcd_diff_rows
-static u8 prev_pixels[42 * 144];
-static u8 prev_attrs[168 * 144];
-static u8 prev_row_scx[144];
+static u8 prev_pixels[42 * LCD_BUF_ROWS];
+static u8 prev_attrs[168 * LCD_BUF_ROWS];
+static u8 prev_row_scx[LCD_BUF_ROWS];
+static u8 prev_voff;
 static int diff_valid;
 
 // 1 if bg color index is nonzero
-static u8 bg_opacity[21 * 144 + 1];
+static u8 bg_opacity[21 * LCD_BUF_ROWS + 1];
 
 // LUT for horizontal flip: reverses bit order in a byte
 u8 hflip_lut[256];
@@ -139,7 +140,8 @@ void lcd_new(struct lcd *lcd)
     lcd->attrs = attr_buffer;
     lcd->row_scx_uniform = 1;
     lcd->row_stride = 1;
-    memset(lcd->row_dirty, ROW_DIRTY_CONTENT | ROW_DIRTY_OFFSET, 144);
+    lcd->row_voff = 0;
+    memset(lcd->row_dirty, ROW_DIRTY_CONTENT | ROW_DIRTY_OFFSET, LCD_BUF_ROWS);
     lcd->frame_dirty = ROW_DIRTY_CONTENT | ROW_DIRTY_OFFSET;
     diff_valid = 0;
     // Initialize CGB palette dirty flags to all-dirty so first frame updates everything
@@ -168,25 +170,37 @@ void lcd_diff_rows(struct lcd *lcd, int cgb)
 {
     u8 dirty_all = 0;
     int stride = lcd->row_stride;
+    int voff = lcd->row_voff;
     int y;
 
     if (!diff_valid) {
         diff_valid = 1;
-        memcpy(prev_pixels, lcd->pixels, 42 * 144);
-        memcpy(prev_row_scx, lcd->row_scx, 144);
+        prev_voff = voff;
+        memcpy(prev_pixels, lcd->pixels, 42 * LCD_BUF_ROWS);
+        memcpy(prev_row_scx, lcd->row_scx, LCD_BUF_ROWS);
         if (cgb) {
-            memcpy(prev_attrs, lcd->attrs, 168 * 144);
+            memcpy(prev_attrs, lcd->attrs, 168 * LCD_BUF_ROWS);
         }
-        memset(lcd->row_dirty, ROW_DIRTY_CONTENT | ROW_DIRTY_OFFSET, 144);
+        memset(lcd->row_dirty, ROW_DIRTY_CONTENT | ROW_DIRTY_OFFSET, LCD_BUF_ROWS);
         lcd->frame_dirty = ROW_DIRTY_CONTENT | ROW_DIRTY_OFFSET;
         return;
     }
 
-    for (y = 0; y < 144; y += stride) {
+    // the whole frame moved in the buffer: every row blits from a new
+    // source position, content diffs below still gate the converts
+    u8 voff_dirty = 0;
+    if (voff != prev_voff) {
+        prev_voff = voff;
+        voff_dirty = ROW_DIRTY_OFFSET;
+    }
+
+    memset(lcd->row_dirty, 0, LCD_BUF_ROWS);
+
+    for (y = voff; y < voff + 144; y += stride) {
         // rows are 2-byte aligned, which is fine for long access on 68k
         const u32 *row = (const u32 *) (lcd->pixels + y * 42);
         u32 *prev = (u32 *) (prev_pixels + y * 42);
-        u8 dirty = 0;
+        u8 dirty = voff_dirty;
         int k;
 
         for (k = 0; k < 10; k++) {
@@ -194,22 +208,22 @@ void lcd_diff_rows(struct lcd *lcd, int cgb)
                 break;
         }
         if (k < 10 || ((const u16 *) row)[20] != ((const u16 *) prev)[20]) {
-            dirty = ROW_DIRTY_CONTENT;
+            dirty |= ROW_DIRTY_CONTENT;
             memcpy(prev, row, 42);
         }
         if (cgb) {
             const u32 *arow = (const u32 *) (lcd->attrs + y * 168);
             u32 *aprev = (u32 *) (prev_attrs + y * 168);
 
-            if (!dirty) {
+            if (!(dirty & ROW_DIRTY_CONTENT)) {
                 for (k = 0; k < 42; k++) {
                     if (arow[k] != aprev[k]) {
-                        dirty = ROW_DIRTY_CONTENT;
+                        dirty |= ROW_DIRTY_CONTENT;
                         break;
                     }
                 }
             }
-            if (dirty) {
+            if (dirty & ROW_DIRTY_CONTENT) {
                 memcpy(aprev, arow, 168);
             }
         }
@@ -446,6 +460,7 @@ void lcd_render_band(
     }
     int stride = dmg->lcd->row_stride;
     int odd = stride - 1;
+    int voff = dmg->lcd->row_voff;
     int sy;
 
     // before window: render all 21 BG tiles
@@ -456,8 +471,8 @@ void lcd_render_band(
             vram + bg_map_off + (bg_y >> 3) * 32,
             vram + tile_base_off + (bg_y & 7) * 2,
             tile_decode_packed,
-            out + sy * 42,
-            bg_opacity + sy * 21,
+            out + (sy + voff) * 42,
+            bg_opacity + (sy + voff) * 21,
             (scx >> 3) & 31,
             21,
             unsigned_mode);
@@ -465,8 +480,8 @@ void lcd_render_band(
 
     // lines with window
     for (sy = sy_limit; sy < sy_end; sy++) {
-        u8 *row = out + sy * 42;
-        u8 *opac = bg_opacity + sy * 21;
+        u8 *row = out + (sy + voff) * 42;
+        u8 *opac = bg_opacity + (sy + voff) * 21;
         int win_y = dmg->lcd->window_line++;
 
         if (sy & odd) {
@@ -476,7 +491,7 @@ void lcd_render_band(
         if (wx <= 0) {
             // window covers the whole line and ignores scx
             // render its tiles aligned and row_scx places it
-            dmg->lcd->row_scx[sy] = -wx;
+            dmg->lcd->row_scx[sy + voff] = -wx;
             lcd_render_bg_tiles(
                 vram + win_map_off + (win_y >> 3) * 32,
                 vram + tile_base_off + (win_y & 7) * 2,
@@ -523,11 +538,12 @@ void lcd_render_blank_band(
 {
     u8 fill = 0x55 * (regs->bgp & 3);
     int odd = dmg->lcd->row_stride - 1;
+    int voff = dmg->lcd->row_voff;
     int sy;
 
     for (sy = (sy_start + odd) & ~odd; sy < sy_end; sy += dmg->lcd->row_stride) {
-        memset(dmg->lcd->pixels + sy * 42, fill, 42);
-        memset(bg_opacity + sy * 21, 0, 21);
+        memset(dmg->lcd->pixels + (sy + voff) * 42, fill, 42);
+        memset(bg_opacity + (sy + voff) * 21, 0, 21);
     }
 }
 
@@ -633,6 +649,7 @@ void lcd_render_objs_band(
     // sprites render at screen position + each row's buffer alignment
     const u8 *row_scx = dmg->lcd->row_scx;
     int odd = dmg->lcd->row_stride - 1;
+    int voff = dmg->lcd->row_voff;
 
     u16 sel[40];
     u8 order[40];
@@ -702,17 +719,18 @@ void lcd_render_objs_band(
             }
 
             // full-line window rows at the window offset, everything else at scx & 7
-            int pos0 = lcd_x + row_scx[row_y];
+            int buf_y = row_y + voff;
+            int pos0 = lcd_x + row_scx[buf_y];
 
             int mask8 = (data1 | data2) & clip;
             if (behind) {
-                mask8 &= obj_behind_mask(row_y, pos0);
+                mask8 &= obj_behind_mask(buf_y, pos0);
             }
             if (!mask8) {
                 continue;
             }
 
-            obj_merge_row(pixels + row_y * 42, lut, data1, data2, mask8, pos0);
+            obj_merge_row(pixels + buf_y * 42, lut, data1, data2, mask8, pos0);
         }
     }
 }

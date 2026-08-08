@@ -44,7 +44,16 @@ $(BUILD):
 -include $(ALL_OBJS:.o=.d)
 
 clean:
-	rm -rf $(BUILD) gb6run
+	rm -rf $(BUILD) gb6run test_lcd
+
+# renderer A/B tests: aligned vs legacy row placement must compose to
+# identical screens. ASan catches out-of-buffer renders
+test_lcd: test_lcd.c ../src/lcd.c ../src/lcd_cgb.c
+	$(CC) -Wall -Wextra -g -O1 -fsanitize=address -I../src -o $@ \
+		test_lcd.c ../src/lcd.c ../src/lcd_cgb.c
+
+test-lcd: test_lcd
+	./test_lcd
 
 # scoreboard: run the compat suite and diff against the committed baseline
 fetch-roms:

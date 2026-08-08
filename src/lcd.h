@@ -6,6 +6,11 @@
 #define LCD_WIDTH 160
 #define LCD_HEIGHT 144
 
+// packed buffer rows: 19 tile rows so rows can pack at scy & 7 the same
+// way columns pack at scx & 7. screen row y lives at buffer row
+// y + row_voff
+#define LCD_BUF_ROWS 152
+
 #define REG_LCD_BASE 0xff40
 
 #define REG_LCDC 0xff40
@@ -70,7 +75,7 @@ struct raster_log_entry {
 struct lcd {
     u8 oam[0xa0];
     u8 regs[0x0c];
-    u8 *pixels; // 168x144 packed buffer (42 bytes/row) for scroll offset handling
+    u8 *pixels; // 168x152 packed buffer (42 bytes/row) for scroll offset handling
     u8 *attrs;  // CGB: attribute buffer (168 bytes/row) with per-pixel palette/priority
 
     // raster write log: reg state at line 0 plus the mid-frame changes,
@@ -81,8 +86,13 @@ struct lcd {
     u8 raster_overflow;
 
     // scx&7 alignment each row of the packed buffer was rendered at
-    u8 row_scx[144];
+    u8 row_scx[LCD_BUF_ROWS];
     u8 row_scx_uniform;
+
+    // scy&7 alignment of the whole frame: screen row y is packed at
+    // buffer row y + row_voff. 0 when scy changes mid-frame (bands with
+    // different offsets would collide in the buffer)
+    u8 row_voff;
 
     // 1 = every line rendered, 2 = half vertical resolution
     u8 row_stride;
@@ -93,7 +103,7 @@ struct lcd {
 
     // what changed since the previous rendered frame (lcd_diff_rows),
     // so blitters can skip clean rows. frame_dirty ORs all rows
-    u8 row_dirty[144];
+    u8 row_dirty[LCD_BUF_ROWS];
     u8 frame_dirty;
 
     // CGB color palettes (64 bytes each = 8 palettes x 4 colors x 2 bytes RGB555)

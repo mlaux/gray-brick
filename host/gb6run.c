@@ -82,12 +82,14 @@ static u8 frame_out[160 * 144 * 3];
 static size_t extract_frame(struct lcd *l)
 {
     int cgb_mode = dmg->cgb && dmg->cgb->mode;
+    int voff = l->row_voff;
     size_t n = 0;
     int x, y;
 
     for (y = 0; y < 144; y++) {
         // half-res only fills even rows; the odd one is its dither partner
-        int sy = opt_half_res ? (y & ~1) : y;
+        // screen row y sits at buffer row y + voff
+        int sy = (opt_half_res ? (y & ~1) : y) + voff;
         const u8 *row = l->pixels + sy * 42;
         int scx_off = l->row_scx[sy];
         for (x = 0; x < 160; x++) {
@@ -107,7 +109,7 @@ static size_t extract_frame(struct lcd *l)
 
             // CGB: attr picks the palette (bit 4 = sprite), pixel value
             // indexes into it; palette ram is RGB555 little-endian
-            u8 attr = l->attrs[y * 168 + px];
+            u8 attr = l->attrs[(y + voff) * 168 + px];
             const u8 *ram = (attr & 0x10) ? l->obj_palette_ram
                                           : l->bg_palette_ram;
             int ci = ((attr & 7) * 4 + shade) * 2;
@@ -133,16 +135,17 @@ static u32 scx_stat_runs_hist[8];
 static void scx_stats_frame(struct lcd *l)
 {
     int counts[8] = { 0 };
+    int voff = l->row_voff;
     int runs = 1;
     int most = 0;
     int k;
 
-    counts[l->row_scx[0] & 7]++;
+    counts[l->row_scx[voff] & 7]++;
     for (k = 1; k < 144; k++) {
-        if (l->row_scx[k] != l->row_scx[k - 1]) {
+        if (l->row_scx[voff + k] != l->row_scx[voff + k - 1]) {
             runs++;
         }
-        counts[l->row_scx[k] & 7]++;
+        counts[l->row_scx[voff + k] & 7]++;
     }
 
     scx_stat_frames++;
@@ -197,13 +200,15 @@ static void dirty_stats_frame(struct lcd *l, size_t n)
     int y;
 
     for (y = 0; y < 144; y++) {
-        if (l->row_dirty[y]) {
+        u8 dirty = l->row_dirty[y + l->row_voff];
+
+        if (dirty) {
             dirty_rows++;
         }
-        if (l->row_dirty[y] & ROW_DIRTY_CONTENT) {
+        if (dirty & ROW_DIRTY_CONTENT) {
             content_rows++;
         }
-        if (dr_prev_valid && !l->row_dirty[y]
+        if (dr_prev_valid && !dirty
                 && memcmp(frame_out + y * row_bytes,
                           dr_prev_frame + y * row_bytes, row_bytes)) {
             fprintf(stderr, "dirty-stats: MISMATCH frame %u row %d\n",
@@ -236,7 +241,7 @@ static void dirty_stats_summary(FILE *out)
 
 // mac blitter simulation (--mac-sim): replay lcd_mac_cgb.c exactly
 static u16 ms_lut[16][4];
-static u16 ms_off[168 * 144];
+static u16 ms_off[168 * LCD_BUF_ROWS];
 static u16 ms_screen[160 * 144];
 static int ms_valid;
 static u32 ms_bad_frames, ms_bad_rows;
@@ -266,7 +271,8 @@ static void mac_sim_frame(struct lcd *l)
             l->obj_palette_dirty = 0;
         }
 
-        for (y = 0; y < 144; y++) {
+        // convert in buffer space, dirty rows only, like lcd_mac_cgb.c
+        for (y = 0; y < LCD_BUF_ROWS; y++) {
             if (!all && !(l->row_dirty[y] & ROW_DIRTY_CONTENT)) {
                 continue;
             }
@@ -280,11 +286,14 @@ static void mac_sim_frame(struct lcd *l)
         }
 
         for (y = 0; y < 144; y++) {
-            if (!all && !l->row_dirty[y]) {
+            int by = y + l->row_voff;
+
+            if (!all && !l->row_dirty[by]) {
                 continue;
             }
             for (x = 0; x < 160; x++) {
-                ms_screen[y * 160 + x] = ms_off[y * 168 + l->row_scx[y] + x];
+                ms_screen[y * 160 + x] =
+                        ms_off[by * 168 + l->row_scx[by] + x];
             }
         }
     }
@@ -293,12 +302,13 @@ static void mac_sim_frame(struct lcd *l)
     // reference: fresh conversion straight from current state, like
     // extract_frame but kept as rgb555
     for (y = 0; y < 144; y++) {
+        int by = y + l->row_voff;
         int row_bad = 0;
         for (x = 0; x < 160; x++) {
-            int px = x + l->row_scx[y];
-            int shade = (l->pixels[y * 42 + (px >> 2)]
+            int px = x + l->row_scx[by];
+            int shade = (l->pixels[by * 42 + (px >> 2)]
                     >> (6 - 2 * (px & 3))) & 3;
-            u8 attr = l->attrs[y * 168 + px];
+            u8 attr = l->attrs[by * 168 + px];
             const u8 *ram = (attr & ATTR_IS_SPRITE) ? l->obj_palette_ram
                                                     : l->bg_palette_ram;
             int ci = ((attr & 7) * 4 + shade) * 2;
@@ -311,7 +321,7 @@ static void mac_sim_frame(struct lcd *l)
                             "dirty %02x)\n",
                             host_frames_drawn, y, x,
                             ms_screen[y * 160 + x], want, attr, shade,
-                            l->row_dirty[y]);
+                            l->row_dirty[by]);
                 }
                 row_bad = 1;
             }

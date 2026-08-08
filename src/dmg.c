@@ -923,7 +923,8 @@ static void render_band_pass(
 {
     int cgb = dmg->cgb && dmg->cgb->mode;
 
-    memset(&dmg->lcd->row_scx[sy_start], regs->scx & 7, sy_end - sy_start);
+    memset(&dmg->lcd->row_scx[sy_start + dmg->lcd->row_voff],
+            regs->scx & 7, sy_end - sy_start);
 
     if (regs->lcdc & LCDC_ENABLE_BG) {
         if (cgb) {
@@ -950,7 +951,7 @@ static void render_frame(struct dmg *dmg)
 {
     struct lcd *lcd = dmg->lcd;
     struct raster_regs regs;
-    int replay, start, uniform;
+    int replay, start, uniform, voff;
     int k;
 
     // frame skip setting is 0-4
@@ -964,10 +965,28 @@ static void render_frame(struct dmg *dmg)
     if (replay) {
         regs = lcd->frame_regs;
     } else {
-        // nothing changed mid-frame (or the log overflowed) 
+        // nothing changed mid-frame (or the log overflowed)
         // render once from final register state
         raster_live_regs(lcd, &regs);
     }
+
+    // pack rows at scy & 7 so fine vertical scrolls only move the blit
+    // offset. bands with different scy would collide in the buffer, so
+    // those frames pack at 0 like before
+    voff = regs.scy & 7;
+    for (k = 0; replay && k < lcd->raster_count; k++) {
+        const struct raster_log_entry *e = &lcd->raster_log[k];
+
+        if (e->reg == REG_SCY - REG_LCD_BASE && e->value != regs.scy) {
+            voff = 0;
+            break;
+        }
+    }
+    // half-res only renders even buffer rows, keep that parity
+    if (lcd->row_stride == 2) {
+        voff &= ~1;
+    }
+    lcd->row_voff = voff;
 
     start = 0;
     for (k = 0; replay && k < lcd->raster_count; k++) {
@@ -984,7 +1003,7 @@ static void render_frame(struct dmg *dmg)
     // half-res: each rendered line covers two screen rows, so the blit
     // bands and the diff have to see one offset across the pair
     if (lcd->row_stride == 2) {
-        for (k = 0; k < 144; k += 2) {
+        for (k = voff; k < voff + 144; k += 2) {
             lcd->row_scx[k + 1] = lcd->row_scx[k];
         }
     }
@@ -993,7 +1012,7 @@ static void render_frame(struct dmg *dmg)
     // at the same scx&7
     uniform = 1;
     for (k = 1; replay && k < 144; k++) {
-        if (lcd->row_scx[k] != lcd->row_scx[0]) {
+        if (lcd->row_scx[voff + k] != lcd->row_scx[voff]) {
             uniform = 0;
             break;
         }
@@ -1005,7 +1024,7 @@ static void render_frame(struct dmg *dmg)
     if (lcd->palette_frame_dirty) {
         lcd->palette_frame_dirty = 0;
         for (k = 0; k < 144; k++) {
-            lcd->row_dirty[k] |= ROW_DIRTY_CONTENT;
+            lcd->row_dirty[voff + k] |= ROW_DIRTY_CONTENT;
         }
         lcd->frame_dirty |= ROW_DIRTY_CONTENT;
     }
