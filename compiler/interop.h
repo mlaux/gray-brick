@@ -14,17 +14,20 @@ struct jit_helpers {
     uint32_t write8_hl_a;   // loads D1 from A2, value from A
     uint32_t write8_slow;   // straight to the C call, value D0.b
     uint32_t write8_slow_a; // straight to the C call, value from A
+    uint32_t write8_mbc_a;  // ROM-range write: straight to mbc_write_func,
+                            // addr D1.w, value from A
 };
 extern struct jit_helpers jit_helpers;
 
 // upper bound on emitted helper bytes, for the harness's region alloc
-#define JIT_HELPERS_SIZE 256
+#define JIT_HELPERS_SIZE 320
 
 // emit the helpers (position-independent) into an internal block and
 // record entry addresses as base + offset
 const struct code_block *compile_emit_helpers(uint32_t base, void *hram_base);
 
 void compile_call_dmg_write_a(struct code_block *block);
+void compile_call_dmg_write_mbc_a(struct code_block *block);
 void compile_call_dmg_write_imm(struct code_block *block, uint8_t val);
 void compile_call_dmg_write_d0(struct code_block *block);  // value in D0, address in D1
 void compile_call_dmg_read_a(struct code_block *block);

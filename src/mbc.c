@@ -26,8 +26,18 @@ static int is_mbc5(int type)
   return type >= 0x19 && type <= 0x1e;
 }
 
-static int mbc1_write(struct mbc *mbc, struct dmg *dmg, u16 addr, u8 data)
+static int mbc0_write(struct dmg *dmg, u16 addr, u8 data)
 {
+  (void) dmg;
+  (void) addr;
+  (void) data;
+  return 0;
+}
+
+static int mbc1_write(struct dmg *dmg, u16 addr, u8 data)
+{
+  struct mbc *mbc = dmg->rom->mbc;
+
   if (addr >= 0 && addr <= 0x1fff) {
     int was_enabled = mbc->ram_enabled;
     mbc->ram_enabled = (data & 0xf) == 0xa;
@@ -54,8 +64,10 @@ static int mbc1_write(struct mbc *mbc, struct dmg *dmg, u16 addr, u8 data)
   return 0;
 }
 
-static int mbc2_write(struct mbc *mbc, struct dmg *dmg, u16 addr, u8 data)
+static int mbc2_write(struct dmg *dmg, u16 addr, u8 data)
 {
+  struct mbc *mbc = dmg->rom->mbc;
+
   if (addr <= 0x3fff) {
     // Bit 8 of address determines RAM enable vs ROM bank
     if ((addr & 0x0100) == 0) {
@@ -147,8 +159,10 @@ static void mbc3_latch_rtc(struct mbc *mbc)
   mbc->rtc_latched[4] = mbc->rtc_dh;
 }
 
-static int mbc3_write(struct mbc *mbc, struct dmg *dmg, u16 addr, u8 data)
+static int mbc3_write(struct dmg *dmg, u16 addr, u8 data)
 {
+  struct mbc *mbc = dmg->rom->mbc;
+
   if (addr <= 0x1fff) {
     // RAM and Timer Enable
     int was_enabled = mbc->ram_enabled;
@@ -164,6 +178,8 @@ static int mbc3_write(struct mbc *mbc, struct dmg *dmg, u16 addr, u8 data)
   }
 
   if (addr >= 0x2000 && addr <= 0x3fff) {
+    extern int bankswitch;
+    bankswitch++;
     // ROM Bank Number (7 bits)
     mbc->rom_bank = data & 0x7f;
     int use_bank = mbc->rom_bank ? mbc->rom_bank : 1;
@@ -201,8 +217,10 @@ static int mbc3_write(struct mbc *mbc, struct dmg *dmg, u16 addr, u8 data)
   return 0;
 }
 
-static int mbc5_write(struct mbc *mbc, struct dmg *dmg, u16 addr, u8 data)
+static int mbc5_write(struct dmg *dmg, u16 addr, u8 data)
 {
+  struct mbc *mbc = dmg->rom->mbc;
+
   if (addr <= 0x1fff) {
     // RAM Enable
     int was_enabled = mbc->ram_enabled;
@@ -256,6 +274,18 @@ struct mbc *mbc_new(int type)
   mbc.type = type;
   mbc.rtc_select = -1;
 
+  if (type == 0) {
+    mbc.write = mbc0_write;
+  } else if (is_mbc2(type)) {
+    mbc.write = mbc2_write;
+  } else if (is_mbc3(type)) {
+    mbc.write = mbc3_write;
+  } else if (is_mbc5(type)) {
+    mbc.write = mbc5_write;
+  } else {
+    mbc.write = mbc1_write;
+  }
+
   if (type == 3) {
     // MBC1+RAM+BATTERY
     mbc.has_battery = 1;
@@ -286,23 +316,6 @@ struct mbc *mbc_new(int type)
   }
 
   return &mbc;
-}
-
-int mbc_write(struct mbc *mbc, struct dmg *dmg, u16 addr, u8 data)
-{
-  if (mbc->type == 0) {
-    return 0;
-  }
-  if (is_mbc2(mbc->type)) {
-    return mbc2_write(mbc, dmg, addr, data);
-  }
-  if (is_mbc3(mbc->type)) {
-    return mbc3_write(mbc, dmg, addr, data);
-  }
-  if (is_mbc5(mbc->type)) {
-    return mbc5_write(mbc, dmg, addr, data);
-  }
-  return mbc1_write(mbc, dmg, addr, data);
 }
 
 int mbc_ram_read(struct mbc *mbc, u16 addr, u8 *out)

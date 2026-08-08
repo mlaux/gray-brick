@@ -659,7 +659,7 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
 {
     // ROM region writes go to MBC for bank switching
     if (address < 0x8000) {
-        mbc_write(dmg->rom->mbc, dmg, address, data);
+        dmg->rom->mbc->write(dmg, address, data);
         return;
     }
 

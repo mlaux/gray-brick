@@ -54,17 +54,23 @@ static void emit_c_read_call(struct code_block *block)
     emit_move_l_disp_an_dn(block, JIT_CTX_READ_CYCLES, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
 }
 
-// C-call sequence for dmg_write - addr in D1.w, value in D0.b
-static void emit_c_write_call(struct code_block *block)
+// C-call sequence for a write-shaped function (dmg, addr, data) taken
+// from the jit_ctx slot at fn_offset - addr in D1.w, value in D0.b
+static void emit_c_write_call_via(struct code_block *block, int16_t fn_offset)
 {
     emit_move_l_dn_disp_an(block, REG_68K_D_CYCLE_COUNT, JIT_CTX_READ_CYCLES, REG_68K_A_CTX);
     emit_push_b_dn(block, REG_68K_D_SCRATCH_0); // 2
     emit_push_w_dn(block, REG_68K_D_SCRATCH_1); // 2
     emit_push_l_disp_an(block, JIT_CTX_DMG, REG_68K_A_CTX); // 4
-    emit_movea_l_disp_an_an(block, JIT_CTX_WRITE, REG_68K_A_CTX, REG_68K_A_SCRATCH_1); // 4
+    emit_movea_l_disp_an_an(block, fn_offset, REG_68K_A_CTX, REG_68K_A_SCRATCH_1); // 4
     emit_jsr_ind_an(block, REG_68K_A_SCRATCH_1); // 2
     emit_addq_l_an(block, 7, 8); // 2
     emit_move_l_disp_an_dn(block, JIT_CTX_READ_CYCLES, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
+}
+
+static void emit_c_write_call(struct code_block *block)
+{
+    emit_c_write_call_via(block, JIT_CTX_WRITE);
 }
 
 // start the next entry on a 16-byte I-cache line (base is 16-aligned)
@@ -99,8 +105,7 @@ const struct code_block *compile_emit_helpers(uint32_t base, void *hram_base)
 
     patch_branch_b(b, unmapped);
     if (hram_base) {
-        // HRAM and the IE mirror at $ffff,
-        // bias the base by +$80 (-$10000+$80)
+        // $ffff is IE, so need to go to C
         emit_cmpi_w_imm_dn(b, 0xff80, REG_68K_D_SCRATCH_1);
         lo = b->length;
         emit_bcs_b(b, 0);
@@ -166,6 +171,15 @@ const struct code_block *compile_emit_helpers(uint32_t base, void *hram_base)
     emit_c_write_call(b);
     emit_rts(b);
 
+    pad_align16(b);
+
+    // ROM-range write (MBC registers): no page can ever map it, so go
+    // straight to mbc_write_func
+    jit_helpers.write8_mbc_a = base + b->length;
+    emit_move_b_dn_dn(b, REG_68K_D_A, REG_68K_D_SCRATCH_0);
+    emit_c_write_call_via(b, JIT_CTX_MBC_WRITE);
+    emit_rts(b);
+
     if (b->length > JIT_HELPERS_SIZE) {
         return NULL;
     }
@@ -192,6 +206,13 @@ void compile_call_dmg_write_a(struct code_block *block)
 {
     flush_cycles(block);
     emit_jsr_abs_l(block, jit_helpers.write8_a);
+}
+
+// Call mbc_write_func(dmg, addr, val) - addr in D1, val in D4 (A register)
+void compile_call_dmg_write_mbc_a(struct code_block *block)
+{
+    flush_cycles(block);
+    emit_jsr_abs_l(block, jit_helpers.write8_mbc_a);
 }
 
 // Call dmg_write(dmg, addr, val) - addr in D1, val is immediate

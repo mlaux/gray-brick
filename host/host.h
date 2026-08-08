@@ -23,6 +23,7 @@ struct dmg;
                                      // it, so they always sync, as on the Mac
 #define GATE_STUB_BASE     0x000440  // call-gate stubs, 16 bytes apart
 #define JIT_CTX_ADDR       0x000500  // 68k-side jit_context (A4)
+                                     // (0x60 bytes - full at JIT_CTX_MBC_WRITE)
 #define FRAME_SHADOW_ADDR  0x000560  // big-endian copy of dmg->frame_cycles
 #define READ_TABLE_ADDR    0x000600  // 68k-side page tables (A5/A6)
 #define WRITE_TABLE_ADDR   0x000a00
@@ -46,6 +47,7 @@ enum {
     GATE_RETURN,
     GATE_EXC,
     GATE_CHAIN,
+    GATE_MBC_WRITE,
 };
 
 extern u8 m68k_mem[M68K_MEM_SIZE];

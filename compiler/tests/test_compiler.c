@@ -194,6 +194,7 @@ static void setup_runtime_stubs(void)
     m68k_write_memory_32(JIT_CTX_ADDR + JIT_CTX_DISPATCH, 0); // infinite loop at 0
     m68k_write_memory_32(JIT_CTX_ADDR + JIT_CTX_READ16, STUB_BASE + 0x60);
     m68k_write_memory_32(JIT_CTX_ADDR + JIT_CTX_WRITE16, STUB_BASE + 0x80);
+    m68k_write_memory_32(JIT_CTX_ADDR + JIT_CTX_MBC_WRITE, STUB_BASE + 0x20);
     m68k_write_memory_32(JIT_CTX_ADDR + JIT_CTX_PATCH_HELPER, 0);
     m68k_write_memory_32(JIT_CTX_ADDR + JIT_CTX_READ_CYCLES, 0);
     // frame_cycles pointer for HALT/LY wait tests

@@ -75,6 +75,7 @@
 // GB6_PROFILING only, written by the fast-forward paths
 #define JIT_CTX_SKIPPED     84  // u32: GB cycles skipped by wake_skip
 #define JIT_CTX_LY_SKIPS    88  // u32: LY-wait clamp skips (cycles unknown)
+#define JIT_CTX_MBC_WRITE   92  // void *mbc_write_func (dmg_mbc_write)
 
 struct code_block {
     // number of bytes populated in code[]
@@ -125,6 +126,8 @@ struct compile_ctx {
     void *wram_base;            // dmg->main_ram for compile-time WRAM SP detection
     void *hram_base;
     void *joyp_base;            // &dmg->joyp, the maintained FF00 shadow
+    uint16_t bank_reg_lo;       // MBC ROM-bank select range for the
+    uint16_t bank_reg_hi;       // same-bank write skip, both 0 = off
 };
 
 void compiler_init(void);

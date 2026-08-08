@@ -164,5 +164,11 @@ void emit_cmp_l_disp_an_dn(
     uint8_t areg,
     uint8_t dreg
 );
+void emit_cmp_b_disp_an_dn(
+    struct code_block *block,
+    int16_t disp,
+    uint8_t areg,
+    uint8_t dreg
+);
 
 #endif

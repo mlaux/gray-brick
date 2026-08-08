@@ -254,23 +254,23 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
             break;
 
         case 0x02: // ld (bc), a
-            compile_join_bc(block, 1);  // BC -> D1.w
-            compile_call_dmg_write_a(block);  // dmg_write(dmg, D1.w, A)
+            compile_join_bc(block, 1);
+            compile_call_dmg_write_a(block);
             break;
 
         case 0x0a: // ld a, (bc)
-            compile_join_bc(block, 1);  // BC -> D1.w
-            compile_call_dmg_read_a(block);  // A = dmg_read(dmg, D1.w)
+            compile_join_bc(block, 1);
+            compile_call_dmg_read_a(block);
             break;
 
         case 0x12: // ld (de), a
-            compile_join_de(block, 1);  // DE -> D1.w
-            compile_call_dmg_write_a(block);  // dmg_write(dmg, D1.w, A)
+            compile_join_de(block, 1);
+            compile_call_dmg_write_a(block);
             break;
 
         case 0x1a: // ld a, (de)
-            compile_join_de(block, 1);  // DE -> D1.w
-            compile_call_dmg_read_a(block);  // A = dmg_read(dmg, D1.w)
+            compile_join_de(block, 1);
+            compile_call_dmg_read_a(block);
             break;
 
         case 0x01: // ld bc, imm16
@@ -752,6 +752,27 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
                 if (addr >= 0xff80 && addr != 0xffff && ctx->hram_base) {
                     emit_move_b_dn_abs32(block, REG_68K_D_A,
                             (uint32_t) (uintptr_t) ctx->hram_base + (addr - 0xff80));
+                } else if (addr < 0x8000) {
+                    // MBC register write: straight to mbc_write_func. for
+                    // the bank select reg, skip the call when A already
+                    // holds the current effective bank
+                    size_t skip = 0;
+                    int check = ctx->bank_reg_hi
+                            && addr >= ctx->bank_reg_lo
+                            && addr <= ctx->bank_reg_hi;
+
+                    flush_cycles(block);
+                    if (check) {
+                        emit_cmp_b_disp_an_dn(block, JIT_CTX_ROM_BANK,
+                                REG_68K_A_CTX, REG_68K_D_A);
+                        skip = block->length;
+                        emit_beq_b(block, 0);
+                    }
+                    emit_move_w_dn(block, REG_68K_D_SCRATCH_1, addr);
+                    compile_call_dmg_write_mbc_a(block);
+                    if (check) {
+                        patch_branch_b(block, skip);
+                    }
                 } else {
                     emit_move_w_dn(block, REG_68K_D_SCRATCH_1, addr);
                     compile_call_dmg_write_a(block);

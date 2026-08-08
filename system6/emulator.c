@@ -57,6 +57,8 @@ struct audio audio;
 struct dmg dmg;
 struct cgb_state cgb_state;
 
+int bankswitch;
+
 WindowPtr g_wp;
 Boolean app_running;
 

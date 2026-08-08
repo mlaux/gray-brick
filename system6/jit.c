@@ -57,6 +57,12 @@ static void prof_write16(void *dmg, u16 address, u16 data)
   prof_interop++;
   dmg_write16(dmg, address, data);
 }
+
+static void prof_mbc_write(void *dmg, u16 address, u8 data)
+{
+  prof_interop++;
+  ((struct dmg *) dmg)->rom->mbc->write(dmg, address, data);
+}
 #endif
 
 // register state that persists between block executions
@@ -177,6 +183,23 @@ void jit_init(struct dmg *dmg)
   compile_ctx.hram_base = dmg->zero_page;
   compile_ctx.joyp_base = &dmg->joyp;
 
+  // ROM-bank select range for the compiler's same-bank write skip.
+  // MBC5's 0x3000 reg carries bank bit 8, which the u8 shadow can't see,
+  // and MBC2 decodes by address bit 8 - both stay on the generic path
+  compile_ctx.bank_reg_lo = 0;
+  compile_ctx.bank_reg_hi = 0;
+  if (dmg->rom->mbc) {
+    int mbc_type = dmg->rom->mbc->type;
+    if ((mbc_type >= 0x01 && mbc_type <= 0x03)
+        || (mbc_type >= 0x0f && mbc_type <= 0x13)) {
+      compile_ctx.bank_reg_lo = 0x2000;
+      compile_ctx.bank_reg_hi = 0x3fff;
+    } else if (mbc_type >= 0x19 && mbc_type <= 0x1e) {
+      compile_ctx.bank_reg_lo = 0x2000;
+      compile_ctx.bank_reg_hi = 0x2fff;
+    }
+  }
+
   if (!jit_emit_helpers()) {
     set_status_bar("Helper emit fail");
     jit_halted = 1;
@@ -201,11 +224,13 @@ void jit_init(struct dmg *dmg)
   jit_ctx.write_func = prof_write;
   jit_ctx.read16_func = prof_read16;
   jit_ctx.write16_func = prof_write16;
+  jit_ctx.mbc_write_func = prof_mbc_write;
 #else
   jit_ctx.read_func = dmg_read;
   jit_ctx.write_func = dmg_write;
   jit_ctx.read16_func = dmg_read16;
   jit_ctx.write16_func = dmg_write16;
+  jit_ctx.mbc_write_func = dmg->rom->mbc->write;
 #endif
   jit_ctx.ei_di_func = dmg_ei_di;
   jit_ctx.stop_func = jit_handle_stop;
@@ -361,11 +386,13 @@ static void update_profiling_status_bar(u32 frames_now)
 {
   char buf[64];
   static u32 last_frames_rendered = 0;
+  static u32 last_bankswitch = 0;
+  extern int bankswitch;
 
   u32 now = TickCount();
   u32 elapsed = now - last_report_tick;
   u32 frames_delta;
-  u32 fps;
+  u32 fps, bss;
 
   if (elapsed < 30 || last_report_tick == 0) {
     if (last_report_tick == 0) {
@@ -377,7 +404,9 @@ static void update_profiling_status_bar(u32 frames_now)
 
   frames_delta = frames_now - last_frames_rendered;
   fps = (frames_delta * 60) / elapsed;
+  bss = ((bankswitch - last_bankswitch) * 60) / elapsed;
   last_frames_rendered = frames_now;
+  last_bankswitch = bankswitch;
   last_report_tick = now;
 
 #ifdef GB6_PROFILING
@@ -429,7 +458,7 @@ static void update_profiling_status_bar(u32 frames_now)
   }
 #endif
 
-  sprintf(buf, "%lu FPS", fps);
+  sprintf(buf, "%lu FPS %lu BS", fps, bss);
   set_status_bar(buf);
 }
 

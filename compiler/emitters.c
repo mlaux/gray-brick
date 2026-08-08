@@ -1335,6 +1335,18 @@ void emit_cmp_l_disp_an_dn(
     emit_word(block, disp);
 }
 
+// cmp.b d16(An), Dn - compare memory byte with data register
+void emit_cmp_b_disp_an_dn(
+    struct code_block *block,
+    int16_t disp,
+    uint8_t areg,
+    uint8_t dreg
+) {
+    // 1011 ddd 000 101 aaa
+    emit_word(block, 0xb028 | (dreg << 9) | areg);
+    emit_word(block, disp);
+}
+
 // emit_add_cycles - add GB cycles to D2, picks optimal instruction
 void emit_add_cycles(struct code_block *block, int cycles)
 {

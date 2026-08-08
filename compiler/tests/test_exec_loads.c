@@ -192,6 +192,55 @@ TEST(test_exec_ld_hl_ind_imm8)
     ASSERT_EQ(get_mem_byte(0x5001), 0x99);
 }
 
+// MBC bank-select same-bank skip (ctx starts with current_rom_bank = 1)
+TEST(test_exec_bank_write_same_skipped)
+{
+    // writing the current bank number to the bank reg skips the call
+    uint8_t rom[] = {
+        0x3e, 0x01,       // 0x0000: ld a, 0x01
+        0xea, 0x00, 0x3f, // 0x0002: ld (0x3f00), a
+        0x10              // 0x0005: stop
+    };
+    test_compile_ctx->bank_reg_lo = 0x2000;
+    test_compile_ctx->bank_reg_hi = 0x3fff;
+    run_program(rom, 0);
+    test_compile_ctx->bank_reg_lo = 0;
+    test_compile_ctx->bank_reg_hi = 0;
+    ASSERT_EQ(get_mem_byte(0x3f00), 0x00);
+}
+
+TEST(test_exec_bank_write_different_passes)
+{
+    // a different bank number still reaches the write handler
+    uint8_t rom[] = {
+        0x3e, 0x02,       // 0x0000: ld a, 0x02
+        0xea, 0x00, 0x3f, // 0x0002: ld (0x3f00), a
+        0x10              // 0x0005: stop
+    };
+    test_compile_ctx->bank_reg_lo = 0x2000;
+    test_compile_ctx->bank_reg_hi = 0x3fff;
+    run_program(rom, 0);
+    test_compile_ctx->bank_reg_lo = 0;
+    test_compile_ctx->bank_reg_hi = 0;
+    ASSERT_EQ(get_mem_byte(0x3f00), 0x02);
+}
+
+TEST(test_exec_bank_write_outside_range)
+{
+    // same value outside the bank reg range is a normal write
+    uint8_t rom[] = {
+        0x3e, 0x01,       // 0x0000: ld a, 0x01
+        0xea, 0x00, 0x50, // 0x0002: ld (0x5000), a
+        0x10              // 0x0005: stop
+    };
+    test_compile_ctx->bank_reg_lo = 0x2000;
+    test_compile_ctx->bank_reg_hi = 0x3fff;
+    run_program(rom, 0);
+    test_compile_ctx->bank_reg_lo = 0;
+    test_compile_ctx->bank_reg_hi = 0;
+    ASSERT_EQ(get_mem_byte(0x5000), 0x01);
+}
+
 // LDH instructions
 TEST(test_exec_ldh_imm8_a)
 {
@@ -430,6 +479,11 @@ void register_load_tests(void)
     RUN_TEST(test_ld_e_hl_ind);
     RUN_TEST(test_ld_b_hl_ind);
     RUN_TEST(test_ld_c_hl_ind);
+
+    printf("\nMBC bank-select skip:\n");
+    RUN_TEST(test_exec_bank_write_same_skipped);
+    RUN_TEST(test_exec_bank_write_different_passes);
+    RUN_TEST(test_exec_bank_write_outside_range);
 
     printf("\nLDH instructions:\n");
     RUN_TEST(test_exec_ldh_imm8_a);

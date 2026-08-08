@@ -36,6 +36,8 @@ typedef struct {
                                          // earliest deadline
     /* 54 */ u32 skipped_cycles;         // GB6_PROFILING: cycles fast-forwarded
     /* 58 */ u32 ly_clamp_skips;         // GB6_PROFILING: LY-wait clamp skip count
+    /* 5c */ void *mbc_write_func;       // per-type mbcN_write, for constant
+                                         // ROM-range write sites
 } jit_context;
 
 extern jit_context jit_ctx;

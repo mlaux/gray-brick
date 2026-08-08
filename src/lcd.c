@@ -36,7 +36,7 @@ u8 hflip_lut[256];
 // expands an 8-bit opacity mask to packed 2bpp: bit k -> bits 2k+1,2k
 static u16 mask_expand[256];
 
-// Shift amounts for packed pixel access (avoids 6 - idx * 2 multiply)
+// Shift amounts for packed pixel access
 static const u8 pixel_shift[4] = { 6, 4, 2, 0 };
 
 void lcd_init_lut(void)

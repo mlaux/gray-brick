@@ -236,6 +236,18 @@ void host_gate(unsigned int index, unsigned int sp)
         sync_budget_to_68k();
         break;
     }
+    case GATE_MBC_WRITE: {
+        u16 addr = m68_r16(sp + 8);
+        u8 data = m68k_mem[sp + 10];
+        jit_ctx.read_cycles = m68_r32(JIT_CTX_ADDR + JIT_CTX_READ_CYCLES);
+        if (host_insn_log) {
+            fprintf(host_insn_log, "= mbcw %04x = %02x\n", addr, data);
+        }
+        dmg->rom->mbc->write(dmg, addr, data);
+        sync_page_tables();
+        sync_budget_to_68k();
+        break;
+    }
     case GATE_READ16: {
         u16 addr = m68_r16(sp + 8);
         u16 v;
@@ -300,9 +312,12 @@ void host_gate(unsigned int index, unsigned int sp)
 
 static void rom_bank_hook(int bank)
 {
-    // page tables re-sync in the write gate that triggered this; the
-    // 68k-side bank byte updates at the next block entry
+    // page tables re-sync in the write gate that triggered this. the
+    // 68k-side bank byte must update immediately, like on the Mac where
+    // A4 points at the real jit_ctx: emitted same-bank skips read it
+    // between block entries
     jit_ctx.current_rom_bank = (u8) bank;
+    ctx_w8(JIT_CTX_ROM_BANK, (u8) bank);
 }
 
 // "move.l a7, (gate).l; rts" - triggers gate `index`, then returns.
@@ -559,6 +574,22 @@ void host_jit_init(struct dmg *d)
     compile_ctx.joyp_base =
         (void *) (uintptr_t) (DMG_ADDR + offsetof(struct dmg, joyp));
 
+    // ROM-bank select range for the compiler's same-bank write skip,
+    // mirrors system6/jit.c: MBC1/MBC3 full reg, MBC5 low-byte reg only
+    compile_ctx.bank_reg_lo = 0;
+    compile_ctx.bank_reg_hi = 0;
+    if (dmg->rom->mbc) {
+        int mbc_type = dmg->rom->mbc->type;
+        if ((mbc_type >= 0x01 && mbc_type <= 0x03)
+                || (mbc_type >= 0x0f && mbc_type <= 0x13)) {
+            compile_ctx.bank_reg_lo = 0x2000;
+            compile_ctx.bank_reg_hi = 0x3fff;
+        } else if (mbc_type >= 0x19 && mbc_type <= 0x1e) {
+            compile_ctx.bank_reg_lo = 0x2000;
+            compile_ctx.bank_reg_hi = 0x2fff;
+        }
+    }
+
     arena_set_region(&m68k_mem[ARENA_ADDR], ARENA_END - ARENA_ADDR);
     arena_init();
     if (!emit_helpers()) {
@@ -583,6 +614,7 @@ void host_jit_init(struct dmg *d)
     write_trap_stub(gate_stub(GATE_WRITE16), GATE_WRITE16, 0);
     write_trap_stub(gate_stub(GATE_EI_DI), GATE_EI_DI, 0);
     write_trap_stub(gate_stub(GATE_STOP), GATE_STOP, 0);
+    write_trap_stub(gate_stub(GATE_MBC_WRITE), GATE_MBC_WRITE, 0);
 
     // host-side jit_ctx, mirroring jit_init
     memset(&jit_ctx, 0, sizeof jit_ctx);
@@ -611,6 +643,7 @@ void host_jit_init(struct dmg *d)
     ctx_w32(JIT_CTX_WRITE16, gate_stub(GATE_WRITE16));
     ctx_w32(JIT_CTX_EI_DI, gate_stub(GATE_EI_DI));
     ctx_w32(JIT_CTX_STOP_FUNC, gate_stub(GATE_STOP));
+    ctx_w32(JIT_CTX_MBC_WRITE, gate_stub(GATE_MBC_WRITE));
     ctx_w32(JIT_CTX_DISPATCH, CHAIN_STUB_ADDR);
     ctx_w32(JIT_CTX_PATCH_HELPER, CHAIN_STUB_ADDR);
     ctx_w32(JIT_CTX_FRAME_CYCLES_PTR, FRAME_SHADOW_ADDR);
