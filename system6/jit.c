@@ -175,6 +175,7 @@ void jit_init(struct dmg *dmg)
   compile_ctx.alloc = arena_alloc;
   compile_ctx.wram_base = dmg->main_ram;
   compile_ctx.hram_base = dmg->zero_page;
+  cache_set_hram(dmg->zero_page);
   compile_ctx.joyp_ptr = &dmg->joyp;
 
   // ROM-bank select range for the compiler's same-bank write skip (MBC1 and 3 only)

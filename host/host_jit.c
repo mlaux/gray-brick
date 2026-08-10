@@ -570,6 +570,7 @@ void host_jit_init(struct dmg *d)
         (void *) (uintptr_t) (DMG_ADDR + offsetof(struct dmg, zero_page));
     compile_ctx.joyp_ptr =
         (void *) (uintptr_t) (DMG_ADDR + offsetof(struct dmg, joyp));
+    cache_set_hram(dmg->zero_page);
 
     // ROM-bank select range for the compiler's same-bank write skip,
     // mirrors system6/jit.c: MBC1/MBC3 full reg, MBC5 low-byte reg only

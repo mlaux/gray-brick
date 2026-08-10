@@ -18,6 +18,31 @@ static u8 upper_page_hi[0x80];
 // how many pages back the earliest block covering this page starts
 static u8 upper_page_reach[0x80];
 
+#define HRAM_PAGE 0x7f // page $ff in the upper_page_* arrays
+
+static const u8 *hram_page;
+static u8 hram_snapshot[0x80];
+static u8 hram_is_code[0x80];
+static int hram_has_code;
+
+// compiled HRAM source bytes still match what the game is executing?
+static int hram_snapshot_valid(void)
+{
+    int lo = upper_page_lo[HRAM_PAGE];
+    int hi = upper_page_hi[HRAM_PAGE];
+    int k;
+
+    if (lo < 0x80) {
+        lo = 0x80;
+    }
+    for (k = lo - 0x80; k <= hi - 0x80; k++) {
+        if (hram_is_code[k] && hram_page[k] != hram_snapshot[k]) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 // Look up cached code pointer for given PC and bank
 void *cache_lookup(u16 pc, u8 bank)
 {
@@ -36,7 +61,16 @@ void *cache_lookup(u16 pc, u8 bank)
     if (!upper_cache) {
         return NULL;
     }
+    if (pc >= 0xff80 && hram_has_code && !hram_snapshot_valid()) {
+        cache_invalidate_upper_page(0xff);
+        return NULL;
+    }
     return upper_cache[pc - 0x8000];
+}
+
+void cache_set_hram(const u8 *zero_page)
+{
+    hram_page = zero_page;
 }
 
 // Store code pointer in cache for given PC and bank
@@ -78,6 +112,17 @@ void cache_mark_upper_range(u16 start, u16 end)
         if (p - (start >> 8) > upper_page_reach[idx]) {
             upper_page_reach[idx] = p - (start >> 8);
         }
+    }
+
+    // re-snapshot whenever HRAM gets compiled code
+    if (end >= 0xff80 && hram_page) {
+        u16 a = start < 0xff80 ? 0xff80 : start;
+
+        for (; a <= end; a++) {
+            hram_is_code[a - 0xff80] = 1;
+        }
+        memcpy(hram_snapshot, hram_page, sizeof hram_snapshot);
+        hram_has_code = 1;
     }
 }
 
@@ -123,6 +168,10 @@ void cache_invalidate_upper_page(u8 page)
         upper_page_hi[k] = 0;
         upper_page_reach[k] = 0;
     }
+    if (idx == HRAM_PAGE) {
+        memset(hram_is_code, 0, sizeof hram_is_code);
+        hram_has_code = 0;
+    }
 }
 
 // Allocate and zero all cache arrays upfront
@@ -132,6 +181,8 @@ int cache_init(void)
     memset(upper_page_lo, 0xff, sizeof upper_page_lo);
     memset(upper_page_hi, 0, sizeof upper_page_hi);
     memset(upper_page_reach, 0, sizeof upper_page_reach);
+    memset(hram_is_code, 0, sizeof hram_is_code);
+    hram_has_code = 0;
 
     bank0_cache = arena_alloc(BANK0_CACHE_SIZE * sizeof(void *));
     if (!bank0_cache) {
