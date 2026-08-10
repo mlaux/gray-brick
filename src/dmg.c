@@ -965,12 +965,12 @@ static void render_frame(struct dmg *dmg)
     PROF_SET(PROF_RENDER);
     lcd->window_line = 0;
     replay = lcd->raster_count && !lcd->raster_overflow;
-    if (replay) {
-        regs = lcd->frame_regs;
-    } else {
-        // nothing changed mid-frame (or the log overflowed)
-        // render once from final register state
+    if (lcd->raster_overflow) {
+        // too many changes to replay, render once from final state
         raster_live_regs(lcd, &regs);
+    } else {
+        // line 0 state
+        regs = lcd->frame_regs;
     }
 
     // start the rows at scy & 7 so fine vertical scrolls only move the blit
