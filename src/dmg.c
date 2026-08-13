@@ -935,14 +935,13 @@ static void render_band_pass(
     memset(&dmg->lcd->row_scx[sy_start + dmg->lcd->row_voff],
             regs->scx & 7, sy_end - sy_start);
 
-    if (regs->lcdc & LCDC_ENABLE_BG) {
-        if (cgb) {
-            lcd_cgb_render_band(dmg, sy_start, sy_end, regs);
-        } else {
-            lcd_update_palette_lut(regs->bgp);
-            lcd_render_band(dmg, sy_start, sy_end, regs);
-        }
-    } else if (!cgb) {
+    // on CGB, BG always draws and LCDC bit 0 is master priority
+    if (cgb) {
+        lcd_cgb_render_band(dmg, sy_start, sy_end, regs);
+    } else if (regs->lcdc & LCDC_ENABLE_BG) {
+        lcd_update_palette_lut(regs->bgp);
+        lcd_render_band(dmg, sy_start, sy_end, regs);
+    } else {
         lcd_render_blank_band(dmg, sy_start, sy_end, regs);
     }
     if (regs->lcdc & LCDC_ENABLE_OBJ) {

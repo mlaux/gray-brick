@@ -287,13 +287,10 @@ void lcd_cgb_render_objs_band(
                         u8 bg_attr = row_attr[px];
                         u8 bg_pixel = packed_get_pixel(row[byte_idx], bit_idx);
 
-                        // Sprite hidden if:
-                        // - bg_enabled AND bg_attr has priority AND bg_pixel != 0
-                        // - OR behind_bg AND bg_pixel != 0
-                        if (bg_enabled && (bg_attr & ATTR_PRIORITY) && bg_pixel != 0) {
-                            continue;
-                        }
-                        if (behind_bg && bg_pixel != 0) {
+                        // BG wins only if LCDC bit 0 set, BG color 1-3, and
+                        // either priority bit set
+                        if (bg_enabled && bg_pixel != 0 &&
+                                ((bg_attr & ATTR_PRIORITY) || behind_bg)) {
                             continue;
                         }
 
@@ -316,10 +313,8 @@ void lcd_cgb_render_objs_band(
                         u8 bg_attr = row_attr[px];
                         u8 bg_pixel = packed_get_pixel(row[byte_idx], bit_idx);
 
-                        if (bg_enabled && (bg_attr & ATTR_PRIORITY) && bg_pixel != 0) {
-                            continue;
-                        }
-                        if (behind_bg && bg_pixel != 0) {
+                        if (bg_enabled && bg_pixel != 0 &&
+                                ((bg_attr & ATTR_PRIORITY) || behind_bg)) {
                             continue;
                         }
 
