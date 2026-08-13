@@ -363,7 +363,7 @@ static void frame_hook(struct lcd *l)
                lcd_read(l, REG_LCDC), lcd_read(l, REG_STAT),
                lcd_read(l, REG_SCY), lcd_read(l, REG_SCX),
                lcd_read(l, REG_WY), lcd_read(l, REG_WX),
-               lcd_read(l, REG_BGP), dmg->zero_page[0x7f],
+               lcd_read(l, REG_BGP), dmg->hram[0x7f],
                dmg->interrupt_request_mask, dmg->interrupt_enable);
     }
 

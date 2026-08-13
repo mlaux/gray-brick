@@ -174,8 +174,8 @@ void jit_init(struct dmg *dmg)
   compile_ctx.cache_store = cache_store;
   compile_ctx.alloc = arena_alloc;
   compile_ctx.wram_base = dmg->main_ram;
-  compile_ctx.hram_base = dmg->zero_page;
-  cache_set_hram(dmg->zero_page);
+  compile_ctx.hram_base = dmg->hram;
+  cache_set_hram(dmg->hram);
   compile_ctx.joyp_ptr = &dmg->joyp;
 
   // ROM-bank select range for the compiler's same-bank write skip (MBC1 and 3 only)
@@ -248,8 +248,7 @@ void jit_init(struct dmg *dmg)
   jit_regs.d6 = 0x000000d8; // DE
   jit_regs.d7 = 0x05; // flags
   jit_regs.a2 = 0x014d; // HL
-  // HRAM is at dmg->zero_page (0xFF80-0xFFFF), 0xFFFE - 0xFF80 = 0x7E
-  jit_regs.a3 = (unsigned long) (dmg->zero_page + 0x7e);
+  jit_regs.a3 = (unsigned long) (dmg->hram + 0x7e);
   jit_regs.a4 = (unsigned long) &jit_ctx;
   jit_regs.a5 = (unsigned long) dmg->read_page;
   jit_regs.a6 = (unsigned long) dmg->write_page;
@@ -351,7 +350,7 @@ static void update_wake_limit(struct dmg *dmg)
 static void check_interrupts(struct dmg *dmg)
 {
   static const u16 handlers[] = { 0x40, 0x48, 0x50, 0x58, 0x60 };
-  u8 pending = dmg->zero_page[0x7f] & dmg->interrupt_request_mask & 0x1f;
+  u8 pending = dmg->hram[0x7f] & dmg->interrupt_request_mask & 0x1f;
 
   if (!pending) {
     return;

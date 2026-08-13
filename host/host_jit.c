@@ -124,7 +124,7 @@ static void host_fatal(const char *msg)
     fprintf(stderr, "  bank=%d frame_cycles=%u IF=%02x IE=%02x IME=%d "
             "LCDC=%02x STAT=%02x gb_sp=%04x\n",
             jit_ctx.current_rom_bank, dmg->frame_cycles,
-            dmg->interrupt_request_mask, dmg->zero_page[0x7f],
+            dmg->interrupt_request_mask, dmg->hram[0x7f],
             dmg->interrupt_enable, lcd_read(dmg->lcd, REG_LCDC),
             lcd_read(dmg->lcd, REG_STAT), jit_ctx.gb_sp);
     exit(2);
@@ -468,7 +468,7 @@ static void execute_block(void *code)
 // dmg_cycles_to_next_event for the --exit-stats histogram
 static int exit_cause(void)
 {
-    u8 ie = dmg->zero_page[0x7f];
+    u8 ie = dmg->hram[0x7f];
     u32 best = dmg->event_deadline[EV_WRAP];
     int cause = EV_WRAP;
 
@@ -509,7 +509,7 @@ static void update_wake_limit(void)
 static void check_interrupts(void)
 {
     static const u16 handlers[] = { 0x40, 0x48, 0x50, 0x58, 0x60 };
-    u8 pending = dmg->zero_page[0x7f] & dmg->interrupt_request_mask & 0x1f;
+    u8 pending = dmg->hram[0x7f] & dmg->interrupt_request_mask & 0x1f;
     int k;
 
     if (!pending) {
@@ -544,7 +544,7 @@ static void trace_block(u32 pc, u32 d2)
             "[%02x:%04x] d2=%u frame=%u IF=%02x IE=%02x IME=%d LY=%u "
             "LCDC=%02x STAT=%02x SP=%04x\n",
             jit_ctx.current_rom_bank, pc, d2, dmg->frame_cycles,
-            dmg->interrupt_request_mask, dmg->zero_page[0x7f],
+            dmg->interrupt_request_mask, dmg->hram[0x7f],
             dmg->interrupt_enable, dmg->frame_cycles / 456,
             lcd_read(dmg->lcd, REG_LCDC), lcd_read(dmg->lcd, REG_STAT),
             m68_r16(JIT_CTX_ADDR + JIT_CTX_GB_SP));
@@ -568,7 +568,7 @@ void host_jit_init(struct dmg *d)
     compile_ctx.hram_base = (void *) (uintptr_t) HRAM_ADDR;
     compile_ctx.joyp_ptr =
         (void *) (uintptr_t) (DMG_ADDR + offsetof(struct dmg, joyp));
-    cache_set_hram(dmg->zero_page);
+    cache_set_hram(dmg->hram);
 
     // ROM-bank select range for the compiler's same-bank write skip,
     // mirrors system6/jit.c: MBC1/MBC3 full reg, MBC5 low-byte reg only
@@ -716,7 +716,7 @@ void host_dump_state(FILE *fp)
             jit_ctx.gb_sp,
             m68k_get_reg(NULL, M68K_REG_D3) & 0xffff,
             m68k_get_reg(NULL, M68K_REG_D7) & 0xff,
-            dmg->zero_page[0x7f], dmg->interrupt_request_mask,
+            dmg->hram[0x7f], dmg->interrupt_request_mask,
             dmg->interrupt_enable, lcd_read(dmg->lcd, REG_LCDC),
             lcd_read(dmg->lcd, REG_STAT), dmg->frame_cycles / 456,
             jit_ctx.current_rom_bank, host_frames());

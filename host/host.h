@@ -31,7 +31,7 @@ struct dmg;
 #define DMG_ADDR           0x008000  // struct dmg
 #define WRAM_ADDR          0x00c000  // dmg->main_ram, WRAM_SIZE
 #define VRAM_ADDR          0x014000  // dmg->video_ram, VRAM_SIZE
-#define HRAM_ADDR          0x018000  // dmg->zero_page, HRAM_SIZE
+#define HRAM_ADDR          0x018000  // dmg->hram, HRAM_SIZE
 #define MBC_ADDR           0x020000  // struct mbc (holds cart ram)
 #define ROM_ADDR           0x040000
 #define ROM_MAX            0x800000

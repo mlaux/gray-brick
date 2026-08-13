@@ -124,7 +124,7 @@ struct compile_ctx {
     uint8_t current_bank;       // current ROM bank for cache_store calls
     // GB memory the emitted fast paths address absolutely
     void *wram_base;            // dmg->main_ram
-    void *hram_base;            // dmg->zero_page
+    void *hram_base;            // dmg->hram
     void *joyp_ptr;             // &dmg->joyp, the maintained FF00 shadow
     uint16_t bank_reg_lo;       // MBC ROM-bank select range for the
     uint16_t bank_reg_hi;       // same-bank write skip, both 0 = off

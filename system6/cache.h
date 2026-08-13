@@ -33,6 +33,6 @@ int cache_upper_4k_has_code(u16 addr);
 void cache_invalidate_upper_page(u8 page);
 
 // snapshot HRAM to compare in cache_lookup
-void cache_set_hram(const u8 *zero_page);
+void cache_set_hram(const u8 *hram);
 
 #endif

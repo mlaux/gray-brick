@@ -68,9 +68,9 @@ void *cache_lookup(u16 pc, u8 bank)
     return upper_cache[pc - 0x8000];
 }
 
-void cache_set_hram(const u8 *zero_page)
+void cache_set_hram(const u8 *hram)
 {
-    hram_page = zero_page;
+    hram_page = hram;
 }
 
 // Store code pointer in cache for given PC and bank

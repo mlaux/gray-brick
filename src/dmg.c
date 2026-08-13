@@ -55,7 +55,7 @@ static void dmg_budget_update(struct dmg *dmg)
     u32 dist = dmg_cycles_to_next_event(dmg);
 
     if (dmg->interrupt_enable
-            && (dmg->interrupt_request_mask & dmg->zero_page[0x7f] & 0x1f)) {
+            && (dmg->interrupt_request_mask & dmg->hram[0x7f] & 0x1f)) {
         dist = 0;
     }
 
@@ -129,7 +129,7 @@ void dmg_new(
 {
     dmg->main_ram = wram;
     dmg->video_ram = vram;
-    dmg->zero_page = hram;
+    dmg->hram = hram;
     memset(wram, 0, WRAM_SIZE);
     memset(vram, 0, VRAM_SIZE);
     memset(hram, 0, HRAM_SIZE);
@@ -572,7 +572,7 @@ u8 dmg_read_slow(struct dmg *dmg, u16 address)
 
     // high RAM
     if (address >= 0xff80) {
-        return dmg->zero_page[address - 0xff80];
+        return dmg->hram[address - 0xff80];
     }
 
     // I/O registers
@@ -761,7 +761,7 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
 
     // high RAM
     if (address >= 0xff80) {
-        dmg->zero_page[address - 0xff80] = data;
+        dmg->hram[address - 0xff80] = data;
         // IE gates which deadlines can exit/wake
         if (address == 0xffff) {
             dmg_budget_update(dmg);
@@ -1126,7 +1126,7 @@ static void dmg_event_fire(struct dmg *dmg, int ev)
 // PPU cycles until the next deadline the CPU must observe
 u32 dmg_cycles_to_next_event(struct dmg *dmg)
 {
-    u8 ie = dmg->zero_page[0x7f];
+    u8 ie = dmg->hram[0x7f];
     u32 best = dmg->event_deadline[EV_WRAP];
     u32 d;
 

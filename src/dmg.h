@@ -70,7 +70,7 @@ struct dmg {
 
     u8 *main_ram;
     u8 *video_ram;
-    u8 *zero_page;
+    u8 *hram;
 
     u32 frames_rendered;
     int joypad_selected;
