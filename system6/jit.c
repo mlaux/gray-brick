@@ -173,7 +173,7 @@ void jit_init(struct dmg *dmg)
   compile_ctx.read = dmg_read;
   compile_ctx.cache_store = cache_store;
   compile_ctx.alloc = arena_alloc;
-  compile_ctx.wram_base = dmg->main_ram;
+  compile_ctx.wram_base = dmg->wram;
   compile_ctx.hram_base = dmg->hram;
   cache_set_hram(dmg->hram);
   compile_ctx.joyp_ptr = &dmg->joyp;

@@ -22,7 +22,7 @@ static int cgb_perform_gpdma(struct cgb_state *cgb, struct dmg *dmg, u8 length_v
 
         // Write to destination (always in VRAM $8000-$9FFF)
         u16 vram_addr = 0x8000 | (cgb->hdma_dest & 0x1fff);
-        u8 *vram = &dmg->video_ram[cgb->vram_bank * 0x2000];
+        u8 *vram = &dmg->vram[cgb->vram_bank * 0x2000];
         vram[vram_addr & 0x1fff] = data;
         cgb->hdma_dest++;
     }
@@ -247,7 +247,7 @@ int cgb_write_reg(struct cgb_state *cgb, struct dmg *dmg, u16 address, u8 data)
 
 void cgb_update_vram_bank(struct cgb_state *cgb, struct dmg *dmg)
 {
-    u8 *bank_base = &dmg->video_ram[cgb->vram_bank * 0x2000];
+    u8 *bank_base = &dmg->vram[cgb->vram_bank * 0x2000];
 
     dmg->read_page[0x8] = PAGE_BIAS(bank_base, 0x8);
     dmg->write_page[0x8] = dmg->read_page[0x8];
@@ -259,7 +259,7 @@ void cgb_update_wram_bank(struct cgb_state *cgb, struct dmg *dmg)
 {
     // SVBK 0 is treated as 1
     int bank = cgb->wram_bank ? cgb->wram_bank : 1;
-    u8 *bank_base = &dmg->main_ram[bank * 0x1000];
+    u8 *bank_base = &dmg->wram[bank * 0x1000];
 
     // $D000-$DFFF; the echo at $F000-$FDFF is slow-path and follows
     // this mapping through the forward in dmg_read_slow/dmg_write_slow
@@ -298,7 +298,7 @@ int cgb_hdma_hblank(struct cgb_state *cgb, struct dmg *dmg, u8 ly)
     }
 
     // Transfer 16 bytes
-    vram = &dmg->video_ram[cgb->vram_bank * 0x2000];
+    vram = &dmg->vram[cgb->vram_bank * 0x2000];
     for (i = 0; i < 16; i++) {
         // Read from source
         u8 data = dmg_read(dmg, cgb->hdma_source);

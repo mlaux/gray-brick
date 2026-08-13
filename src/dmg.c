@@ -127,8 +127,8 @@ void dmg_new(
     u8 *vram,
     u8 *hram)
 {
-    dmg->main_ram = wram;
-    dmg->video_ram = vram;
+    dmg->wram = wram;
+    dmg->vram = vram;
     dmg->hram = hram;
     memset(wram, 0, WRAM_SIZE);
     memset(vram, 0, VRAM_SIZE);
@@ -137,7 +137,7 @@ void dmg_new(
     dmg->rom = rom;
     dmg->lcd = lcd;
 
-    dmg->joypad = 0xf; // nothing pressed
+    dmg->dpad_buttons = 0xf; // nothing pressed
     dmg->action_buttons = 0xf;
     update_joyp(dmg);
 
@@ -176,23 +176,23 @@ void dmg_init_pages(struct dmg *dmg)
 
     // video RAM: 0x8000-0x9fff
     // Uses bank 0 initially, cgb_update_vram_bank() can switch for CGB
-    dmg->read_page[0x8] = PAGE_BIAS(dmg->video_ram, 0x8);
+    dmg->read_page[0x8] = PAGE_BIAS(dmg->vram, 0x8);
     dmg->write_page[0x8] = dmg->read_page[0x8];
-    dmg->read_page[0x9] = PAGE_BIAS(&dmg->video_ram[0x1000], 0x9);
+    dmg->read_page[0x9] = PAGE_BIAS(&dmg->vram[0x1000], 0x9);
     dmg->write_page[0x9] = dmg->read_page[0x9];
 
     // external RAM 0xa000-0xbfff stays NULL - MBC handles this
 
     // work RAM: 0xc000-0xcfff fixed, 0xd000-0xdfff switchable in CGB
     // (initially bank 1)
-    dmg->read_page[0xc] = PAGE_BIAS(dmg->main_ram, 0xc);
+    dmg->read_page[0xc] = PAGE_BIAS(dmg->wram, 0xc);
     dmg->write_page[0xc] = dmg->read_page[0xc];
-    dmg->read_page[0xd] = PAGE_BIAS(&dmg->main_ram[0x1000], 0xd);
+    dmg->read_page[0xd] = PAGE_BIAS(&dmg->wram[0x1000], 0xd);
     dmg->write_page[0xd] = dmg->read_page[0xd];
 
     // echo of 0xc000-0xcfff. the rest of echo (0xf000-0xfdff) shares
     // page 0xf with OAM/IO/HRAM and goes through the slow path
-    dmg->read_page[0xe] = PAGE_BIAS(dmg->main_ram, 0xe);
+    dmg->read_page[0xe] = PAGE_BIAS(dmg->wram, 0xe);
     dmg->write_page[0xe] = dmg->read_page[0xe];
 }
 
@@ -243,8 +243,8 @@ static void update_joyp(struct dmg *dmg)
         ret |= 0x20;
     }
 
-    if (dmg->joypad_selected) {
-        ret &= 0xf0 | dmg->joypad;
+    if (dmg->dpad_selected) {
+        ret &= 0xf0 | dmg->dpad_buttons;
     } else {
         ret |= 0x10;
     }
@@ -257,8 +257,8 @@ void dmg_set_button(struct dmg *dmg, int field, int button, int pressed)
     u8 *mod;
     int selected;
     if (field == FIELD_JOY) {
-        mod = &dmg->joypad;
-        selected = dmg->joypad_selected;
+        mod = &dmg->dpad_buttons;
+        selected = dmg->dpad_selected;
     } else if (field == FIELD_ACTION) {
         mod = &dmg->action_buttons;
         selected = dmg->action_selected;
@@ -771,7 +771,7 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
 
     // I/O registers
     if (address == 0xff00) {
-        dmg->joypad_selected = !(data & (1 << 4));
+        dmg->dpad_selected = !(data & (1 << 4));
         dmg->action_selected = !(data & (1 << 5));
         update_joyp(dmg);
         return;
@@ -921,7 +921,7 @@ static void raster_apply(struct raster_regs *regs, u8 reg, u8 value)
 }
 
 // render one band of the frame from one register state: background and
-// window, then sprites clipped to the band. rows pack at the band's
+// window, then sprites clipped to the band. rows are packed at the band's
 // scx&7, and row_scx tells the blitters where each row's visible area
 // starts
 static void render_band_pass(

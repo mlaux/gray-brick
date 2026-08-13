@@ -54,71 +54,72 @@ enum {
 #define HRAM_SIZE 0x80
 
 struct dmg {
+    u8 *wram;
+    u8 *vram;
+    u8 *hram;
+
     // page table for fast memory access (16 pages of 4KB each).
-    // page 0xf is never mapped - 0xf000-0xfdff echo, OAM, I/O and HRAM
-    // all take the slow path (HRAM is mostly resolved at compile time)
+    // page 0xf is never mapped - echo, OAM, I/O and HRAM all use slow path
+    // (HRAM is mostly resolved at compile time)
     u8 *read_page[16];
     u8 *write_page[16];
     // original write_page entries for upper pages unmapped because they
-    // hold compiled code (self-modifying code detection), NULL otherwise
+    // have compiled code, NULL otherwise
     u8 *saved_write_page[8];
 
     struct rom *rom;
     struct lcd *lcd;
     struct audio *audio;
-    struct cgb_state *cgb;  // NULL in DMG mode
-
-    u8 *main_ram;
-    u8 *video_ram;
-    u8 *hram;
-
-    u32 frames_rendered;
-    int joypad_selected;
-    int action_selected;
-    u8 interrupt_enable;
-    u8 interrupt_request_mask;
-    void (*rom_bank_switch_hook)(int new_bank);
-    // observation hook for raster-relevant register writes, with the beam
-    // position they landed on. NULL outside the host harness
-    void (*raster_write_hook)(u16 address, u8 old_val, u8 new_val,
-            u32 ly, u32 line_pos);
-
-    u8 joypad;
-    u8 action_buttons;
-    // computed FF00 value, kept current on select/button changes so
-    // emitted code can read it with one move.b
-    u8 joyp;
-    // serial port: writing SC with bit 7 + internal clock arms EV_SERIAL
-    // 4096 CPU cycles out; completion reads back the no-partner value
-    u8 reg_sb;
-    u8 reg_sc;
-
-    // lazy TIMA: timer_count is the counter value as of tima_base_cycle
-    // (total_cycles clock); reads derive the live value the way DIV does,
-    // EV_TIMA fires the overflow. frozen while the timer is disabled
-    u8 timer_count;
-    u8 timer_mod;
-    u8 timer_control;
-
-    u32 frame_cycles;
-    u8 sent_vblank_start;
-    u8 rendered_this_frame;
-    u16 lazy_ly;
-    u32 ly_read_cycle;
+    struct cgb_state *cgb; // NULL in DMG mode
 
     // deadline table (see the EV_ enum)
     u32 event_deadline[EV_COUNT];
-    u16 stat_event_line;
+
+    u32 frames_rendered;
+
+    // timing
+    u32 frame_cycles;
+    u32 ly_read_cycle;
+    u32 stat_event_line;
 
     // for DIV evaluation from cycles
     u32 total_cycles;
     u32 div_reset_cycle;
 
-    // CPU cycle (total_cycles clock) at which timer_count was current
+    // CPU cycle at which timer_count was current
     u32 tima_base_cycle;
 
-    // current ROM bank (to avoid redundant page table updates)
-    int current_rom_bank;
+    // to avoid redundant page table updates
+    u32 current_rom_bank;
+
+    void (*rom_bank_switch_hook)(int new_bank);
+    // observation hook for host/gb6run
+    void (*raster_write_hook)(u16 address, u8 old_val, u8 new_val,
+            u32 ly, u32 line_pos);
+
+    u8 interrupt_enable;
+    u8 interrupt_request_mask;
+
+    u8 dpad_buttons;
+    u8 action_buttons;
+    u8 dpad_selected;
+    u8 action_selected;
+
+    // computed FF00 value for emitted code to read
+    u8 joyp;
+
+    // counter value as of tima_base_cycle
+    u8 timer_count;
+    u8 timer_mod;
+    u8 timer_control;
+
+    // serial port
+    u8 reg_sb;
+    u8 reg_sc;
+
+    u8 sent_vblank_start;
+    u8 rendered_this_frame;
+    u8 lazy_ly;
 };
 
 void dmg_new(

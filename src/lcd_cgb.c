@@ -70,7 +70,7 @@ void lcd_cgb_render_band(
     int sy_end,
     const struct raster_regs *regs)
 {
-    u8 *vram = dmg->video_ram;
+    u8 *vram = dmg->vram;
     u8 *out = dmg->lcd->pixels;
     u8 *out_attr = dmg->lcd->attrs;
 
@@ -221,7 +221,7 @@ void lcd_cgb_render_objs_band(
 
     struct oam_entry *oam = &((struct oam_entry *) dmg->lcd->oam)[39];
     int tall = regs->lcdc & LCDC_OBJ_SIZE;
-    u8 *vram = dmg->video_ram;
+    u8 *vram = dmg->vram;
     u8 *pixels = dmg->lcd->pixels;
     u8 *attrs_buf = dmg->lcd->attrs;
     int bg_enabled = regs->lcdc & LCDC_ENABLE_BG;

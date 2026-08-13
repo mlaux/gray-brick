@@ -18,7 +18,7 @@ static unsigned char cgb_obj_color_cache[32];
 
 // Combined color LUT: indexed by [lut_index][color_index]
 // lut_index = ((attr >> 1) & 0x08) | (attr & 0x07)
-// Maps: BG palettes 0-7 → indices 0-7, sprite palettes 0-7 → indices 8-15
+// Maps: BG palettes 0-7 -> indices 0-7, sprite palettes 0-7 -> indices 8-15
 static unsigned char cgb_color_lut[16][4];
 
 // Convert RGB555 to RGBColor for Palette Manager

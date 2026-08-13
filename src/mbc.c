@@ -323,7 +323,7 @@ int mbc_ram_read(struct mbc *mbc, u16 addr, u8 *out)
   }
 
   if (is_mbc2(mbc->type)) {
-    // MBC2: 512×4 bits, only bottom 9 bits of address used
+    // MBC2: 512x4 bits, only bottom 9 bits of address used
     int index = addr & 0x1ff;
     *out = mbc->ram[index] | 0xf0;  // Upper 4 bits undefined, set to 1
     return 1;
@@ -351,7 +351,7 @@ int mbc_ram_write(struct mbc *mbc, u16 addr, u8 data)
   }
 
   if (is_mbc2(mbc->type)) {
-    // MBC2: 512×4 bits, only bottom 9 bits of address used
+    // MBC2: 512x4 bits, only bottom 9 bits of address used
     int index = addr & 0x1ff;
     mbc->ram[index] = data & 0x0f;  // Only lower 4 bits stored
     return 1;

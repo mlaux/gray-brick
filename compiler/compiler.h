@@ -123,7 +123,7 @@ struct compile_ctx {
     alloc_fn alloc;             // NULL uses malloc, otherwise arena_alloc
     uint8_t current_bank;       // current ROM bank for cache_store calls
     // GB memory the emitted fast paths address absolutely
-    void *wram_base;            // dmg->main_ram
+    void *wram_base;            // dmg->wram
     void *hram_base;            // dmg->hram
     void *joyp_ptr;             // &dmg->joyp, the maintained FF00 shadow
     uint16_t bank_reg_lo;       // MBC ROM-bank select range for the

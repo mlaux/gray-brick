@@ -29,8 +29,8 @@ struct dmg;
 #define WRITE_TABLE_ADDR   0x000a00  // 16 4KB pages = 64 bytes each
 #define STACK_TOP          0x003000  // 68k stack, grows down
 #define DMG_ADDR           0x008000  // struct dmg
-#define WRAM_ADDR          0x00c000  // dmg->main_ram, WRAM_SIZE
-#define VRAM_ADDR          0x014000  // dmg->video_ram, VRAM_SIZE
+#define WRAM_ADDR          0x00c000  // dmg->wram, WRAM_SIZE
+#define VRAM_ADDR          0x014000  // dmg->vram, VRAM_SIZE
 #define HRAM_ADDR          0x018000  // dmg->hram, HRAM_SIZE
 #define MBC_ADDR           0x020000  // struct mbc (holds cart ram)
 #define ROM_ADDR           0x040000

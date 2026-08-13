@@ -422,7 +422,7 @@ void lcd_render_band(
     int sy_end,
     const struct raster_regs *regs)
 {
-    u8 *vram = dmg->video_ram;
+    u8 *vram = dmg->vram;
     u8 *out = dmg->lcd->pixels;
 
     int lcdc = regs->lcdc;
@@ -642,7 +642,7 @@ void lcd_render_objs_band(
     struct oam_entry *oam_base = (struct oam_entry *) dmg->lcd->oam;
     int tall = regs->lcdc & LCDC_OBJ_SIZE;
     int bg_on = regs->lcdc & LCDC_ENABLE_BG;
-    u8 *vram = dmg->video_ram;
+    u8 *vram = dmg->vram;
     u8 *pixels = dmg->lcd->pixels;
 
     // sprites render at screen position + each row's buffer alignment

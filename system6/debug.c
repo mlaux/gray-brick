@@ -89,7 +89,7 @@ void debug_dump_vram(struct dmg *dmg)
     long len;
     OSErr err;
 
-    if (!dmg || !dmg->video_ram) return;
+    if (!dmg || !dmg->vram) return;
 
     // Dump VRAM bank 0 (first 8KB)
     err = FSOpen("\pvram_bank0.bin", 0, &fref);
@@ -100,7 +100,7 @@ void debug_dump_vram(struct dmg *dmg)
     if (err == noErr) {
         SetFPos(fref, fsFromStart, 0);
         len = 0x2000;  // 8KB
-        FSWrite(fref, &len, dmg->video_ram);
+        FSWrite(fref, &len, dmg->vram);
         SetEOF(fref, len);
         FSClose(fref);
     }
@@ -114,7 +114,7 @@ void debug_dump_vram(struct dmg *dmg)
     if (err == noErr) {
         SetFPos(fref, fsFromStart, 0);
         len = 0x2000;  // 8KB
-        FSWrite(fref, &len, dmg->video_ram + 0x2000);
+        FSWrite(fref, &len, dmg->vram + 0x2000);
         SetEOF(fref, len);
         FSClose(fref);
     }
