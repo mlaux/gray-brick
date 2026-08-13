@@ -481,6 +481,7 @@ void compile_halt(struct code_block *block, int next_pc)
 // deadline the same way HALT does
 void compile_hram_idle_wait(
     struct code_block *block,
+    void *hram_base,
     uint8_t addr_lo,
     uint8_t jr_opcode,
     uint16_t loop_pc
@@ -489,8 +490,9 @@ void compile_hram_idle_wait(
     defer_cycles(12);
 
     // A = HRAM flag
-    emit_movea_l_ind_an_an(block, REG_68K_A_CTX, REG_68K_A_SCRATCH_1);
-    emit_move_b_disp_an_dn(block, addr_lo - 0x80, REG_68K_A_SCRATCH_1, REG_68K_D_A);
+    emit_move_b_abs32_dn(block,
+            (uint32_t) (uintptr_t) hram_base + (addr_lo - 0x80),
+            REG_68K_D_A);
 
     // and a / or a: Z from A, C=0
     emit_tst_b_dn(block, REG_68K_D_A);

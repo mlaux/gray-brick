@@ -122,8 +122,9 @@ struct compile_ctx {
     cache_store_fn cache_store; // NULL in tests, registers mid-block entries
     alloc_fn alloc;             // NULL uses malloc, otherwise arena_alloc
     uint8_t current_bank;       // current ROM bank for cache_store calls
-    void *wram_base;            // dmg->main_ram for compile-time WRAM SP detection
-    void *hram_base;
+    // GB memory the emitted fast paths address absolutely
+    void *wram_base;            // dmg->main_ram
+    void *hram_base;            // dmg->zero_page
     void *joyp_ptr;             // &dmg->joyp, the maintained FF00 shadow
     uint16_t bank_reg_lo;       // MBC ROM-bank select range for the
     uint16_t bank_reg_hi;       // same-bank write skip, both 0 = off

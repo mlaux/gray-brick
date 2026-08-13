@@ -14,13 +14,8 @@ void compile_ldh_u8_a(
     uint8_t addr
 ) {
     if (addr >= 0x80 && addr != 0xff) {
-        if (ctx && ctx->hram_base) {
-            emit_move_b_dn_abs32(block, REG_68K_D_A,
-                    (uint32_t) (uintptr_t) ctx->hram_base + (addr - 0x80));
-        } else {
-            emit_movea_l_ind_an_an(block, REG_68K_D_A, 0);
-            emit_move_b_dn_disp_an(block, REG_68K_D_A, addr - 0x80, 0);
-        }
+        emit_move_b_dn_abs32(block, REG_68K_D_A,
+                (uint32_t) (uintptr_t) ctx->hram_base + (addr - 0x80));
     } else {
         emit_move_w_dn(block, REG_68K_D_SCRATCH_1, 0xff00 + addr);
         compile_slow_dmg_write(block, REG_68K_D_A);
@@ -39,14 +34,9 @@ static void compile_ldh_a_u8_direct(
     }
     if (addr >= 0x80) {
         // HRAM
-        if (ctx && ctx->hram_base) {
-            emit_move_b_abs32_dn(block,
-                    (uint32_t) (uintptr_t) ctx->hram_base + (addr - 0x80),
-                    REG_68K_D_A);
-        } else {
-            emit_movea_l_ind_an_an(block, 4, 0);
-            emit_move_b_disp_an_dn(block, addr - 0x80, 0, 4);
-        }
+        emit_move_b_abs32_dn(block,
+                (uint32_t) (uintptr_t) ctx->hram_base + (addr - 0x80),
+                REG_68K_D_A);
     } else {
         // not hram so it has to be I/O, go directly to C
         emit_move_w_dn(block, REG_68K_D_SCRATCH_1, 0xff00 + addr);
@@ -132,7 +122,8 @@ int compile_ldh_a_u8(
 
             if ((jr_op == 0x20 || jr_op == 0x28) && offset == -5) {
                 uint16_t loop_pc = src_address + *src_ptr - 2;
-                compile_hram_idle_wait(block, addr, jr_op, loop_pc);
+                compile_hram_idle_wait(block, ctx->hram_base, addr, jr_op,
+                        loop_pc);
                 *src_ptr += 3;
                 return 0;
             }
@@ -166,7 +157,7 @@ void compile_ld_u16_a(
     uint16_t addr = READ_BYTE(*src_ptr) | (READ_BYTE(*src_ptr + 1) << 8);
     *src_ptr += 2;
 
-    if (addr >= 0xff80 && addr != 0xffff && ctx->hram_base) {
+    if (addr >= 0xff80 && addr != 0xffff) {
         emit_move_b_dn_abs32(block, REG_68K_D_A,
                 (uint32_t) (uintptr_t) ctx->hram_base + (addr - 0xff80));
     } else if (addr < 0x8000) {
@@ -215,12 +206,12 @@ void compile_ld_a_u16(
         emit_move_b_abs32_dn(block,
                 (uint32_t) (uintptr_t) ctx->joyp_ptr,
                 REG_68K_D_A);
-    } else if (addr >= 0xff80 && ctx->hram_base) {
+    } else if (addr >= 0xff80) {
         // HRAM/IE: fixed address
         emit_move_b_abs32_dn(block,
                 (uint32_t) (uintptr_t) ctx->hram_base + (addr - 0xff80),
                 REG_68K_D_A);
-    } else if (addr >= 0xc000 && addr < 0xd000 && ctx->wram_base) {
+    } else if (addr >= 0xc000 && addr < 0xd000) {
         emit_move_b_abs32_dn(block,
                 (uint32_t) (uintptr_t) ctx->wram_base + (addr - 0xc000),
                 REG_68K_D_A);

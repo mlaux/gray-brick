@@ -685,8 +685,8 @@ TEST(test_ly_wait_and_a_during_vblank)
 // HRAM idle wait pattern tests
 // Pattern: ldh a, (nn); and a / or a; jr z/nz back to the ldh
 // The compiler checks the flag once and fast-forwards to vblank instead of
-// spinning. In the test context the fake dmg pointer is 0x4000, so HRAM
-// byte $ff90 lives at host address 0x4010.
+// spinning. the test hram_base is GLOBALS_BASE, so HRAM byte $ff90 lives
+// at host address 0x4010.
 // ============================================================================
 
 #define TEST_HRAM_FLAG_HOST_ADDR 0x4010

@@ -57,6 +57,10 @@ struct audio audio;
 struct dmg dmg;
 struct cgb_state cgb_state;
 
+u8 gb_wram[WRAM_SIZE];
+u8 gb_vram[VRAM_SIZE];
+u8 gb_hram[HRAM_SIZE];
+
 WindowPtr g_wp;
 Boolean app_running;
 
@@ -494,7 +498,7 @@ static void StartEmulation(void)
   memset(&lcd, 0, sizeof(lcd));
   lcd_new(&lcd);
 
-  dmg_new(&dmg, &rom, &lcd);
+  dmg_new(&dmg, &rom, &lcd, gb_wram, gb_vram, gb_hram);
   dmg.rom_bank_switch_hook = on_rom_bank_switch;
 
   // Initialize CGB state if ROM supports it and user has enabled GBC mode

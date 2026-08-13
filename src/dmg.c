@@ -21,11 +21,6 @@
 #define INT_JOYPAD  (1 << 4)
 #define NUM_INTERRUPTS 5
 
-// 32KB WRAM for CGB (8 x 4KB banks), only 8KB used in DMG
-static u8 dmg_main_ram[0x8000];
-// 16KB VRAM for CGB (2 x 8KB banks), only 8KB used in DMG
-static u8 dmg_vram[0x4000];
-
 // TAC clock select -> cycles per TIMA increment
 static const u16 timer_divisors[] = { 1024, 16, 64, 256 };
 
@@ -124,10 +119,21 @@ static void raster_record(
     e->value = data;
 }
 
-void dmg_new(struct dmg *dmg, struct rom *rom, struct lcd *lcd)
+void dmg_new(
+    struct dmg *dmg,
+    struct rom *rom,
+    struct lcd *lcd,
+    u8 *wram,
+    u8 *vram,
+    u8 *hram)
 {
-    dmg->main_ram = dmg_main_ram;
-    dmg->video_ram = dmg_vram;
+    dmg->main_ram = wram;
+    dmg->video_ram = vram;
+    dmg->zero_page = hram;
+    memset(wram, 0, WRAM_SIZE);
+    memset(vram, 0, VRAM_SIZE);
+    memset(hram, 0, HRAM_SIZE);
+
     dmg->rom = rom;
     dmg->lcd = lcd;
 

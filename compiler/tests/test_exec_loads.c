@@ -326,12 +326,6 @@ TEST(test_ldh_dec_preserves_value)
     ASSERT_EQ(get_mem_byte(0x4011), 0x04);
 }
 
-// ============================================================================
-// Page table fast path tests
-// prepare_block_with_pages sets up real biased page tables so these hit the
-// inline fast path instead of falling back to the C stubs
-// ============================================================================
-
 TEST(test_page_fast_read)
 {
     uint8_t rom[] = {
@@ -339,9 +333,9 @@ TEST(test_page_fast_read)
         0x7e,             // ld a, (hl)
         0x10              // stop
     };
-    prepare_block_with_pages(rom);
+    prepare_block(rom);
     set_mem_byte(PAGE_BUF_C + 5, 0x5a);
-    execute_prepared_block();
+    run_prepared_block();
     ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 0x5a);
 }
 
@@ -353,8 +347,8 @@ TEST(test_page_fast_write)
         0x77,             // ld (hl), a
         0x10              // stop
     };
-    prepare_block_with_pages(rom);
-    execute_prepared_block();
+    prepare_block(rom);
+    run_prepared_block();
     ASSERT_EQ(get_mem_byte(PAGE_BUF_C + 5), 0x77);
 }
 
@@ -369,19 +363,18 @@ TEST(test_page_fast_read_sign_boundary)
         0x4e,             // ld c, (hl)
         0x10              // stop
     };
-    prepare_block_with_pages(rom);
+    prepare_block(rom);
     set_mem_byte(PAGE_BUF_7 + 0xfff, 0x11);
     set_mem_byte(PAGE_BUF_8, 0x22);
-    execute_prepared_block();
+    run_prepared_block();
     ASSERT_EQ((get_dreg(REG_68K_D_BC) >> 16) & 0xff, 0x11);
     ASSERT_EQ(get_dreg(REG_68K_D_BC) & 0xff, 0x22);
 }
 
-TEST(test_page_fast_pop_push)
+TEST(test_wram_stack_fast_pop_push)
 {
-    // pop goes through the read16 fast path (sp not in WRAM base page 0
-    // at compile time, so ld sp,imm16 leaves the stack in slow mode),
-    // push through the write16 fast path
+    // sp in WRAM: ld sp,imm16 resolves A3 to wram_base at compile time and
+    // marks the stack in-ram, so pop and push use A3 directly
     uint8_t rom[] = {
         0x31, 0x80, 0xc1, // ld sp, 0xc180
         0xc1,             // pop bc
@@ -389,47 +382,67 @@ TEST(test_page_fast_pop_push)
         0xc5,             // push bc
         0x10              // stop
     };
-    prepare_block_with_pages(rom);
+    prepare_block(rom);
     set_mem_byte(PAGE_BUF_C + 0x180, 0x34);
     set_mem_byte(PAGE_BUF_C + 0x181, 0x12);
-    execute_prepared_block();
+    run_prepared_block();
     // BC split format 0x00BB00CC
     ASSERT_EQ(get_dreg(REG_68K_D_BC) & 0x00ff00ff, 0x00120034);
     ASSERT_EQ(get_mem_byte(PAGE_BUF_C + 0x13e), 0x34);
     ASSERT_EQ(get_mem_byte(PAGE_BUF_C + 0x13f), 0x12);
 }
 
+TEST(test_page_fast_pop_push)
+{
+    // a cart ram stack stays in slow mode, so pop goes through the read16
+    // fast path and push through the write16 fast path
+    uint8_t rom[] = {
+        0x31, 0x80, 0xa1, // ld sp, 0xa180
+        0xc1,             // pop bc
+        0x31, 0x40, 0xa1, // ld sp, 0xa140
+        0xc5,             // push bc
+        0x10              // stop
+    };
+    prepare_block(rom);
+    set_mem_byte(PAGE_BUF_A + 0x180, 0x34);
+    set_mem_byte(PAGE_BUF_A + 0x181, 0x12);
+    run_prepared_block();
+    ASSERT_EQ(get_dreg(REG_68K_D_BC) & 0x00ff00ff, 0x00120034);
+    ASSERT_EQ(get_mem_byte(PAGE_BUF_A + 0x13e), 0x34);
+    ASSERT_EQ(get_mem_byte(PAGE_BUF_A + 0x13f), 0x12);
+}
+
 TEST(test_page_read16_cross_falls_back)
 {
-    // low byte at 0xcfff, high byte at 0xd000 crosses the 4K page
+    // low byte at 0xafff, high byte at 0xb000 crosses the 4K page
     // boundary, so the fast path must fall back to the stub (which reads
     // literal addresses in test memory)
     uint8_t rom[] = {
-        0x31, 0xff, 0xcf, // ld sp, 0xcfff
+        0x31, 0xff, 0xaf, // ld sp, 0xafff
         0xc1,             // pop bc
         0x10              // stop
     };
-    prepare_block_with_pages(rom);
-    set_mem_byte(0xcfff, 0x78);
-    set_mem_byte(0xd000, 0x56);
-    execute_prepared_block();
+    prepare_block(rom);
+    set_mem_byte(0xafff, 0x78);
+    set_mem_byte(0xb000, 0x56);
+    run_prepared_block();
     ASSERT_EQ(get_dreg(REG_68K_D_BC) & 0x00ff00ff, 0x00560078);
 }
 
 TEST(test_page_write16_cross_falls_back)
 {
-    // push with sp = 0xd001 writes 0xcfff/0xd000, crossing the 4K page
+    // push with sp = 0xb001 writes 0xafff/0xb000, crossing the 4K page
     // boundary - must fall back to the stub
     uint8_t rom[] = {
         0x01, 0x34, 0x12, // ld bc, 0x1234
-        0x31, 0x01, 0xd0, // ld sp, 0xd001
+        0x31, 0x01, 0xb0, // ld sp, 0xb001
         0xc5,             // push bc
         0x10              // stop
     };
-    prepare_block_with_pages(rom);
-    execute_prepared_block();
-    ASSERT_EQ(get_mem_byte(0xcfff), 0x34);
-    ASSERT_EQ(get_mem_byte(0xd000), 0x12);
+    prepare_block(rom);
+    run_prepared_block();
+    ASSERT_EQ(get_mem_byte(0xafff), 0x34);
+    ASSERT_EQ(get_mem_byte(0xb000), 0x12);
 }
 
 void register_load_tests(void)
@@ -498,6 +511,7 @@ void register_load_tests(void)
     RUN_TEST(test_page_fast_read);
     RUN_TEST(test_page_fast_write);
     RUN_TEST(test_page_fast_read_sign_boundary);
+    RUN_TEST(test_wram_stack_fast_pop_push);
     RUN_TEST(test_page_fast_pop_push);
     RUN_TEST(test_page_read16_cross_falls_back);
     RUN_TEST(test_page_write16_cross_falls_back);

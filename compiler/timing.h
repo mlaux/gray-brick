@@ -39,6 +39,7 @@ void compile_halt(struct code_block *block, int next_pc);
 // detects ldh a, [nn]; and a / or a; jr z/nz back to the ldh
 void compile_hram_idle_wait(
     struct code_block *block,
+    void *hram_base,
     uint8_t addr_lo,
     uint8_t jr_opcode,
     uint16_t loop_pc

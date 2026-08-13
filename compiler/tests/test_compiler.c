@@ -93,6 +93,30 @@ void m68k_write_memory_32(unsigned int address, unsigned int value)
     }
 }
 
+#define PAGE_TABLE_READ  0x9000  // 16 entries * 4 bytes
+#define PAGE_TABLE_WRITE 0x9040
+
+#define TEST_PAGE_ENTRY(host, page) \
+    ((uint32_t)(host) - ((uint32_t)(page) << 12) + ((page) >= 8 ? 0x10000 : 0))
+
+static void map_test_page(uint32_t table, int page, uint32_t host)
+{
+    m68k_write_memory_32(table + page * 4, TEST_PAGE_ENTRY(host, page));
+}
+
+static void setup_page_tables(void)
+{
+    map_test_page(PAGE_TABLE_READ, 0x7, PAGE_BUF_7);
+    map_test_page(PAGE_TABLE_READ, 0x8, PAGE_BUF_8);
+    map_test_page(PAGE_TABLE_READ, 0xa, PAGE_BUF_A);
+    map_test_page(PAGE_TABLE_READ, 0xc, PAGE_BUF_C);
+    map_test_page(PAGE_TABLE_READ, 0xd, PAGE_BUF_D);
+    map_test_page(PAGE_TABLE_WRITE, 0x8, PAGE_BUF_8);
+    map_test_page(PAGE_TABLE_WRITE, 0xa, PAGE_BUF_A);
+    map_test_page(PAGE_TABLE_WRITE, 0xc, PAGE_BUF_C);
+    map_test_page(PAGE_TABLE_WRITE, 0xd, PAGE_BUF_D);
+}
+
 // Set up stub functions for dmg_read/dmg_write
 // These are 68k code that the compiled JIT code can call
 // Use A0 as scratch
@@ -168,12 +192,8 @@ static void setup_runtime_stubs(void)
         0x4e, 0x75               // rts
     };
 
-    // shared memory-access helpers for the current codegen mode. no
-    // hram_base: tests route HRAM through the stubs like everything else
-    {
-        const struct code_block *helpers = compile_emit_helpers(HELPER_BASE, NULL);
-        memcpy(mem + HELPER_BASE, helpers->code, helpers->length);
-    }
+    const struct code_block *helpers = compile_emit_helpers(HELPER_BASE, NULL);
+    memcpy(mem + HELPER_BASE, helpers->code, helpers->length);
 
     // Copy stubs to memory
     memcpy(mem + STUB_BASE, stub_read, sizeof(stub_read));
@@ -205,27 +225,31 @@ static void setup_runtime_stubs(void)
     // wake_limit 0 means backward loops always exit to the dispatcher;
     // run_block_with_frame_cycles sets a real distance for skip tests
     m68k_write_memory_32(JIT_CTX_ADDR + JIT_CTX_WAKE_LIMIT, 0);
+
+    setup_page_tables();
 }
 
-// Initialize Musashi, copy code to memory, set up stack, run
-void run_code(struct code_block *block)
+static struct code_block *prepared_block;
+
+void prepare_block(uint8_t *gb_rom)
 {
-    int k;
-
     memset(mem, 0, MEM_SIZE);
-
-    // Set up runtime stubs and context
     setup_runtime_stubs();
 
-    // Copy code to CODE_BASE
-    memcpy(mem + CODE_BASE, block->code, block->length);
+    test_gb_rom = gb_rom;
+    prepared_block = compile_block(0, test_compile_ctx);
+    memcpy(mem + CODE_BASE, prepared_block->code, prepared_block->length);
+}
+
+void run_prepared_block(void)
+{
+    int k;
 
     // each test case will return to address 0, which contains an infinite loop
     m68k_write_memory_32(STACK_BASE - 4, 0);
     m68k_write_memory_16(0, 0x60fe);  // bra.s *
 
     m68k_pulse_reset();
-
     m68k_set_reg(M68K_REG_SP, STACK_BASE - 4);
     m68k_set_reg(M68K_REG_ISP, STACK_BASE);
     m68k_set_reg(M68K_REG_PC, CODE_BASE);
@@ -233,16 +257,19 @@ void run_code(struct code_block *block)
     for (k = 0; k < 8; k++) {
         m68k_set_reg(M68K_REG_D0 + k, 0);
     }
-    // Clear A0-A6, but not A7 (stack pointer)
     for (k = 0; k < 7; k++) {
         m68k_set_reg(M68K_REG_A0 + k, 0);
     }
 
-    // Set A4 to runtime context
     m68k_set_reg(M68K_REG_A4, JIT_CTX_ADDR);
+    m68k_set_reg(M68K_REG_A5, PAGE_TABLE_READ);
+    m68k_set_reg(M68K_REG_A6, PAGE_TABLE_WRITE);
     m68k_set_reg(M68K_REG_D0 + REG_68K_D_CYCLE_COUNT, 0);
 
     m68k_execute(1000);
+
+    block_free(prepared_block);
+    prepared_block = NULL;
 }
 
 #define HALT_SENTINEL 0xffffffff
@@ -273,16 +300,15 @@ void run_program(uint8_t *gb_rom, uint16_t start_pc)
         m68k_set_reg(M68K_REG_A0 + k, 0);
     }
 
-    // Initialize GB stack pointer (A3 = base + SP, and JIT_CTX_GB_SP for slow path)
+    // Initialize GB stack pointer
     m68k_set_reg(M68K_REG_A3, GB_MEM_BASE + DEFAULT_GB_SP);
     m68k_write_memory_16(JIT_CTX_ADDR + JIT_CTX_GB_SP, DEFAULT_GB_SP);
-    // start in fast mode like the real emulator. GB_MEM_BASE is 0, so A3
-    // doubles as a valid host pointer. ld sp drops back to slow mode
-    // because test_ctx has no wram_base
     m68k_write_memory_32(JIT_CTX_ADDR + JIT_CTX_STACK_IN_RAM, 1);
 
     // Set A4 to runtime context
     m68k_set_reg(M68K_REG_A4, JIT_CTX_ADDR);
+    m68k_set_reg(M68K_REG_A5, PAGE_TABLE_READ);
+    m68k_set_reg(M68K_REG_A6, PAGE_TABLE_WRITE);
     m68k_set_reg(M68K_REG_D0 + REG_68K_D_CYCLE_COUNT, 0);
 
     while (1) {
@@ -421,6 +447,8 @@ void run_block_with_frame_cycles_mem(
 
     // Set A4 to runtime context
     m68k_set_reg(M68K_REG_A4, JIT_CTX_ADDR);
+    m68k_set_reg(M68K_REG_A5, PAGE_TABLE_READ);
+    m68k_set_reg(M68K_REG_A6, PAGE_TABLE_WRITE);
     m68k_set_reg(M68K_REG_D0 + REG_68K_D_CYCLE_COUNT, 0);
 
     // Initialize GB stack pointer (A3 = base + SP), fast mode as above
@@ -472,75 +500,13 @@ void run_block_with_budget(uint8_t *gb_rom, uint32_t budget)
     }
 
     m68k_set_reg(M68K_REG_A4, JIT_CTX_ADDR);
+    m68k_set_reg(M68K_REG_A5, PAGE_TABLE_READ);
+    m68k_set_reg(M68K_REG_A6, PAGE_TABLE_WRITE);
     m68k_set_reg(M68K_REG_D0 + REG_68K_D_CYCLE_COUNT, 0);
 
     m68k_execute(10000);
 
     block_free(block);
-}
-
-// ============================================================================
-// Page table fast path testing
-// ============================================================================
-
-#define PAGE_TABLE_READ  0x9000  // 16 entries * 4 bytes
-#define PAGE_TABLE_WRITE 0x9400
-
-// biased entry: entry + (s16)gb_address = host address (see PAGE_BIAS)
-#define TEST_PAGE_ENTRY(host, page) \
-    ((uint32_t)(host) - ((uint32_t)(page) << 12) + ((page) >= 8 ? 0x10000 : 0))
-
-static struct code_block *prepared_block;
-
-static void map_test_page(uint32_t table, int page, uint32_t host)
-{
-    m68k_write_memory_32(table + page * 4, TEST_PAGE_ENTRY(host, page));
-}
-
-void prepare_block_with_pages(uint8_t *gb_rom)
-{
-    memset(mem, 0, MEM_SIZE);
-    setup_runtime_stubs();
-
-    map_test_page(PAGE_TABLE_READ, 0x7, PAGE_BUF_7);
-    map_test_page(PAGE_TABLE_READ, 0x8, PAGE_BUF_8);
-    map_test_page(PAGE_TABLE_READ, 0xc, PAGE_BUF_C);
-    map_test_page(PAGE_TABLE_WRITE, 0x8, PAGE_BUF_8);
-    map_test_page(PAGE_TABLE_WRITE, 0xc, PAGE_BUF_C);
-
-    test_gb_rom = gb_rom;
-    prepared_block = compile_block(0, test_compile_ctx);
-    memcpy(mem + CODE_BASE, prepared_block->code, prepared_block->length);
-}
-
-void execute_prepared_block(void)
-{
-    int k;
-
-    m68k_write_memory_32(STACK_BASE - 4, 0);
-    m68k_write_memory_16(0, 0x60fe);  // bra.s *
-
-    m68k_pulse_reset();
-    m68k_set_reg(M68K_REG_SP, STACK_BASE - 4);
-    m68k_set_reg(M68K_REG_ISP, STACK_BASE);
-    m68k_set_reg(M68K_REG_PC, CODE_BASE);
-
-    for (k = 0; k < 8; k++) {
-        m68k_set_reg(M68K_REG_D0 + k, 0);
-    }
-    for (k = 0; k < 7; k++) {
-        m68k_set_reg(M68K_REG_A0 + k, 0);
-    }
-
-    m68k_set_reg(M68K_REG_A4, JIT_CTX_ADDR);
-    m68k_set_reg(M68K_REG_D0 + REG_68K_D_CYCLE_COUNT, 0);
-    m68k_set_reg(M68K_REG_A5, PAGE_TABLE_READ);
-    m68k_set_reg(M68K_REG_A6, PAGE_TABLE_WRITE);
-
-    m68k_execute(1000);
-
-    block_free(prepared_block);
-    prepared_block = NULL;
 }
 
 int main(int argc, char *argv[])
@@ -555,6 +521,8 @@ int main(int argc, char *argv[])
     // Initialize test compile context
     test_ctx.dmg = NULL;
     test_ctx.read = test_read;
+    test_ctx.wram_base = (void *) (uintptr_t) PAGE_BUF_C;
+    test_ctx.hram_base = (void *) (uintptr_t) GLOBALS_BASE;
 
     // record helper entry addresses for compile_block, the bytes are
     // copied into memory by setup_runtime_stubs

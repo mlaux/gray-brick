@@ -19,13 +19,13 @@ void compile_ld_sp_imm16(
     emit_move_w_dn_disp_an(block, REG_68K_D_SCRATCH_1, JIT_CTX_GB_SP, REG_68K_A_CTX);
 
     // compile-time WRAM/HRAM detection
-    if (ctx && ctx->wram_base && gb_sp >= 0xc002 && gb_sp < 0xd000) {
+    if (gb_sp >= 0xc002 && gb_sp < 0xd000) {
         // WRAM bank 0 ($C000-$CFFF): always fixed, use compile-time address
-        uint32_t addr = (uint32_t) ctx->wram_base + (gb_sp - 0xc000);
+        uint32_t addr = (uint32_t) (uintptr_t) ctx->wram_base + (gb_sp - 0xc000);
         emit_movea_l_imm32(block, REG_68K_A_SP, addr);
         emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 1);
         emit_move_l_dn_disp_an(block, REG_68K_D_SCRATCH_1, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
-    } else if (ctx && ctx->wram_base && gb_sp >= 0xd000 && gb_sp <= 0xe000) {
+    } else if (gb_sp >= 0xd000 && gb_sp <= 0xe000) {
         // Switchable WRAM ($D000-$DFFF): use page table for correct bank
         // SP = $e000 (top-of-WRAM stack) needs to use page $d
         uint8_t page = (gb_sp - 1) >> 12;
@@ -37,9 +37,9 @@ void compile_ld_sp_imm16(
         emit_lea_disp_an_an(block, (int16_t) gb_sp, REG_68K_A_SP, REG_68K_A_SP);
         emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 1);
         emit_move_l_dn_disp_an(block, REG_68K_D_SCRATCH_1, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
-    } else if (ctx && ctx->hram_base && gb_sp >= 0xff82 && gb_sp <= 0xfffe) {
+    } else if (gb_sp >= 0xff82 && gb_sp <= 0xfffe) {
         // HRAM: A3 = hram_base + (gb_sp - 0xFF80)
-        uint32_t addr = (uint32_t) ctx->hram_base + (gb_sp - 0xff80);
+        uint32_t addr = (uint32_t) (uintptr_t) ctx->hram_base + (gb_sp - 0xff80);
         emit_movea_l_imm32(block, REG_68K_A_SP, addr);
         emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 1);
         emit_move_l_dn_disp_an(block, REG_68K_D_SCRATCH_1, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
@@ -454,76 +454,66 @@ int compile_stack_op(
             emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
             emit_move_w_dn_disp_an(block, REG_68K_D_SCRATCH_1, JIT_CTX_GB_SP, REG_68K_A_CTX);
 
-            if (ctx && ctx->wram_base) {
-                // Runtime range check for WRAM and HRAM
-                size_t not_wram, not_hram, done, done2;
+            // Runtime range check for WRAM and HRAM
+            size_t not_wram, not_hram, done, done2;
 
-                // Check WRAM: $c002 <= HL <= $e000, same bounds as the
-                // compile-time path above
-                emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
-                emit_subi_w_dn(block, 0xc002, REG_68K_D_SCRATCH_1);
-                emit_cmpi_w_imm_dn(block, 0xe000 - 0xc002, REG_68K_D_SCRATCH_1);
-                not_wram = block->length;
-                emit_bcc_opcode_w(block, COND_HI, 0);  // branch if out of range
+            // Check WRAM: $c002 <= HL <= $e000, same bounds as the
+            // compile-time path above
+            emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
+            emit_subi_w_dn(block, 0xc002, REG_68K_D_SCRATCH_1);
+            emit_cmpi_w_imm_dn(block, 0xe000 - 0xc002, REG_68K_D_SCRATCH_1);
+            not_wram = block->length;
+            emit_bcc_opcode_w(block, COND_HI, 0);  // branch if out of range
 
-                // WRAM path: use page table for correct bank
-                // A3 = read_page[(HL-1) >> 12] + (s16)HL (entries are
-                // biased). page of HL-1, same rule as the compile-time
-                // path: HL = $e000 anchors in page $d
-                emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
-                // D0 = HL - 1, page lookup does the shift
-                emit_move_w_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);
-                emit_subq_w_dn(block, REG_68K_D_SCRATCH_0, 1);
-                // A3 = read_page[page] (biased entry, see PAGE_BIAS in dmg.h)
-                compile_page_lookup(block, REG_68K_A_READ_PAGE, REG_68K_D_SCRATCH_0, REG_68K_A_SP);
-                // A3 += (s16)HL to complete the biased address
-                emit_adda_w_dn_an(block, REG_68K_D_SCRATCH_1, REG_68K_A_SP);
-                emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 1);
-                emit_move_l_dn_disp_an(block, REG_68K_D_SCRATCH_1, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
-                done = block->length;
-                emit_bra_w(block, 0);
+            // WRAM path: use page table for correct bank
+            // A3 = read_page[(HL-1) >> 12] + (s16)HL (entries are
+            // biased). page of HL-1, same rule as the compile-time
+            // path: HL = $e000 anchors in page $d
+            emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
+            // D0 = HL - 1, page lookup does the shift
+            emit_move_w_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);
+            emit_subq_w_dn(block, REG_68K_D_SCRATCH_0, 1);
+            // A3 = read_page[page] (biased entry, see PAGE_BIAS in dmg.h)
+            compile_page_lookup(block, REG_68K_A_READ_PAGE, REG_68K_D_SCRATCH_0, REG_68K_A_SP);
+            // A3 += (s16)HL to complete the biased address
+            emit_adda_w_dn_an(block, REG_68K_D_SCRATCH_1, REG_68K_A_SP);
+            emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 1);
+            emit_move_l_dn_disp_an(block, REG_68K_D_SCRATCH_1, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
+            done = block->length;
+            emit_bra_w(block, 0);
 
-                // Not WRAM - check HRAM
-                patch_branch_w(block, not_wram);
+            // Not WRAM - check HRAM
+            patch_branch_w(block, not_wram);
 
-                if (ctx->hram_base) {
-                    // Check HRAM: $ff82 <= HL <= $fffe
-                    emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
-                    emit_subi_w_dn(block, 0xff82, REG_68K_D_SCRATCH_1);
-                    emit_cmpi_w_imm_dn(block, 0xfffe - 0xff82, REG_68K_D_SCRATCH_1);
-                    not_hram = block->length;
-                    emit_bcc_opcode_w(block, COND_HI, 0);  // branch if out of range
+            // Check HRAM: $ff82 <= HL <= $fffe
+            emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
+            emit_subi_w_dn(block, 0xff82, REG_68K_D_SCRATCH_1);
+            emit_cmpi_w_imm_dn(block, 0xfffe - 0xff82, REG_68K_D_SCRATCH_1);
+            not_hram = block->length;
+            emit_bcc_opcode_w(block, COND_HI, 0);  // branch if out of range
 
-                    // HRAM path: A3 = hram_base + (HL - $FF80)
-                    emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
-                    emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
-                    emit_movea_l_imm32(block, REG_68K_A_SP, (uint32_t) ctx->hram_base - 0xff80);
-                    emit_adda_l_dn_an(block, REG_68K_D_SCRATCH_1, REG_68K_A_SP);
-                    emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 1);
-                    emit_move_l_dn_disp_an(block, REG_68K_D_SCRATCH_1, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
-                    done2 = block->length;
-                    emit_bra_w(block, 0);
+            // HRAM path: A3 = hram_base + (HL - $FF80)
+            emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
+            emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
+            emit_movea_l_imm32(block, REG_68K_A_SP, 
+                    (uint32_t) (uintptr_t) ctx->hram_base - 0xff80);
+            emit_adda_l_dn_an(block, REG_68K_D_SCRATCH_1, REG_68K_A_SP);
+            emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 1);
+            emit_move_l_dn_disp_an(block, REG_68K_D_SCRATCH_1, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
+            done2 = block->length;
+            emit_bra_w(block, 0);
 
-                    // Patch not_hram branch to slow mode
-                    patch_branch_w(block, not_hram);
-                }
+            // Patch not_hram branch to slow mode
+            patch_branch_w(block, not_hram);
 
-                // Slow mode: A3 = HL (GB SP value)
-                emit_movea_w_an_an(block, REG_68K_A_HL, REG_68K_A_SP);
-                emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
-                emit_move_l_dn_disp_an(block, REG_68K_D_SCRATCH_1, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
+            // Slow mode: A3 = HL (GB SP value)
+            emit_movea_w_an_an(block, REG_68K_A_HL, REG_68K_A_SP);
+            emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
+            emit_move_l_dn_disp_an(block, REG_68K_D_SCRATCH_1, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
 
-                // Patch done branches
-                patch_branch_w(block, done);
-                if (ctx->hram_base) {
-                    patch_branch_w(block, done2);
-                }
-            } else {
-                // No context - simple path for testing
-                emit_movea_w_an_an(block, REG_68K_A_HL, REG_68K_A_SP);
-                emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 0);
-                emit_move_l_dn_disp_an(block, REG_68K_D_SCRATCH_1, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
-            }
+            // Patch done branches
+            patch_branch_w(block, done);
+            patch_branch_w(block, done2);
         }
         return 1;
 

@@ -564,10 +564,8 @@ void host_jit_init(struct dmg *d)
     // 68k-space addresses: emitted stack fast paths embed these as
     // absolute A3 values, so they must be Musashi addresses, not host
     // pointers
-    compile_ctx.wram_base =
-        (void *) (uintptr_t) (DMG_ADDR + offsetof(struct dmg, main_ram));
-    compile_ctx.hram_base =
-        (void *) (uintptr_t) (DMG_ADDR + offsetof(struct dmg, zero_page));
+    compile_ctx.wram_base = (void *) (uintptr_t) WRAM_ADDR;
+    compile_ctx.hram_base = (void *) (uintptr_t) HRAM_ADDR;
     compile_ctx.joyp_ptr =
         (void *) (uintptr_t) (DMG_ADDR + offsetof(struct dmg, joyp));
     cache_set_hram(dmg->zero_page);
@@ -682,8 +680,7 @@ void host_jit_init(struct dmg *d)
     m68k_set_reg(M68K_REG_D6, 0x000000d8);
     m68k_set_reg(M68K_REG_D7, 0x05);
     m68k_set_reg(M68K_REG_A2, 0x014d);
-    m68k_set_reg(M68K_REG_A3,
-                 DMG_ADDR + offsetof(struct dmg, zero_page) + 0x7e);
+    m68k_set_reg(M68K_REG_A3, HRAM_ADDR + 0x7e);
     m68k_set_reg(M68K_REG_A4, JIT_CTX_ADDR);
     m68k_set_reg(M68K_REG_A5, READ_TABLE_ADDR);
     m68k_set_reg(M68K_REG_A6, WRITE_TABLE_ADDR);

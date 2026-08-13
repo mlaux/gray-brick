@@ -58,16 +58,15 @@ extern uint8_t *test_gb_rom;
         uint8_t gb_code[] = { __VA_ARGS__ }; \
         test_gb_rom = gb_code; \
         struct code_block *block = compile_block(0, test_compile_ctx); \
-        run_code(block); \
+        run_program(gb_code, 0); \
         uint32_t raw = REG_IS_ADDR(reg) ? get_areg(REG_INDEX(reg)) : get_dreg(REG_INDEX(reg)); \
         uint32_t result = raw & REG_MASK(reg); \
         ASSERT_EQ(result, expected); \
         block_free(block); \
     }
 
-
-// Run compiled code on Musashi
-void run_code(struct code_block *block);
+void prepare_block(uint8_t *gb_rom);
+void run_prepared_block(void);
 
 // Run a complete GB program with block dispatcher
 void run_program(uint8_t *gb_rom, uint16_t start_pc);
@@ -117,16 +116,10 @@ void run_block_with_budget(uint8_t *gb_rom, uint32_t budget);
 // (consumed and reset to "none"). For fast-forward clamp tests.
 void set_wake_limit(uint32_t limit);
 
-// Page table fast path testing: real biased page tables in Musashi memory
-// (see PAGE_BIAS in src/dmg.h for the entry format). GB 4K pages 0x7, 0x8
-// and 0xc are mapped to these host buffers
 #define PAGE_BUF_7 0xa000  // GB 0x7000-0x7fff (read only)
 #define PAGE_BUF_8 0xb000  // GB 0x8000-0x8fff
+#define PAGE_BUF_A 0xc000  // GB 0xa000-0xafff (cart ram)
 #define PAGE_BUF_C 0xe000  // GB 0xc000-0xcfff
-
-// set up tables/stubs and compile the block; poke memory with set_mem_byte
-// between these two calls
-void prepare_block_with_pages(uint8_t *gb_rom);
-void execute_prepared_block(void);
+#define PAGE_BUF_D 0xf000  // GB 0xd000-0xdfff
 
 #endif

@@ -97,17 +97,17 @@ const struct code_block *compile_emit_helpers(uint32_t base, void *hram_base)
     emit_rts(b);
 
     patch_branch_b(b, unmapped);
-    if (hram_base) {
-        emit_cmpi_w_imm_dn(b, 0xff80, REG_68K_D_SCRATCH_1);
-        lo = b->length;
-        emit_bcs_b(b, 0);
-        emit_movea_l_imm32(b, REG_68K_A_SCRATCH_1,
-                (uint32_t) (uintptr_t) hram_base + 0x80);
-        emit_move_b_idx_an_dn(b, REG_68K_A_SCRATCH_1, REG_68K_D_SCRATCH_1,
-                REG_68K_D_SCRATCH_0);
-        emit_rts(b);
-        patch_branch_b(b, lo);
-    }
+
+    emit_cmpi_w_imm_dn(b, 0xff80, REG_68K_D_SCRATCH_1);
+    lo = b->length;
+    emit_bcs_b(b, 0);
+    emit_movea_l_imm32(b, REG_68K_A_SCRATCH_1,
+            (uint32_t) (uintptr_t) hram_base + 0x80);
+    emit_move_b_idx_an_dn(b, REG_68K_A_SCRATCH_1, REG_68K_D_SCRATCH_1,
+            REG_68K_D_SCRATCH_0);
+    emit_rts(b);
+    patch_branch_b(b, lo);
+
     jit_helpers.read8_slow = base + b->length;
     emit_c_read_call(b);
     emit_rts(b);
@@ -136,30 +136,27 @@ const struct code_block *compile_emit_helpers(uint32_t base, void *hram_base)
             REG_68K_D_SCRATCH_1);
     emit_rts(b);
 
-    if (hram_base) {
-        patch_branch_b(b, unmapped);
-        emit_cmpi_w_imm_dn(b, 0xff80, REG_68K_D_SCRATCH_1);
-        lo = b->length;
-        emit_bcs_b(b, 0);
-        // $ffff is IE, so need to go to C
-        emit_cmpi_w_imm_dn(b, 0xffff, REG_68K_D_SCRATCH_1);
-        ie = b->length;
-        emit_beq_b(b, 0);
-        emit_movea_l_imm32(b, REG_68K_A_SCRATCH_1,
-                (uint32_t) (uintptr_t) hram_base + 0x80);
-        emit_move_b_dn_idx_an(b, REG_68K_D_SCRATCH_0, REG_68K_A_SCRATCH_1,
-                REG_68K_D_SCRATCH_1);
-        emit_rts(b);
-    }
+    patch_branch_b(b, unmapped);
+    emit_cmpi_w_imm_dn(b, 0xff80, REG_68K_D_SCRATCH_1);
+    lo = b->length;
+    emit_bcs_b(b, 0);
+    // $ffff is IE, so need to go to C
+    emit_cmpi_w_imm_dn(b, 0xffff, REG_68K_D_SCRATCH_1);
+    ie = b->length;
+    emit_beq_b(b, 0);
+    emit_movea_l_imm32(b, REG_68K_A_SCRATCH_1,
+            (uint32_t) (uintptr_t) hram_base + 0x80);
+    emit_move_b_dn_idx_an(b, REG_68K_D_SCRATCH_0, REG_68K_A_SCRATCH_1,
+            REG_68K_D_SCRATCH_1);
+    emit_rts(b);
+
     jit_helpers.write8_slow_a = base + b->length;
     emit_move_b_dn_dn(b, REG_68K_D_A, REG_68K_D_SCRATCH_0);
     jit_helpers.write8_slow = base + b->length;
-    if (hram_base) {
-        patch_branch_b(b, lo);
-        patch_branch_b(b, ie);
-    } else {
-        patch_branch_b(b, unmapped);
-    }
+
+    patch_branch_b(b, lo);
+    patch_branch_b(b, ie);
+
     emit_c_write_call(b);
     emit_rts(b);
 

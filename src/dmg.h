@@ -49,8 +49,11 @@ enum {
 #define PAGE_BIAS(ptr, page) \
     ((u8 *)(ptr) - (((u32)(page)) << 12) + (((page) >= 8) ? 0x10000 : 0))
 
+#define WRAM_SIZE 0x8000
+#define VRAM_SIZE 0x4000
+#define HRAM_SIZE 0x80
+
 struct dmg {
-    u8 zero_page[0x80];
     // page table for fast memory access (16 pages of 4KB each).
     // page 0xf is never mapped - 0xf000-0xfdff echo, OAM, I/O and HRAM
     // all take the slow path (HRAM is mostly resolved at compile time)
@@ -67,6 +70,7 @@ struct dmg {
 
     u8 *main_ram;
     u8 *video_ram;
+    u8 *zero_page;
 
     u32 frames_rendered;
     int joypad_selected;
@@ -117,7 +121,14 @@ struct dmg {
     int current_rom_bank;
 };
 
-void dmg_new(struct dmg *dmg, struct rom *rom, struct lcd *lcd);
+void dmg_new(
+    struct dmg *dmg,
+    struct rom *rom,
+    struct lcd *lcd,
+    u8 *wram,
+    u8 *vram,
+    u8 *hram
+);
 void dmg_set_button(struct dmg *dmg, int field, int button, int pressed);
 
 u8 dmg_read(void *dmg, u16 address);

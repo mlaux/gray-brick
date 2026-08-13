@@ -765,7 +765,10 @@ int main(int argc, char *argv[])
         max_frames = until_serial ? 36000 : 600;
     }
 
-    if (sizeof(struct dmg) > MBC_ADDR - DMG_ADDR
+    if (sizeof(struct dmg) > WRAM_ADDR - DMG_ADDR
+            || WRAM_SIZE > VRAM_ADDR - WRAM_ADDR
+            || VRAM_SIZE > HRAM_ADDR - VRAM_ADDR
+            || HRAM_SIZE > MBC_ADDR - HRAM_ADDR
             || sizeof(struct mbc) > ROM_ADDR - MBC_ADDR) {
         fprintf(stderr, "gb6run: memory map too small for host structs\n");
         return 2;
@@ -791,7 +794,9 @@ int main(int argc, char *argv[])
 
     dmg = (struct dmg *) &m68k_mem[DMG_ADDR];
     memset(dmg, 0, sizeof *dmg);
-    dmg_new(dmg, &rom, &lcd);
+    // compiled code can only reach memory inside m68k_mem
+    dmg_new(dmg, &rom, &lcd, &m68k_mem[WRAM_ADDR], &m68k_mem[VRAM_ADDR],
+            &m68k_mem[HRAM_ADDR]);
 
     if (gbc_enabled && (rom.cgb_flag & 0xc0)) {
         cgb_init(&cgb, rom.cgb_flag);
