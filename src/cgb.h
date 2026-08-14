@@ -36,11 +36,15 @@
 
 // Per-pixel attribute buffer format (1 byte per pixel)
 // bit 0-2: palette number (0-7)
-// bit 3: BG priority flag
-// bit 4: is_sprite flag (1 = sprite pixel, 0 = BG pixel)
+// bit 3: is_sprite flag (1 = sprite pixel, 0 = BG pixel)
+// bit 7: BG priority flag, only read during sprite rendering
+// bits 0-3 double as the blitters' palette LUT row index:
+// BG palettes -> rows 0-7, sprite palettes -> rows 8-15
 #define ATTR_PALETTE_MASK   0x07
-#define ATTR_PRIORITY       (1 << 3)
-#define ATTR_IS_SPRITE      (1 << 4)
+#define ATTR_IS_SPRITE      (1 << 3)
+#define ATTR_LUT_MASK       0x0f
+// same bit as CGB_ATTR_PRIORITY so the renderer can mask instead of testing
+#define ATTR_PRIORITY       CGB_ATTR_PRIORITY
 
 struct cgb_state {
     u8 mode;               // 1 if CGB mode active

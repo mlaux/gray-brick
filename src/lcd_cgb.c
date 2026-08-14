@@ -13,9 +13,6 @@
 // This is the same format as DMG but without palette mapping
 static u8 tile_decode_cgb[256];
 
-// Shift amounts for packed pixel access (avoids 6 - idx * 2 multiply)
-static const u8 pixel_shift[4] = { 6, 4, 2, 0 };
-
 void lcd_cgb_init_lut(void)
 {
     int k;
@@ -28,19 +25,6 @@ void lcd_cgb_init_lut(void)
         u8 p3 = ((k >> 4) & 1) | ((k & 1) << 1);
         tile_decode_cgb[k] = (p0 << 6) | (p1 << 4) | (p2 << 2) | p3;
     }
-}
-
-// helper to extract single pixel from packed byte (pixel 0 is bits 7-6)
-static inline u8 packed_get_pixel(u8 packed, int pixel_idx)
-{
-    return (packed >> pixel_shift[pixel_idx]) & 3;
-}
-
-// helper to set single pixel in packed byte
-static inline u8 packed_set_pixel(u8 packed, int pixel_idx, u8 value)
-{
-    int shift = pixel_shift[pixel_idx];
-    return (packed & ~(3 << shift)) | ((value & 3) << shift);
 }
 
 // CGB version: render 8 pixels without palette mapping (raw 2bpp values)
@@ -134,9 +118,7 @@ void lcd_cgb_render_band(
                 data2 = hflip_lut[data2];
             }
 
-            // Build attribute byte: palette (0-2), priority (3)
-            u8 attr_val = (tile_attr & CGB_ATTR_PALETTE) |
-                          ((tile_attr & CGB_ATTR_PRIORITY) ? ATTR_PRIORITY : 0);
+            u8 attr_val = tile_attr & (CGB_ATTR_PALETTE | ATTR_PRIORITY);
 
             render_tile_row_cgb(row + tile * 2, row_attr + tile * 8, data1, data2, attr_val);
             bg_x = (bg_x + 8) & 0xff;
@@ -173,8 +155,7 @@ void lcd_cgb_render_band(
                     data2 = hflip_lut[data2];
                 }
 
-                u8 attr_val = (tile_attr & CGB_ATTR_PALETTE) |
-                              ((tile_attr & CGB_ATTR_PRIORITY) ? ATTR_PRIORITY : 0);
+                u8 attr_val = tile_attr & (CGB_ATTR_PALETTE | ATTR_PRIORITY);
 
                 if (pixel_in_tile == 0 && (win_start & 3) == 0 && win_start + 8 <= win_end) {
                     render_tile_row_cgb(row + (win_start >> 2), row_attr + win_start,
@@ -212,13 +193,6 @@ void lcd_cgb_render_objs_band(
     int sy_end,
     const struct raster_regs *regs)
 {
-    struct oam_entry {
-        u8 pos_y;
-        u8 pos_x;
-        u8 tile;
-        u8 attrs;
-    };
-
     struct oam_entry *oam = &((struct oam_entry *) dmg->lcd->oam)[39];
     int tall = regs->lcdc & LCDC_OBJ_SIZE;
     u8 *vram = dmg->vram;
@@ -273,54 +247,33 @@ void lcd_cgb_render_objs_band(
             int x;
 
             if (mirror_x) {
-                data1 >>= x_start;
-                data2 >>= x_start;
-                for (x = x_start; x < x_end; x++) {
-                    int col_index = (data1 & 1) | ((data2 & 1) << 1);
-                    data1 >>= 1;
-                    data2 >>= 1;
-                    if (col_index) {
-                        int px = lcd_x + x + scx_offset;
-                        int byte_idx = px >> 2;
-                        int bit_idx = px & 3;
+                data1 = hflip_lut[data1];
+                data2 = hflip_lut[data2];
+            }
 
-                        u8 bg_attr = row_attr[px];
-                        u8 bg_pixel = packed_get_pixel(row[byte_idx], bit_idx);
+            data1 <<= x_start;
+            data2 <<= x_start;
+            for (x = x_start; x < x_end; x++) {
+                int col_index = ((data1 >> 7) & 1) | (((data2 >> 7) & 1) << 1);
+                data1 <<= 1;
+                data2 <<= 1;
+                if (col_index) {
+                    int px = lcd_x + x + scx_offset;
+                    int byte_idx = px >> 2;
+                    int bit_idx = px & 3;
 
-                        // BG wins only if LCDC bit 0 set, BG color 1-3, and
-                        // either priority bit set
-                        if (bg_enabled && bg_pixel != 0 &&
-                                ((bg_attr & ATTR_PRIORITY) || behind_bg)) {
-                            continue;
-                        }
+                    u8 bg_attr = row_attr[px];
+                    u8 bg_pixel = packed_get_pixel(row[byte_idx], bit_idx);
 
-                        row[byte_idx] = packed_set_pixel(row[byte_idx], bit_idx, col_index);
-                        row_attr[px] = ATTR_IS_SPRITE | cgb_palette;
+                    // BG wins only if LCDC bit 0 set, BG color 1-3, and
+                    // either priority bit set
+                    if (bg_enabled && bg_pixel != 0 &&
+                            ((bg_attr & ATTR_PRIORITY) || behind_bg)) {
+                        continue;
                     }
-                }
-            } else {
-                data1 <<= x_start;
-                data2 <<= x_start;
-                for (x = x_start; x < x_end; x++) {
-                    int col_index = ((data1 >> 7) & 1) | (((data2 >> 7) & 1) << 1);
-                    data1 <<= 1;
-                    data2 <<= 1;
-                    if (col_index) {
-                        int px = lcd_x + x + scx_offset;
-                        int byte_idx = px >> 2;
-                        int bit_idx = px & 3;
 
-                        u8 bg_attr = row_attr[px];
-                        u8 bg_pixel = packed_get_pixel(row[byte_idx], bit_idx);
-
-                        if (bg_enabled && bg_pixel != 0 &&
-                                ((bg_attr & ATTR_PRIORITY) || behind_bg)) {
-                            continue;
-                        }
-
-                        row[byte_idx] = packed_set_pixel(row[byte_idx], bit_idx, col_index);
-                        row_attr[px] = ATTR_IS_SPRITE | cgb_palette;
-                    }
+                    row[byte_idx] = packed_set_pixel(row[byte_idx], bit_idx, col_index);
+                    row_attr[px] = ATTR_IS_SPRITE | cgb_palette;
                 }
             }
         }

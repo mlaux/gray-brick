@@ -213,15 +213,16 @@ PixMap *lcd_active_pixmap(void)
 }
 
 // one CopyBits per contiguous run of rows sharing a scroll offset and dirty status
-void lcd_blit_color_bands(PixMap *src, struct lcd *lcd_ptr, int scale, int all)
+static void lcd_blit_bands(
+    const BitMap *src,
+    const BitMap *dst,
+    struct lcd *lcd_ptr,
+    int scale,
+    int all)
 {
-  CGrafPtr port;
   Rect src_rect, dst_rect;
   int voff = lcd_ptr->row_voff;
   int y0 = 0;
-
-  SetPort(g_wp);
-  port = (CGrafPtr) g_wp;
 
   while (y0 < 144) {
     int off = lcd_ptr->row_scx[y0 + voff];
@@ -244,53 +245,27 @@ void lcd_blit_color_bands(PixMap *src, struct lcd *lcd_ptr, int scale, int all)
       dst_rect.left = 0;
       dst_rect.right = 160 * scale;
 
-      CopyBits(
-          (BitMap *) src,
-          (BitMap *) *port->portPixMap,
-          &src_rect, &dst_rect, srcCopy, NULL
-      );
+      CopyBits(src, dst, &src_rect, &dst_rect, srcCopy, NULL);
     }
 
     y0 = y1;
   }
 }
 
-// same but for BW
-static void lcd_blit_bw_bands(struct lcd *lcd_ptr, int scale, int all)
+void lcd_blit_color_bands(PixMap *src, struct lcd *lcd_ptr, int scale, int all)
 {
-  Rect src_rect, dst_rect;
-  int voff = lcd_ptr->row_voff;
-  int y0 = 0;
+  CGrafPtr port;
 
   SetPort(g_wp);
+  port = (CGrafPtr) g_wp;
+  lcd_blit_bands((BitMap *) src, (BitMap *) *port->portPixMap,
+      lcd_ptr, scale, all);
+}
 
-  while (y0 < 144) {
-    int off = lcd_ptr->row_scx[y0 + voff];
-    int dirty = all || lcd_ptr->row_dirty[y0 + voff] != 0;
-    int y1 = y0 + 1;
-
-    while (y1 < 144 && lcd_ptr->row_scx[y1 + voff] == off
-           && (all || (lcd_ptr->row_dirty[y1 + voff] != 0) == dirty)) {
-      y1++;
-    }
-
-    if (dirty) {
-      src_rect.top = (y0 + voff) * scale;
-      src_rect.bottom = (y1 + voff) * scale;
-      src_rect.left = off * scale;
-      src_rect.right = (off + 160) * scale;
-
-      dst_rect.top = y0 * scale;
-      dst_rect.bottom = y1 * scale;
-      dst_rect.left = 0;
-      dst_rect.right = 160 * scale;
-
-      CopyBits(&offscreen_bmp, &g_wp->portBits,
-               &src_rect, &dst_rect, srcCopy, NULL);
-    }
-
-    y0 = y1;
-  }
+static void lcd_blit_bw_bands(struct lcd *lcd_ptr, int scale, int all)
+{
+  SetPort(g_wp);
+  lcd_blit_bands(&offscreen_bmp, &g_wp->portBits, lcd_ptr, scale, all);
 }
 
 // 1x rendering: the renderer only fills even lines (row_stride 2), and

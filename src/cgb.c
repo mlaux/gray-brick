@@ -135,6 +135,7 @@ int cgb_write_reg(struct cgb_state *cgb, struct dmg *dmg, u16 address, u8 data)
             // Mark color as dirty (2 bytes per color, so color = idx >> 1)
             dmg->lcd->bg_palette_dirty |= (1UL << (idx >> 1));
             dmg->lcd->palette_frame_dirty = 1;
+            dmg_palette_record(dmg, idx, data);
         }
         // Auto-increment if bit 7 is set
         if (dmg->lcd->bcps & 0x80) {
@@ -154,6 +155,7 @@ int cgb_write_reg(struct cgb_state *cgb, struct dmg *dmg, u16 address, u8 data)
             // Mark color as dirty (2 bytes per color, so color = idx >> 1)
             dmg->lcd->obj_palette_dirty |= (1UL << (idx >> 1));
             dmg->lcd->palette_frame_dirty = 1;
+            dmg_palette_record(dmg, idx | 0x40, data);
         }
         // Auto-increment if bit 7 is set
         if (dmg->lcd->ocps & 0x80) {

@@ -140,6 +140,9 @@ void dmg_write16(void *_dmg, u16 address, u16 data);
 u8 dmg_read_slow(struct dmg *dmg, u16 address);
 void dmg_write_slow(struct dmg *dmg, u16 address, u8 data);
 
+// log a mid-frame cgb palette ram change (index bit 6 set = obj ram)
+void dmg_palette_record(struct dmg *dmg, u8 index, u8 value);
+
 void dmg_sync_hw(struct dmg *dmg, int cycles);
 
 u32 dmg_cycles_to_next_event(struct dmg *dmg);

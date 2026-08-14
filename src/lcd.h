@@ -46,6 +46,13 @@
 #define OAM_ATTR_MIRROR_Y (1 << 6)
 #define OAM_ATTR_BEHIND_BG (1 << 7)
 
+struct oam_entry {
+    u8 pos_y;
+    u8 pos_x;
+    u8 tile;
+    u8 attrs;
+};
+
 // register state used to render a band
 struct raster_regs {
     u8 lcdc;
@@ -64,6 +71,16 @@ struct raster_log_entry {
 
 // overflow falls back to a final-state single-band render
 #define RASTER_LOG_SIZE 64
+
+// one mid-frame CGB palette ram change
+struct palette_log_entry {
+    u8 line;   // first line the value applies to
+    u8 index;  // palette ram byte index, bit 6 set = obj ram
+    u8 value;
+};
+
+// overflow falls back to a whole-frame blit from current ram
+#define PALETTE_LOG_SIZE 32
 
 // row_dirty flags from lcd_diff_rows
 #define ROW_DIRTY_CONTENT 1  // packed pixel bytes changed
@@ -84,7 +101,6 @@ struct lcd {
 
     // scx&7 alignment each row of the packed buffer was rendered at
     u8 row_scx[LCD_BUF_ROWS];
-    u8 row_scx_uniform;
 
     // scy&7 alignment of the whole frame, 0 when scy changes mid-frame
     u8 row_voff;
@@ -114,6 +130,18 @@ struct lcd {
 
     // set when a palette write actually changes a byte
     u8 palette_frame_dirty;
+
+    // CGB palette ram at line 0 plus the mid-frame changes, applied
+    // per-line by the blitters (empty log = whole frame from current ram)
+    u8 frame_bg_palette[64];
+    u8 frame_obj_palette[64];
+    struct palette_log_entry palette_log[PALETTE_LOG_SIZE];
+    u8 palette_log_count;
+    u8 palette_log_overflow;
+
+    // previous rendered frame blitted per-line palettes, so its rows
+    // need a redraw even if nothing else changed
+    u8 palette_banded_prev;
 };
 
 void lcd_new(struct lcd *lcd);
@@ -138,29 +166,23 @@ static inline void lcd_write(struct lcd *lcd, u16 addr, u8 value)
     }
 }
 
-static inline void lcd_set_bit(struct lcd *lcd, u16 addr, u8 bit)
+// packed 2bpp pixel helpers: pixel 0 is bits 7-6
+static inline u8 packed_get_pixel(u8 packed, int pixel_idx)
 {
-    lcd_write(lcd, addr, lcd_read(lcd, addr) | bit);
+    return (packed >> ((3 - pixel_idx) * 2)) & 3;
 }
 
-static inline void lcd_clear_bit(struct lcd *lcd, u16 addr, u8 bit)
+static inline u8 packed_set_pixel(u8 packed, int pixel_idx, u8 value)
 {
-    lcd_write(lcd, addr, lcd_read(lcd, addr) & ~bit);
+    int shift = (3 - pixel_idx) * 2;
+    return (packed & ~(3 << shift)) | ((value & 3) << shift);
 }
 
-static inline int lcd_isset(struct lcd *lcd, u16 addr, u8 bit)
+// nonempty palette log with no overflow: blitters replay it per-line
+static inline int lcd_palette_banded(struct lcd *lcd)
 {
-    u8 val = lcd_read(lcd, addr);
-    return val & bit;
+    return lcd->palette_log_count && !lcd->palette_log_overflow;
 }
-
-static inline void lcd_set_mode(struct lcd *lcd, int mode)
-{
-    u8 val = lcd_read(lcd, REG_STAT);
-    lcd_write(lcd, REG_STAT, (val & 0xfc) | mode);
-}
-
-int lcd_step(struct lcd *lcd);
 
 // fill row_dirty/frame_dirty by comparing the packed buffer and row_scx
 // against the previous rendered frame, cgb mode also compares attrs

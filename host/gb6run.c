@@ -79,6 +79,47 @@ static int half_dither_bit(int shade, int row, int col)
 // 160x144, gray (1 byte/px) for DMG or RGB (3 bytes/px) for CGB
 static u8 frame_out[160 * 144 * 3];
 
+// per-line palette state for banded frames: line 0 snapshot with the
+// palette log applied as the walk passes each entry's line
+static u8 pal_bg[64], pal_obj[64];
+static int pal_banded, pal_next;
+
+static void palette_bands_reset(struct lcd *l)
+{
+    pal_banded = lcd_palette_banded(l);
+    pal_next = 0;
+    if (!pal_banded) {
+        return;
+    }
+    memcpy(pal_bg, l->frame_bg_palette, 64);
+    memcpy(pal_obj, l->frame_obj_palette, 64);
+}
+
+static void palette_bands_line(struct lcd *l, int line)
+{
+    while (pal_banded && pal_next < l->palette_log_count) {
+        const struct palette_log_entry *e = &l->palette_log[pal_next];
+
+        if (e->line > line) {
+            return;
+        }
+        if (e->index & 0x40) {
+            pal_obj[e->index & 0x3f] = e->value;
+        } else {
+            pal_bg[e->index] = e->value;
+        }
+        pal_next++;
+    }
+}
+
+static const u8 *line_palette_ram(struct lcd *l, int obj)
+{
+    if (pal_banded) {
+        return obj ? pal_obj : pal_bg;
+    }
+    return obj ? l->obj_palette_ram : l->bg_palette_ram;
+}
+
 static size_t extract_frame(struct lcd *l)
 {
     int cgb_mode = dmg->cgb && dmg->cgb->mode;
@@ -86,7 +127,9 @@ static size_t extract_frame(struct lcd *l)
     size_t n = 0;
     int x, y;
 
+    palette_bands_reset(l);
     for (y = 0; y < 144; y++) {
+        palette_bands_line(l, y);
         // half-res only fills even rows; the odd one is its dither partner
         // screen row y sits at buffer row y + voff
         int sy = (opt_half_res ? (y & ~1) : y) + voff;
@@ -107,11 +150,10 @@ static size_t extract_frame(struct lcd *l)
                 continue;
             }
 
-            // CGB: attr picks the palette (bit 4 = sprite), pixel value
-            // indexes into it; palette ram is RGB555 little-endian
+            // CGB: attr picks the palette, pixel value indexes into it;
+            // palette ram is RGB555 little-endian
             u8 attr = l->attrs[(y + voff) * 168 + px];
-            const u8 *ram = (attr & 0x10) ? l->obj_palette_ram
-                                          : l->bg_palette_ram;
+            const u8 *ram = line_palette_ram(l, attr & ATTR_IS_SPRITE);
             int ci = ((attr & 7) * 4 + shade) * 2;
             u16 rgb555 = ram[ci] | (ram[ci + 1] << 8);
             u8 r5 = rgb555 & 0x1f;
@@ -149,7 +191,7 @@ static void scx_stats_frame(struct lcd *l)
     }
 
     scx_stat_frames++;
-    if (l->row_scx_uniform) {
+    if (runs == 1) {
         scx_stat_uniform++;
     }
 
@@ -246,6 +288,34 @@ static u16 ms_screen[160 * 144];
 static int ms_valid;
 static u32 ms_bad_frames, ms_bad_rows;
 
+static void ms_lut_set(int obj, int color, const u8 *ram)
+{
+    ms_lut[(obj ? 8 : 0) + (color >> 2)][color & 3] =
+            ram[color * 2] | (ram[color * 2 + 1] << 8);
+}
+
+// apply log entries taking effect at buffer row gy to the working
+// palettes and the lut, like the mac blitter's banded walk
+static void ms_band_row(struct lcd *l, int gy)
+{
+    while (pal_banded && pal_next < l->palette_log_count) {
+        const struct palette_log_entry *e = &l->palette_log[pal_next];
+        int obj;
+
+        if (e->line + l->row_voff > gy) {
+            return;
+        }
+        obj = (e->index & 0x40) != 0;
+        if (obj) {
+            pal_obj[e->index & 0x3f] = e->value;
+        } else {
+            pal_bg[e->index] = e->value;
+        }
+        ms_lut_set(obj, (e->index & 0x3f) >> 1, obj ? pal_obj : pal_bg);
+        pal_next++;
+    }
+}
+
 static void mac_sim_frame(struct lcd *l)
 {
     int all = !ms_valid;
@@ -271,8 +341,20 @@ static void mac_sim_frame(struct lcd *l)
             l->obj_palette_dirty = 0;
         }
 
+        // banded frame: roll logged colors back to line 0 state, then
+        // the buffer walk below replays the log per row
+        palette_bands_reset(l);
+        for (k = 0; pal_banded && k < l->palette_log_count; k++) {
+            const struct palette_log_entry *e = &l->palette_log[k];
+            int obj = (e->index & 0x40) != 0;
+
+            ms_lut_set(obj, (e->index & 0x3f) >> 1,
+                    obj ? pal_obj : pal_bg);
+        }
+
         // convert in buffer space, dirty rows only, like lcd_mac_cgb.c
         for (y = 0; y < LCD_BUF_ROWS; y++) {
+            ms_band_row(l, y);
             if (!all && !(l->row_dirty[y] & ROW_DIRTY_CONTENT)) {
                 continue;
             }
@@ -280,7 +362,7 @@ static void mac_sim_frame(struct lcd *l)
                 int shade = (l->pixels[y * 42 + (x >> 2)]
                         >> (6 - 2 * (x & 3))) & 3;
                 u8 attr = l->attrs[y * 168 + x];
-                int lut = ((attr >> 1) & 0x08) | (attr & 0x07);
+                int lut = attr & ATTR_LUT_MASK;
                 ms_off[y * 168 + x] = ms_lut[lut][shade];
             }
         }
@@ -301,16 +383,17 @@ static void mac_sim_frame(struct lcd *l)
 
     // reference: fresh conversion straight from current state, like
     // extract_frame but kept as rgb555
+    palette_bands_reset(l);
     for (y = 0; y < 144; y++) {
         int by = y + l->row_voff;
         int row_bad = 0;
+        palette_bands_line(l, y);
         for (x = 0; x < 160; x++) {
             int px = x + l->row_scx[by];
             int shade = (l->pixels[by * 42 + (px >> 2)]
                     >> (6 - 2 * (px & 3))) & 3;
             u8 attr = l->attrs[by * 168 + px];
-            const u8 *ram = (attr & ATTR_IS_SPRITE) ? l->obj_palette_ram
-                                                    : l->bg_palette_ram;
+            const u8 *ram = line_palette_ram(l, attr & ATTR_IS_SPRITE);
             int ci = ((attr & 7) * 4 + shade) * 2;
             u16 want = ram[ci] | (ram[ci + 1] << 8);
 

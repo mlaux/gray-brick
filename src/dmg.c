@@ -31,14 +31,15 @@ static int dmg_double_speed(struct dmg *dmg)
     return dmg->cgb && dmg->cgb->double_speed && !ignore_double_speed;
 }
 
-// the CPU-cycle clock, including cycles currently in progress in the JIT
+// returns the CPU-cycle clock, including cycles currently in progress
+// in the JIT
 // DIV and TIMA run on this
 static u32 dmg_now_cpu(struct dmg *dmg)
 {
     return dmg->total_cycles + jit_ctx.read_cycles;
 }
 
-// the frame relative "beam" position
+// returns the frame relative "beam" position
 static u32 dmg_now_ppu(struct dmg *dmg)
 {
     u32 read = jit_ctx.read_cycles;
@@ -67,7 +68,7 @@ static void dmg_budget_update(struct dmg *dmg)
     }
 }
 
-// single-band state when nothing changed mid-frame
+// creates a single-band state for when nothing changed mid-frame
 static void raster_live_regs(struct lcd *lcd, struct raster_regs *regs)
 {
     regs->lcdc = lcd_read(lcd, REG_LCDC);
@@ -80,16 +81,42 @@ static void raster_live_regs(struct lcd *lcd, struct raster_regs *regs)
     regs->obp1 = lcd_read(lcd, REG_OBP1);
 }
 
-// start a new raster frame - line 0 state from current regs
-// and clear the log
+static u8 dmg_current_ly(struct dmg *dmg, u32 *line_pos);
+
+// starts a new raster frame - initializes line 0 state from current regs
+// and clears the log
 static void raster_frame_reset(struct dmg *dmg)
 {
-    raster_live_regs(dmg->lcd, &dmg->lcd->frame_regs);
-    dmg->lcd->raster_count = 0;
-    dmg->lcd->raster_overflow = 0;
+    struct lcd *lcd = dmg->lcd;
+
+    raster_live_regs(lcd, &lcd->frame_regs);
+    lcd->raster_count = 0;
+    lcd->raster_overflow = 0;
+
+    if (dmg->cgb && dmg->cgb->mode) {
+        memcpy(lcd->frame_bg_palette, lcd->bg_palette_ram, 64);
+        memcpy(lcd->frame_obj_palette, lcd->obj_palette_ram, 64);
+    }
+    lcd->palette_log_count = 0;
+    lcd->palette_log_overflow = 0;
 }
 
-// a raster register changed mid-frame, log it for the band replay
+// which frame line a write at beam position (ly, pos) first affects,
+// or -1 if it only affects the next frame
+static int raster_target_line(struct dmg *dmg, u32 ly, u32 pos)
+{
+    u32 line = pos >= 252 ? ly + 1 : ly;
+
+    if (!(lcd_read(dmg->lcd, REG_LCDC) & LCDC_ENABLE)) {
+        return -1;
+    }
+    if (line >= 144) {
+        return -1;
+    }
+    return line;
+}
+
+// logs a raster register change mid-frame for the band replay
 static void raster_record(
     struct dmg *dmg,
     u16 address,
@@ -98,14 +125,10 @@ static void raster_record(
     u32 pos)
 {
     struct lcd *lcd = dmg->lcd;
-    u32 line = pos >= 252 ? ly + 1 : ly;
+    int line = raster_target_line(dmg, ly, pos);
     struct raster_log_entry *e;
 
-    if (!(lcd_read(lcd, REG_LCDC) & LCDC_ENABLE)) {
-        return;
-    }
-    if (line >= 144) {
-        // affects next frame only
+    if (line < 0) {
         return;
     }
     if (lcd->raster_count == RASTER_LOG_SIZE) {
@@ -117,6 +140,29 @@ static void raster_record(
     e->line = line;
     e->reg = address - REG_LCD_BASE;
     e->value = data;
+}
+
+// logs a CGB palette RAM byte change for per-line blits
+void dmg_palette_record(struct dmg *dmg, u8 index, u8 value)
+{
+    struct lcd *lcd = dmg->lcd;
+    u32 pos;
+    u32 ly = dmg_current_ly(dmg, &pos);
+    int line = raster_target_line(dmg, ly, pos);
+    struct palette_log_entry *e;
+
+    if (line < 0) {
+        return;
+    }
+    if (lcd->palette_log_count == PALETTE_LOG_SIZE) {
+        lcd->palette_log_overflow = 1;
+        return;
+    }
+
+    e = &lcd->palette_log[lcd->palette_log_count++];
+    e->line = line;
+    e->index = index;
+    e->value = value;
 }
 
 void dmg_new(
@@ -234,7 +280,6 @@ static void dmg_request_interrupt(struct dmg *dmg, int nr)
 
 static void update_joyp(struct dmg *dmg)
 {
-    // each selected group pulls its pressed bits low
     u8 ret = 0xcf;
 
     if (dmg->action_selected) {
@@ -280,7 +325,7 @@ void dmg_set_button(struct dmg *dmg, int field, int button, int pressed)
     update_joyp(dmg);
 }
 
-// advance the lazy LY counter to the current "beam" position
+// advances the lazy LY counter to the current "beam" position
 static u8 dmg_current_ly(struct dmg *dmg, u32 *line_pos)
 {
     u32 current;
@@ -311,11 +356,7 @@ static u8 dmg_current_ly(struct dmg *dmg, u32 *line_pos)
     return dmg->lazy_ly;
 }
 
-// earliest enabled STAT interrupt event at frame cycle >= from, where
-// from_line = from / 456. returns 0xffffffff if none left this frame and
-// stores the event's line in *line_out. events: LYC match at the start of
-// its line, hblank at line start + 252 (lines 0-143), OAM scan at line
-// start (lines 0-143), and vblank start
+// gets earliest enabled STAT interrupt event at frame cycle >= from
 static u32 stat_event_from(
     struct dmg *dmg,
     u32 from,
@@ -327,9 +368,6 @@ static u32 stat_event_from(
     u32 best_line = 0;
     u32 c, line;
 
-    // per-line STAT interrupts cost a dispatch each
-    // the user can turn them off for games (GSC) that enable them
-    // but rarely use them
     if (!stat_ints_enabled
             || !(lcd_read(dmg->lcd, REG_LCDC) & LCDC_ENABLE)) {
         return best;
@@ -417,7 +455,7 @@ static void dmg_update_frame_events(struct dmg *dmg)
         (on && !dmg->rendered_this_frame) ? CYCLES_LINE_144 : EV_NONE;
 }
 
-// enabling the LCD restarts the PPU frame at line 0
+// restarts the PPU frame at line 0
 static void dmg_lcd_frame_restart(struct dmg *dmg)
 {
     u32 partial = dmg->frame_cycles;
@@ -953,13 +991,12 @@ static void render_band_pass(
     }
 }
 
-// one render per frame at vblank start - every visible line has
-// been "scanned" by then, and the game's vblank handler hasn't run yet
+// Renders per frame at vblank start before the game's vblank handler
 static void render_frame(struct dmg *dmg)
 {
     struct lcd *lcd = dmg->lcd;
     struct raster_regs regs;
-    int replay, start, uniform, voff;
+    int replay, start, voff;
     int k;
 
     // frame skip setting is 0-4
@@ -1015,26 +1052,16 @@ static void render_frame(struct dmg *dmg)
         }
     }
 
-    // single blit offset for the whole frame when every band packed its rows
-    // at the same scx&7
-    uniform = 1;
-    for (k = 1; replay && k < 144; k++) {
-        if (lcd->row_scx[voff + k] != lcd->row_scx[voff]) {
-            uniform = 0;
-            break;
-        }
-    }
-    lcd->row_scx_uniform = uniform;
-
     // when palette ram changes, those frames redraw everything
     lcd_diff_rows(lcd, dmg->cgb && dmg->cgb->mode);
-    if (lcd->palette_frame_dirty) {
+    if (lcd->palette_frame_dirty || lcd->palette_banded_prev) {
         lcd->palette_frame_dirty = 0;
         for (k = 0; k < 144; k++) {
             lcd->row_dirty[voff + k] |= ROW_DIRTY_CONTENT;
         }
         lcd->frame_dirty |= ROW_DIRTY_CONTENT;
     }
+    lcd->palette_banded_prev = lcd_palette_banded(lcd);
 
     lcd_draw(lcd);
     PROF_SET(PROF_SYNC);
@@ -1046,7 +1073,7 @@ static void dmg_event_fire(struct dmg *dmg, int ev)
 
     switch (ev) {
     case EV_STAT:
-        // several events crossed in one sync merge into a single IF bit
+        // several events crossed in one sync are merged into a single IF bit
         dmg_request_interrupt(dmg, INT_LCDSTAT);
         dmg->event_deadline[EV_STAT] = stat_event_from(dmg,
                 dmg->event_deadline[EV_STAT] + 1, dmg->stat_event_line,
@@ -1104,8 +1131,7 @@ static void dmg_event_fire(struct dmg *dmg, int ev)
         dmg->stat_event_line = line;
         dmg_update_frame_events(dmg);
 
-        // shift deadlines into the new frame
-        // past the wrap point here)
+        // shift deadlines into the new frame past the wrap point here)
         if (dmg->event_deadline[EV_TIMA] != EV_NONE) {
             dmg->event_deadline[EV_TIMA] -= CYCLES_PER_FRAME;
         }
@@ -1122,7 +1148,7 @@ static void dmg_event_fire(struct dmg *dmg, int ev)
     }
 }
 
-// PPU cycles until the next deadline the CPU must observe
+// returns PPU cycles until the next deadline
 u32 dmg_cycles_to_next_event(struct dmg *dmg)
 {
     u8 ie = dmg->hram[0x7f];
@@ -1159,7 +1185,7 @@ u32 dmg_cycles_to_next_event(struct dmg *dmg)
     return best - dmg->frame_cycles;
 }
 
-// absorb a block's cycles and fire every deadline they crossed
+// absorbs a block's cycles and fires every deadline they crossed
 void dmg_sync_hw(struct dmg *dmg, int cycles)
 {
     int ppu_cycles;

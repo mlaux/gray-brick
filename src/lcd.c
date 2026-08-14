@@ -37,9 +37,6 @@ u8 hflip_lut[256];
 // expands an 8-bit opacity mask to packed 2bpp: bit k -> bits 2k+1,2k
 static u16 mask_expand[256];
 
-// Shift amounts for packed pixel access
-static const u8 pixel_shift[4] = { 6, 4, 2, 0 };
-
 void lcd_init_lut(void)
 {
     int n1, n2, k;
@@ -126,19 +123,11 @@ static const u8 *obj_palette_lut(int sel, u8 palette)
     return obj_decode_packed[sel];
 }
 
-struct oam_entry {
-    u8 pos_y;
-    u8 pos_x;
-    u8 tile;
-    u8 attrs;
-};
-
 void lcd_new(struct lcd *lcd)
 {
     // todo < 8 bpp
     lcd->pixels = pixels;
     lcd->attrs = attr_buffer;
-    lcd->row_scx_uniform = 1;
     lcd->row_stride = 1;
     lcd->row_voff = 0;
     memset(lcd->row_dirty, ROW_DIRTY_CONTENT | ROW_DIRTY_OFFSET, LCD_BUF_ROWS);
@@ -148,20 +137,14 @@ void lcd_new(struct lcd *lcd)
     lcd->bg_palette_dirty = 0xFFFFFFFF;
     lcd->obj_palette_dirty = 0xFFFFFFFF;
     lcd->palette_frame_dirty = 0;
+    lcd->palette_log_count = 0;
+    lcd->palette_log_overflow = 0;
+    lcd->palette_banded_prev = 0;
 }
 
 u8 lcd_is_valid_addr(u16 addr)
 {
     return (addr >= 0xfe00 && addr < 0xfea0) || (addr >= REG_LCD_BASE && addr <= REG_LCD_LAST);
-}
-
-int lcd_step(struct lcd *lcd)
-{
-    // step to next scanline 0-153
-    u8 next_scanline = (lcd_read(lcd, REG_LY) + 1) % 154;
-    lcd_write(lcd, REG_LY, next_scanline);
-
-    return next_scanline;
 }
 
 // reject scrolling frames fast, static rows have to compare the whole
@@ -237,19 +220,6 @@ void lcd_diff_rows(struct lcd *lcd, int cgb)
         dirty_all |= dirty;
     }
     lcd->frame_dirty = dirty_all;
-}
-
-// helper to extract single pixel from packed byte (pixel 0 is bits 7-6)
-static inline u8 packed_get_pixel(u8 packed, int pixel_idx)
-{
-    return (packed >> pixel_shift[pixel_idx]) & 3;
-}
-
-// helper to set single pixel in packed byte
-static inline u8 packed_set_pixel(u8 packed, int pixel_idx, u8 value)
-{
-    int shift = pixel_shift[pixel_idx];
-    return (packed & ~(3 << shift)) | ((value & 3) << shift);
 }
 
 // render partial pixels at start of a tile row (handles SCX misalignment)
