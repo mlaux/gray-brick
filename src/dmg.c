@@ -81,8 +81,6 @@ static void raster_live_regs(struct lcd *lcd, struct raster_regs *regs)
     regs->obp1 = lcd_read(lcd, REG_OBP1);
 }
 
-static u8 dmg_current_ly(struct dmg *dmg, u32 *line_pos);
-
 // starts a new raster frame - initializes line 0 state from current regs
 // and clears the log
 static void raster_frame_reset(struct dmg *dmg)
@@ -326,7 +324,7 @@ void dmg_set_button(struct dmg *dmg, int field, int button, int pressed)
 }
 
 // advances the lazy LY counter to the current "beam" position
-static u8 dmg_current_ly(struct dmg *dmg, u32 *line_pos)
+u8 dmg_current_ly(struct dmg *dmg, u32 *line_pos)
 {
     u32 current;
 
@@ -486,7 +484,6 @@ static void dmg_lcd_frame_restart(struct dmg *dmg)
 
     if (dmg->cgb) {
         dmg->cgb->hdma_last_ly = 0xff;
-        dmg->cgb->hdma_completed = 0;
     }
 }
 
@@ -647,7 +644,7 @@ u8 dmg_read_slow(struct dmg *dmg, u16 address)
     // CGB registers
     if (dmg->cgb && dmg->cgb->mode) {
         u8 cgb_val;
-        if (cgb_read_reg(dmg->cgb, dmg->lcd, address, &cgb_val)) {
+        if (cgb_read_reg(dmg->cgb, dmg, address, &cgb_val)) {
             return cgb_val;
         }
     }
@@ -906,41 +903,46 @@ void dmg_write16(void *_dmg, u16 address, u16 data)
     dmg_write(_dmg, address + 1, (data >> 8) & 0xff);
 }
 
-// HDMA sync - triggers HDMA transfers for any lines we've crossed
-void hdma_sync(struct dmg *dmg)
+// gets the last line whose hblank has started as of frame position "now"
+static int hdma_line_done(u32 now)
 {
-    u8 current_ly;
-    u8 start_ly;
-    u8 ly;
+    int ly;
 
-    // Only applies to CGB mode with active HDMA
-    if (!dmg->cgb || !dmg->cgb->mode || !dmg->cgb->hdma_active) {
+    if (now < 252) {
+        return -1;
+    }
+    ly = (now - 252) / CYCLES_PER_LINE;
+    return ly > 143 ? 143 : ly;
+}
+
+// transfers a chunk for every hblank crossed since the last catch-up
+static void hdma_catch_up(struct dmg *dmg, int done_ly)
+{
+    struct cgb_state *cgb = dmg->cgb;
+    int start_ly, ly;
+
+    if (!cgb || !cgb->mode || !cgb->hdma_active) {
         return;
     }
 
-    // Calculate current LY from frame cycles
-    current_ly = (dmg->frame_cycles / CYCLES_PER_LINE);
-    if (current_ly > 153) current_ly = 153;
-
-    // Determine starting line for HDMA catch-up
-    if (dmg->cgb->hdma_last_ly == 0xff) {
-        // First HDMA this frame - start from line 0
-        start_ly = 0;
-    } else {
-        // Continue from next line after last HDMA
-        start_ly = dmg->cgb->hdma_last_ly + 1;
+    start_ly = (cgb->hdma_last_ly == 0xff) ? 0 : cgb->hdma_last_ly + 1;
+    for (ly = start_ly; ly <= done_ly && cgb->hdma_active; ly++) {
+        cgb_hdma_hblank(cgb, dmg, ly);
+        cgb->hdma_last_ly = ly;
     }
+}
 
-    // Trigger HDMA for any lines we've passed (only for LY 0-143)
-    for (ly = start_ly; ly <= current_ly && ly < 144 && dmg->cgb->hdma_active; ly++) {
-        cgb_hdma_hblank(dmg->cgb, dmg, ly);
-        dmg->cgb->hdma_last_ly = ly;
-    }
+void hdma_sync(struct dmg *dmg)
+{
+    hdma_catch_up(dmg, hdma_line_done(dmg->frame_cycles));
+}
 
-    // If we're in VBlank, just update the tracking
-    if (current_ly >= 144 && dmg->cgb->hdma_last_ly < 144) {
-        dmg->cgb->hdma_last_ly = 143;
+void hdma_flush_now(struct dmg *dmg)
+{
+    if (!(lcd_read(dmg->lcd, REG_LCDC) & LCDC_ENABLE)) {
+        return;
     }
+    hdma_catch_up(dmg, hdma_line_done(dmg_now_ppu(dmg)));
 }
 
 // step one replayed write forward through the band register state
@@ -1142,7 +1144,6 @@ static void dmg_event_fire(struct dmg *dmg, int ev)
         // reset HDMA line tracking for the new frame
         if (dmg->cgb) {
             dmg->cgb->hdma_last_ly = 0xff;
-            dmg->cgb->hdma_completed = 0;
         }
         break;
     }

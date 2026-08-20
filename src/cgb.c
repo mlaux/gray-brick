@@ -4,8 +4,6 @@
 #include "dmg.h"
 #include "lcd.h"
 #include "types.h"
-#include "../system6/jit.h"
-#include "../system6/settings.h"
 
 // Perform GPDMA: immediate transfer that halts CPU
 // Returns number of M-cycles taken
@@ -46,8 +44,10 @@ void cgb_init(struct cgb_state *cgb, int cgb_flag)
     cgb->hdma_last_ly = 0xff;  // No HDMA triggered yet
 }
 
-int cgb_read_reg(struct cgb_state *cgb, struct lcd *lcd, u16 address, u8 *out)
+int cgb_read_reg(struct cgb_state *cgb, struct dmg *dmg, u16 address, u8 *out)
 {
+    struct lcd *lcd = dmg->lcd;
+
     if (!cgb->mode) {
         return 0;
     }
@@ -87,17 +87,12 @@ int cgb_read_reg(struct cgb_state *cgb, struct lcd *lcd, u16 address, u8 *out)
     case REG_HDMA5:
         // Bit 7 = 0 if HDMA active, 1 if not active
         // Bits 6-0 = remaining blocks - 1 (or 0x7F if not active)
+        // catch up first so mid-transfer polls see the true count
+        hdma_flush_now(dmg);
         if (cgb->hdma_active) {
             *out = cgb->hdma_remaining;  // bit 7 = 0 (active)
-        } else if (cgb->hdma_completed) {
-            // HDMA just completed naturally due to batch processing.
-            // Report as still active with remaining=0, so games like
-            // Pokemon Crystal that do res 7,[hl] to cancel the last
-            // chunk will read 0x00 and write back 0x00, hitting the
-            // cancellation path instead of spuriously starting a GPDMA.
-            *out = 0x00;  // bit 7 = 0 (active), remaining = 0
         } else {
-            *out = 0xff;  // bit 7 = 1 (not active), all other bits = 1
+            *out = 0xff;
         }
         return 1;
     }
@@ -190,55 +185,32 @@ int cgb_write_reg(struct cgb_state *cgb, struct dmg *dmg, u16 address, u8 data)
         return 1;
 
     case REG_HDMA5:
-        if ((cgb->hdma_active || cgb->hdma_completed) && !(data & 0x80)) {
-            // Cancel active HDMA (or recently completed one): writing with bit 7 = 0
-            // The hdma_completed case handles Pokemon Crystal's res 7,[hl] pattern:
-            // due to batched HDMA processing, the transfer may have already finished
-            // before the game's cancellation write arrives. Treat it as a cancellation
-            // (no-op) rather than starting a spurious GPDMA.
-            if (cgb->hdma_active) {
-                // Flush pending HDMA transfers before cancelling.
-                // Temporarily add in-flight PPU cycles so hdma_sync sees
-                // the correct current scanline.
-                int ppu_adj = (cgb->double_speed && !ignore_double_speed)
-                    ? (jit_ctx.read_cycles >> 1) : jit_ctx.read_cycles;
-                dmg->frame_cycles += ppu_adj;
-                hdma_sync(dmg);
-                dmg->frame_cycles -= ppu_adj;
-            }
+        if (cgb->hdma_active && !(data & 0x80)) {
+            // cancel: chunks for hblanks already crossed still happen
+            hdma_flush_now(dmg);
             cgb->hdma_active = 0;
-            cgb->hdma_completed = 0;
             // hdma_remaining stays as-is for reads (with bit 7 = 1 set)
         } else if (data & 0x80) {
             // Start HDMA (HBlank DMA): bit 7 = 1
+            u32 pos;
+            u8 ly = dmg_current_ly(dmg, &pos);
+
             cgb->hdma_active = 1;
-            cgb->hdma_completed = 0;
             cgb->hdma_remaining = data & 0x7f;
 
-            // Check if we're currently in HBlank - if so, immediately transfer first chunk
-            // HBlank is approximately cycles 252-456 of each scanline (456 cycles/line)
-            // This handles games like The Little Mermaid II: Pinball Frenzy
-            {
-                u32 cycle_in_line = dmg->frame_cycles % 456;
-                u8 current_ly = dmg->frame_cycles / 456;
-                if (current_ly > 153) current_ly = 153;
-
-                if (current_ly < 144 && cycle_in_line >= 252) {
-                    // We're in HBlank - immediately transfer first chunk
-                    cgb_hdma_hblank(cgb, dmg, current_ly);
-                    cgb->hdma_last_ly = current_ly;
-                } else if (current_ly < 144) {
-                    // Not in HBlank yet - first transfer will be this line's HBlank
-                    // Set hdma_last_ly to current_ly - 1 so hdma_sync starts from current_ly
-                    cgb->hdma_last_ly = (current_ly > 0) ? current_ly - 1 : 0xff;
-                } else {
-                    // In VBlank - first transfer will be at line 0 next frame
-                    cgb->hdma_last_ly = 0xff;
-                }
+            if (ly >= 144) {
+                // in vblank: first chunk at line 0's hblank next frame
+                cgb->hdma_last_ly = 143;
+            } else if (pos >= 252) {
+                // already in hblank: first chunk transfers now
+                cgb_hdma_hblank(cgb, dmg, ly);
+                cgb->hdma_last_ly = ly;
+            } else {
+                // first chunk at this line's hblank
+                cgb->hdma_last_ly = ly ? ly - 1 : 0xff;
             }
         } else {
             // Start GPDMA (immediate transfer): bit 7 = 0, no active HDMA
-            cgb->hdma_completed = 0;
             cgb_perform_gpdma(cgb, dmg, data);
         }
         return 1;
@@ -313,9 +285,7 @@ int cgb_hdma_hblank(struct cgb_state *cgb, struct dmg *dmg, u8 ly)
 
     // Update remaining count
     if (cgb->hdma_remaining == 0) {
-        // Transfer complete (naturally - all chunks done)
         cgb->hdma_active = 0;
-        cgb->hdma_completed = 1;  // Guard against spurious GPDMA from batch processing
     } else {
         cgb->hdma_remaining--;
     }

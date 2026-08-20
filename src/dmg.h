@@ -151,7 +151,14 @@ u32 dmg_cycles_to_next_event(struct dmg *dmg);
 // deadlines
 void dmg_speed_changed(struct dmg *dmg);
 
+// catch HDMA up to the last hblank in frame_cycles for dmg_sync_hw
 void hdma_sync(struct dmg *dmg);
+
+// same, but to the true position for MMIO when within the JIT
+void hdma_flush_now(struct dmg *dmg);
+
+// current scanline at the true beam position
+u8 dmg_current_ly(struct dmg *dmg, u32 *line_pos);
 
 // page table management
 void dmg_init_pages(struct dmg *dmg);

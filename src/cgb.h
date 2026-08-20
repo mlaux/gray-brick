@@ -56,7 +56,6 @@ struct cgb_state {
     // HDMA state
     u8 hdma_active;        // 1 if HDMA transfer is in progress
     u8 hdma_remaining;     // Blocks remaining - 1 (0 = 1 block left)
-    u8 hdma_completed;     // 1 if HDMA just completed naturally (batch processing guard)
     u16 hdma_source;       // Current source address (updated during transfer)
     u16 hdma_dest;         // Current destination address (updated during transfer)
     u8 hdma_last_ly;       // Last LY that triggered HDMA (0xFF = none this frame)
@@ -69,7 +68,7 @@ struct lcd;
 void cgb_init(struct cgb_state *cgb, int cgb_flag);
 
 // CGB register I/O - returns 1 if address was handled, 0 otherwise
-int cgb_read_reg(struct cgb_state *cgb, struct lcd *lcd, u16 address, u8 *out);
+int cgb_read_reg(struct cgb_state *cgb, struct dmg *dmg, u16 address, u8 *out);
 int cgb_write_reg(struct cgb_state *cgb, struct dmg *dmg, u16 address, u8 data);
 
 // Page table updates for bank switching

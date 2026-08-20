@@ -27,8 +27,7 @@ static void dispatcher_code_asm(void)
         "\n"
 
     ".Ldisp_upper:\n\t"
-        // HRAM blocks need their source bytes checked before entry, so
-        // they only ever dispatch through cache_lookup in C
+        // HRAM blocks might have changed -> go to C to check
         "cmpi.w #0xff80, %%d3\n\t"
         "bcc.s .Ldisp_exit\n\t"
         "movea.l 28(%%a4), %%a0\n\t" // upper_cache

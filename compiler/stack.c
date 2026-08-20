@@ -25,9 +25,11 @@ void compile_ld_sp_imm16(
         emit_movea_l_imm32(block, REG_68K_A_SP, addr);
         emit_moveq_dn(block, REG_68K_D_SCRATCH_1, 1);
         emit_move_l_dn_disp_an(block, REG_68K_D_SCRATCH_1, JIT_CTX_STACK_IN_RAM, REG_68K_A_CTX);
-    } else if (gb_sp >= 0xd000 && gb_sp <= 0xe000) {
+    } else if (gb_sp > 0xd000 && gb_sp <= 0xe000) {
         // Switchable WRAM ($D000-$DFFF): use page table for correct bank
         // SP = $e000 (top-of-WRAM stack) needs to use page $d
+        // SP = $d000 could be programmers setting up the stack for general use
+        // growing down, or using it for a fast copy with pop, so use the slow path
         uint8_t page = (gb_sp - 1) >> 12;
         // D0 = page * 4 (index into page table)
         emit_move_w_dn(block, REG_68K_D_SCRATCH_0, (int16_t)(page * 4));
@@ -455,20 +457,20 @@ int compile_stack_op(
             emit_move_w_dn_disp_an(block, REG_68K_D_SCRATCH_1, JIT_CTX_GB_SP, REG_68K_A_CTX);
 
             // Runtime range check for WRAM and HRAM
-            size_t not_wram, not_hram, done, done2;
+            size_t not_wram, at_d000, not_hram, done, done2;
 
-            // Check WRAM: $c002 <= HL <= $e000, same bounds as the
-            // compile-time path above
+            // Check WRAM: $c002 <= HL <= $e000
+            // HL = $d000 exactly is ambiguous
             emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
             emit_subi_w_dn(block, 0xc002, REG_68K_D_SCRATCH_1);
+            emit_cmpi_w_imm_dn(block, 0xd000 - 0xc002, REG_68K_D_SCRATCH_1);
+            at_d000 = block->length;
+            emit_bcc_opcode_w(block, COND_EQ, 0);
             emit_cmpi_w_imm_dn(block, 0xe000 - 0xc002, REG_68K_D_SCRATCH_1);
             not_wram = block->length;
             emit_bcc_opcode_w(block, COND_HI, 0);  // branch if out of range
 
             // WRAM path: use page table for correct bank
-            // A3 = read_page[(HL-1) >> 12] + (s16)HL (entries are
-            // biased). page of HL-1, same rule as the compile-time
-            // path: HL = $e000 anchors in page $d
             emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_1);
             // D0 = HL - 1, page lookup does the shift
             emit_move_w_dn_dn(block, REG_68K_D_SCRATCH_1, REG_68K_D_SCRATCH_0);
@@ -503,8 +505,9 @@ int compile_stack_op(
             done2 = block->length;
             emit_bra_w(block, 0);
 
-            // Patch not_hram branch to slow mode
+            // Patch not_hram and at_d000 branches to slow mode
             patch_branch_w(block, not_hram);
+            patch_branch_w(block, at_d000);
 
             // Slow mode: A3 = HL (GB SP value)
             emit_movea_w_an_an(block, REG_68K_A_HL, REG_68K_A_SP);
