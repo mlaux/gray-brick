@@ -81,7 +81,7 @@ struct palette_log_entry {
 };
 
 // overflow falls back to a whole-frame blit from current ram
-#define PALETTE_LOG_SIZE 32
+#define PALETTE_LOG_SIZE 128
 
 // row_dirty flags from lcd_diff_rows
 #define ROW_DIRTY_CONTENT 1  // packed pixel bytes changed
@@ -114,15 +114,15 @@ struct lcd {
     u8 window_line;
 
     // what changed since the previous rendered frame (lcd_diff_rows),
-    // so blitters can skip clean rows. frame_dirty ORs all rows
+    // so blitters can skip clean rows. frame_dirty is an OR of all rows
     u8 row_dirty[LCD_BUF_ROWS];
     u8 frame_dirty;
 
     // CGB color palettes (64 bytes each = 8 palettes x 4 colors x 2 bytes RGB555)
     u8 bg_palette_ram[64];
     u8 obj_palette_ram[64];
-    u8 bcps;  // BG palette index + auto-increment (bit 7)
-    u8 ocps;  // Sprite palette index + auto-increment (bit 7)
+    u8 bcps; // BG palette index + auto-increment (bit 7)
+    u8 ocps; // Sprite palette index + auto-increment (bit 7)
 
     // CGB palette dirty tracking (32 bits = 32 colors), owned by the
     // mac blitter's color cache which clears it after rebuilding

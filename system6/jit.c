@@ -465,6 +465,8 @@ int jit_run(struct dmg *dmg)
 
   if (!code) {
     PROF_SET(PROF_COMPILE);
+
+#ifdef GB6_PROFILING
     sprintf(buf, "$%02x:%04x %luk/%luk",
       jit_ctx.current_rom_bank,
       jit_regs.d3,
@@ -472,6 +474,7 @@ int jit_run(struct dmg *dmg)
       arena_size() / 1024
     );
     set_status_bar(buf);
+#endif
 
     compile_ctx.current_bank = jit_ctx.current_rom_bank;
     block = compile_block(jit_regs.d3, &compile_ctx);

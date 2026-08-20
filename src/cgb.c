@@ -223,10 +223,8 @@ void cgb_update_vram_bank(struct cgb_state *cgb, struct dmg *dmg)
 {
     u8 *bank_base = &dmg->vram[cgb->vram_bank * 0x2000];
 
-    dmg->read_page[0x8] = PAGE_BIAS(bank_base, 0x8);
-    dmg->write_page[0x8] = dmg->read_page[0x8];
-    dmg->read_page[0x9] = PAGE_BIAS(&bank_base[0x1000], 0x9);
-    dmg->write_page[0x9] = dmg->read_page[0x9];
+    dmg_map_upper_page(dmg, 0x8, PAGE_BIAS(bank_base, 0x8));
+    dmg_map_upper_page(dmg, 0x9, PAGE_BIAS(&bank_base[0x1000], 0x9));
 }
 
 void cgb_update_wram_bank(struct cgb_state *cgb, struct dmg *dmg)
@@ -235,26 +233,24 @@ void cgb_update_wram_bank(struct cgb_state *cgb, struct dmg *dmg)
     int bank = cgb->wram_bank ? cgb->wram_bank : 1;
     u8 *bank_base = &dmg->wram[bank * 0x1000];
 
-    // $D000-$DFFF; the echo at $F000-$FDFF is slow-path and follows
-    // this mapping through the forward in dmg_read_slow/dmg_write_slow
-    dmg->read_page[0xd] = PAGE_BIAS(bank_base, 0xd);
-    dmg->write_page[0xd] = dmg->read_page[0xd];
+    // the echo at $F000-$FDFF doesn't use the page table
+    dmg_map_upper_page(dmg, 0xd, PAGE_BIAS(bank_base, 0xd));
 }
 
 int cgb_speed_switch(struct cgb_state *cgb)
 {
     if (!cgb->mode) {
-        return 0;  // DMG mode - just halt
+        return 0; // DMG mode - just halt
     }
 
     if (cgb->speed_switch_armed) {
         // Toggle speed
         cgb->double_speed = !cgb->double_speed;
         cgb->speed_switch_armed = 0;
-        return 1;  // Speed switched, continue execution
+        return 1; // Speed switched, continue execution
     }
 
-    return 0;  // Not armed - halt
+    return 0; // Not armed - halt
 }
 
 int cgb_hdma_hblank(struct cgb_state *cgb, struct dmg *dmg, u8 ly)

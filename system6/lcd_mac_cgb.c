@@ -1,5 +1,5 @@
 /* Game Boy Color emulator for 68k Macs
-   lcd_mac_cgb.c - CGB LCD rendering with per-pixel palette lookup */
+   lcd_mac_cgb.c - CGB LCD rendering */
 
 #include <Quickdraw.h>
 #include <Windows.h>
@@ -177,8 +177,6 @@ static void lcd_draw_1x_cgb(struct lcd *lcd_ptr, int all)
     update_cgb_palette_cache(lcd_ptr);
     cgb_band_start(lcd_ptr);
 
-    // convert all 168 buffer pixels per row; per-band scroll offsets are
-    // handled by the band blit's source rects
     for (gy = 0; gy < LCD_BUF_ROWS; gy++) {
         unsigned char *row_attr = attrs + gy * 168;
         int gx;
@@ -223,8 +221,6 @@ static void lcd_draw_2x_cgb(struct lcd *lcd_ptr, int all)
     update_cgb_palette_cache(lcd_ptr);
     cgb_band_start(lcd_ptr);
 
-    // convert all 168 buffer pixels per row; per-band scroll offsets are
-    // handled by the band blit's source rects
     for (gy = 0; gy < LCD_BUF_ROWS; gy++) {
         // row stride in longs: 336 bytes / 4 = 84 longs
         unsigned long *row0 = dst;
@@ -268,9 +264,8 @@ static void lcd_draw_2x_cgb(struct lcd *lcd_ptr, int all)
 // Main CGB draw function - called from lcd_mac.c
 void lcd_draw_cgb(struct lcd *lcd_ptr, int all)
 {
-    // forced frames follow palette-menu/depth changes: the Color2Index
-    // results are stale against the new clut, rebuild them all
     if (all) {
+        // rebuild all palettes for update events, etc
         lcd_ptr->bg_palette_dirty = 0xffffffff;
         lcd_ptr->obj_palette_dirty = 0xffffffff;
     }

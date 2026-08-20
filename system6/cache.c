@@ -18,6 +18,23 @@ static u8 upper_page_hi[0x80];
 // how many pages back the earliest block covering this page starts
 static u8 upper_page_reach[0x80];
 
+// bit per 4K page 0x8-0xf: any compiled code in it
+static u8 upper_4k_code;
+
+static void recompute_4k_code(int page4k)
+{
+    int base = (page4k - 8) << 4;
+    int k;
+
+    upper_4k_code &= ~(1 << (page4k - 8));
+    for (k = 0; k < 16; k++) {
+        if (upper_page_lo[base + k] <= upper_page_hi[base + k]) {
+            upper_4k_code |= 1 << (page4k - 8);
+            return;
+        }
+    }
+}
+
 #define HRAM_PAGE 0x7f // page $ff in the upper_page_* arrays
 
 static const u8 *hram_page;
@@ -112,6 +129,7 @@ void cache_mark_upper_range(u16 start, u16 end)
         if (p - (start >> 8) > upper_page_reach[idx]) {
             upper_page_reach[idx] = p - (start >> 8);
         }
+        upper_4k_code |= 1 << ((p >> 4) - 8);
     }
 
     // re-snapshot whenever HRAM gets compiled code
@@ -136,15 +154,7 @@ int cache_upper_range_hit(u16 addr)
 // any compiled code left anywhere in addr's 4K memory page?
 int cache_upper_4k_has_code(u16 addr)
 {
-    int base = ((addr >> 8) & ~0xf) - 0x80;
-    int k;
-
-    for (k = 0; k < 16; k++) {
-        if (upper_page_lo[base + k] <= upper_page_hi[base + k]) {
-            return 1;
-        }
-    }
-    return 0;
+    return (upper_4k_code >> ((addr >> 12) - 8)) & 1;
 }
 
 void cache_invalidate_upper_page(u8 page)
@@ -168,6 +178,9 @@ void cache_invalidate_upper_page(u8 page)
         upper_page_hi[k] = 0;
         upper_page_reach[k] = 0;
     }
+    for (k = (first >> 4) + 8; k <= (idx >> 4) + 8; k++) {
+        recompute_4k_code(k);
+    }
     if (idx == HRAM_PAGE) {
         memset(hram_is_code, 0, sizeof hram_is_code);
         hram_has_code = 0;
@@ -183,6 +196,7 @@ int cache_init(void)
     memset(upper_page_reach, 0, sizeof upper_page_reach);
     memset(hram_is_code, 0, sizeof hram_is_code);
     hram_has_code = 0;
+    upper_4k_code = 0;
 
     bank0_cache = arena_alloc(BANK0_CACHE_SIZE * sizeof(void *));
     if (!bank0_cache) {

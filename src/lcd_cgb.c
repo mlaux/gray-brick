@@ -27,15 +27,13 @@ void lcd_cgb_init_lut(void)
     }
 }
 
-// CGB version: render 8 pixels without palette mapping (raw 2bpp values)
+// CGB version: render 8 pixels without doing the palette mapping yet
 // Also writes 8 bytes of per-pixel attribute data
 static inline void render_tile_row_cgb(u8 *p, u8 *a, u8 data1, u8 data2, u8 attr_val)
 {
-    // Use LUT to decode tile data - 2 lookups instead of 8-iteration loop
     p[0] = tile_decode_cgb[(data1 & 0xf0) | (data2 >> 4)];
     p[1] = tile_decode_cgb[((data1 & 0x0f) << 4) | (data2 & 0x0f)];
 
-    // Store per-pixel attribute for all 8 pixels
     a[0] = attr_val;
     a[1] = attr_val;
     a[2] = attr_val;
@@ -46,8 +44,7 @@ static inline void render_tile_row_cgb(u8 *p, u8 *a, u8 data1, u8 data2, u8 attr
     a[7] = attr_val;
 }
 
-// render scanlines [sy_start, sy_end) of the background and window from
-// one register state, like lcd_render_band
+// render scanlines [sy_start, sy_end) of the background and window
 void lcd_cgb_render_band(
     struct dmg *dmg,
     int sy_start,

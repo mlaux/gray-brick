@@ -261,14 +261,29 @@ void dmg_update_rom_bank(struct dmg *dmg, int bank)
     }
 }
 
+// this fixes the following bug, this was hard to find...
+// * compile SMC with one mapping, fast write mapping removed
+// * switch banks, original write mapping restored
+// * switch back to the one with SMC, still fast
+// * SMC write not detected, boom
+void dmg_map_upper_page(struct dmg *dmg, int page, u8 *biased)
+{
+    dmg->read_page[page] = biased;
+    if (biased && cache_upper_4k_has_code((u16) (page << 12))) {
+        dmg->write_page[page] = NULL;
+        dmg->saved_write_page[page - 8] = biased;
+        return;
+    }
+    dmg->write_page[page] = biased;
+    dmg->saved_write_page[page - 8] = NULL;
+}
+
 void dmg_update_ram_bank(struct dmg *dmg, u8 *ram_base)
 {
     u8 *biased = ram_base ? PAGE_BIAS(ram_base, 0xa) : NULL;
 
-    dmg->read_page[0xa] = biased;
-    dmg->write_page[0xa] = biased;
-    dmg->read_page[0xb] = biased;
-    dmg->write_page[0xb] = biased;
+    dmg_map_upper_page(dmg, 0xa, biased);
+    dmg_map_upper_page(dmg, 0xb, biased);
 }
 
 static void dmg_request_interrupt(struct dmg *dmg, int nr)
@@ -945,7 +960,6 @@ void hdma_flush_now(struct dmg *dmg)
     hdma_catch_up(dmg, hdma_line_done(dmg_now_ppu(dmg)));
 }
 
-// step one replayed write forward through the band register state
 static void raster_apply(struct raster_regs *regs, u8 reg, u8 value)
 {
     switch (reg + REG_LCD_BASE) {
@@ -960,16 +974,13 @@ static void raster_apply(struct raster_regs *regs, u8 reg, u8 value)
     }
 }
 
-// render one band of the frame from one register state: background and
-// window, then sprites clipped to the band. rows are packed at the band's
-// scx&7, and row_scx tells the blitters where each row's visible area
-// starts
+// renders one band of the frame from one register state
 static void render_band_pass(
     struct dmg *dmg,
     int sy_start,
     int sy_end,
-    const struct raster_regs *regs)
-{
+    const struct raster_regs *regs
+) {
     int cgb = dmg->cgb && dmg->cgb->mode;
 
     memset(&dmg->lcd->row_scx[sy_start + dmg->lcd->row_voff],

@@ -52,6 +52,24 @@ void host_serial_byte(u8 byte)
 static const char *opt_dump_dir;
 static int opt_hash_frames;
 static int opt_dump_state;
+static const char *opt_dump_mem;
+
+// --dump-mem: the GB address space as the CPU sees it at exit (also runs
+// after a fatal error, via atexit)
+static void dump_mem(void)
+{
+    FILE *fp = fopen(opt_dump_mem, "wb");
+    u32 a;
+
+    if (!fp) {
+        fprintf(stderr, "gb6run: cannot write %s\n", opt_dump_mem);
+        return;
+    }
+    for (a = 0; a < 0x10000; a++) {
+        fputc(dmg_read(dmg, (u16) a), fp);
+    }
+    fclose(fp);
+}
 static int opt_log_raster;
 static int opt_scx_stats;
 static int opt_dirty_stats;
@@ -761,6 +779,7 @@ static void usage(void)
         "  --dump-frames DIR    write each rendered frame as DIR/frame_N.ppm\n"
         "  --hash-frames        print a hash line per rendered frame\n"
         "  --dump-state         print final registers + hw state at exit\n"
+        "  --dump-mem FILE      write the 64K GB address space at exit\n"
         "  --input FILE         scripted joypad input (\"frame:Start,A\" lines)\n"
         "  --log-raster         log raster-relevant register writes + summary\n"
         "  --scx-stats          row_scx uniformity summary to stderr\n"
@@ -799,6 +818,8 @@ int main(int argc, char *argv[])
             opt_hash_frames = 1;
         } else if (!strcmp(argv[k], "--dump-state")) {
             opt_dump_state = 1;
+        } else if (!strcmp(argv[k], "--dump-mem") && k + 1 < argc) {
+            opt_dump_mem = argv[++k];
         } else if (!strcmp(argv[k], "--input") && k + 1 < argc) {
             if (!load_input_script(argv[++k])) {
                 return 1;
@@ -919,6 +940,9 @@ int main(int argc, char *argv[])
     }
 
     host_jit_init(dmg);
+    if (opt_dump_mem) {
+        atexit(dump_mem);
+    }
 
     fprintf(stderr, "gb6run: \"%s\" mbc $%02x%s, %s\n",
             title, rom.data[0x147], dmg->cgb ? ", cgb mode" : "",

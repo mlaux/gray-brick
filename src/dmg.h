@@ -164,6 +164,7 @@ u8 dmg_current_ly(struct dmg *dmg, u32 *line_pos);
 void dmg_init_pages(struct dmg *dmg);
 void dmg_update_rom_bank(struct dmg *dmg, int bank);
 void dmg_update_ram_bank(struct dmg *dmg, u8 *ram_base);
+void dmg_map_upper_page(struct dmg *dmg, int page, u8 *biased);
 
 void dmg_ei_di(void *dmg, u16 enabled);
 
