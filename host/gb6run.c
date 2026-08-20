@@ -769,6 +769,7 @@ static void usage(void)
         "  --half-res           render 160x72 and dither to 1-bit like 1x mac B&W\n"
         "  --insn-log FILE      log every executed 68k instruction (- for stdout)\n"
         "  --no-stat-ints       drop STAT events from the scheduler (Mac menu toggle)\n"
+        "  --dmg                run as original GB (Mac \"Run as GBC\" toggle off)\n"
         "  --chain              chain cached blocks like the Mac dispatcher\n"
         "  --trace              per-dispatch state line to stderr\n"
         "  --status             print status bar messages to stderr\n");
@@ -821,6 +822,8 @@ int main(int argc, char *argv[])
             opt_insn_log = argv[++k];
         } else if (!strcmp(argv[k], "--no-stat-ints")) {
             stat_ints_enabled = 0;
+        } else if (!strcmp(argv[k], "--dmg")) {
+            gbc_enabled = 0;
         } else if (!strcmp(argv[k], "--chain")) {
             host_chain = 1;
         } else if (!strcmp(argv[k], "--trace")) {
@@ -881,7 +884,8 @@ int main(int argc, char *argv[])
     dmg_new(dmg, &rom, &lcd, &m68k_mem[WRAM_ADDR], &m68k_mem[VRAM_ADDR],
             &m68k_mem[HRAM_ADDR]);
 
-    if (gbc_enabled && (rom.cgb_flag & 0xc0)) {
+    if ((rom.cgb_flag & 0x80)
+            && (gbc_enabled || (rom.cgb_flag & 0xc0) == 0xc0)) {
         cgb_init(&cgb, rom.cgb_flag);
         dmg->cgb = &cgb;
     }

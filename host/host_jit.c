@@ -277,6 +277,9 @@ void host_gate(unsigned int index, unsigned int sp)
         if (host_insn_log) {
             fprintf(host_insn_log, "= %s\n", v ? "ei" : "di");
         }
+        if (host_trace) {
+            fprintf(stderr, "  %s\n", v ? "ei" : "di");
+        }
         dmg_ei_di(dmg, v);
         sync_budget_to_68k();
         break;

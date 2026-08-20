@@ -69,8 +69,9 @@ struct raster_log_entry {
     u8 value;
 };
 
-// overflow falls back to a final-state single-band render
-#define RASTER_LOG_SIZE 64
+// if there are more than this many changes in a given frame, it'll 
+// fall back to a final-state single-band render
+#define RASTER_LOG_SIZE 144
 
 // one mid-frame CGB palette ram change
 struct palette_log_entry {

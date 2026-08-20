@@ -919,6 +919,34 @@ TEST(test_budget_uncond_loop_exits)
     ASSERT_EQ(get_cycle_count() >= 50 && get_cycle_count() <= 74, 1);
 }
 
+// "wait for the interrupt handler to change [hl]"
+TEST(test_budget_cp_hl_cond_loop_exits)
+{
+    uint8_t rom[] = {
+        0x21, 0x00, 0xc0, // ld hl, $c000 ([hl] reads 0)
+        0xaf,             // xor a
+        0xbe,             // cp [hl]
+        0x28, 0xfd,       // jr z, -3 (back to cp [hl])
+        0x10              // stop (only via interrupt changing $c000)
+    };
+    run_block_with_budget(rom, 100);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 4);
+    ASSERT_EQ(get_cycle_count() >= 100, 1);
+}
+
+TEST(test_budget_cp_hl_uncond_loop_exits)
+{
+    uint8_t rom[] = {
+        0x21, 0x00, 0xc0, // ld hl, $c000
+        0xbe,             // cp [hl]
+        0x18, 0xfd,       // jr -3 (back to cp [hl])
+        0x10              // stop (never reached)
+    };
+    run_block_with_budget(rom, 100);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 3);
+    ASSERT_EQ(get_cycle_count() >= 100, 1);
+}
+
 void register_timing_tests(void)
 {
     printf("\nHALT instruction tests:\n");
@@ -981,6 +1009,8 @@ void register_timing_tests(void)
     RUN_TEST(test_budget_cond_loop_runs_natively);
     RUN_TEST(test_budget_cond_loop_exits_early);
     RUN_TEST(test_budget_uncond_loop_exits);
+    RUN_TEST(test_budget_cp_hl_cond_loop_exits);
+    RUN_TEST(test_budget_cp_hl_uncond_loop_exits);
 
     printf("\nHRAM idle wait pattern tests:\n");
     RUN_TEST(test_idle_wait_flag_clear_waits);

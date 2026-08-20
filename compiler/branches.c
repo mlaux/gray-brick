@@ -40,16 +40,7 @@ void compile_jr(
 
         flush_cycles(block);
 
-        // Tiny loops (disp >= -3, e.g. "dec a; jr nz") are pure computation
-        // (no room for memory access + flag-setting instruction).
-        // Skip interrupt check to avoid overhead killing performance.
-        if (disp >= -3) {
-            m68k_disp = (int16_t) target_m68k - (int16_t) (block->length + 2);
-            emit_bra_w(block, m68k_disp);
-            return;
-        }
-
-        // Larger loop - check cycle count, exit to dispatcher if >= budget
+        // Check cycle count, exit to dispatcher if >= budget
         // cmp.l JIT_CTX_WAKE_LIMIT(a4), d2
         emit_cmp_l_disp_an_dn(block, JIT_CTX_WAKE_LIMIT, REG_68K_A_CTX, REG_68K_D_CYCLE_COUNT);
 
@@ -114,25 +105,7 @@ void compile_jr_cond(
             ctx->cache_store(target_gb_pc, ctx->current_bank, code_ptr);
         }
 
-        // Tiny loops (disp >= -3): skip interrupt check, just branch
-        if (disp >= -3) {
-            // Skip if NOT taken
-            size_t skip = block->length;
-            if (branch_if_set) {
-                emit_beq_b(block, 0);
-            } else {
-                emit_bne_b(block, 0);
-            }
-            // taken path: materialize pending + taken extra, loop head is
-            // at pending == 0. fall-through keeps deferring
-            emit_add_cycles(block, pending_cycles + 4);
-            m68k_disp = (int16_t) target_m68k - (int16_t) (block->length + 2);
-            emit_bra_w(block, m68k_disp);
-            patch_branch_b(block, skip);
-            return;
-        }
-
-        // Larger loop - check condition, then cycle count
+        // Check condition, then cycle count
         // Structure:
         //   btst #flag_bit, d7           ; already emitted above
         //   bne/beq .check_cycles        ; if condition met, check cycles

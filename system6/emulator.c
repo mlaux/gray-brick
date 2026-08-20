@@ -501,8 +501,10 @@ static void StartEmulation(void)
   dmg_new(&dmg, &rom, &lcd, gb_wram, gb_vram, gb_hram);
   dmg.rom_bank_switch_hook = on_rom_bank_switch;
 
-  // Initialize CGB state if ROM supports it and user has enabled GBC mode
-  if (gbc_enabled && (rom.cgb_flag & 0xc0)) {
+  // CGB-only game -> always CGB mode
+  // CGB or DMG game -> use preference
+  if ((rom.cgb_flag & 0x80)
+      && (gbc_enabled || (rom.cgb_flag & 0xc0) == 0xc0)) {
     cgb_init(&cgb_state, rom.cgb_flag);
     dmg.cgb = &cgb_state;
   } else {
@@ -594,15 +596,8 @@ static void UpdateMenuItems(void)
   CheckItem(menu, EDIT_SCALE_2X, screen_scale == 2);
   CheckItem(menu, EDIT_IGNORE_DOUBLE_SPEED, ignore_double_speed);
   if (g_wp) {
-    int supports_cgb = rom.cgb_flag & 0xc0;
-    if (!supports_cgb) {
-      // force menu item off for non-cgb roms so it's not disabled and checked
-      // which would be confusing
-      CheckItem(menu, EDIT_GBC_MODE, 0);
-    } else {
-      // show real state
-      CheckItem(menu, EDIT_GBC_MODE, gbc_enabled);
-    }
+    // while running, show the mode the game actually booted in
+    CheckItem(menu, EDIT_GBC_MODE, dmg.cgb != NULL);
     DisableItem(menu, EDIT_GBC_MODE);
     // Ignore Double Speed only takes effect on speed switch, so disable while running
     DisableItem(menu, EDIT_IGNORE_DOUBLE_SPEED);

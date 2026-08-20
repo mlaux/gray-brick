@@ -1,4 +1,4 @@
-# ![icon](icon_2x.png) Gray Brick - Game Boy emulator for Macintosh System 6
+# ![icon](gfx/icon_2x.png) Gray Brick - Game Boy emulator for Macintosh System 6
 
 Gray Brick is a Game Boy emulator targeting 68k Macintosh with a focus on
 execution speed. The emulator features a JIT compiler that translates Game Boy
