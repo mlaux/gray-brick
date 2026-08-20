@@ -33,7 +33,7 @@ extern PixMap offscreen_pixmap;
 
 extern PixMap lowdepth_pixmap;
 
-#define APP_VERSION "2.2.3 ${GIT_SHA}"
+#define APP_VERSION "2.3.0 ${GIT_SHA}"
 
 #define WINDOW_X 8
 #define WINDOW_Y 40

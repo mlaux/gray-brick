@@ -47,6 +47,7 @@ add_application("Gray Brick"
     gb_palettes.c
     prof.c
     resources.r
+    #help.r
 )
 
 target_compile_options(Gray_Brick PRIVATE
