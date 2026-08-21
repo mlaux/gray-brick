@@ -4,6 +4,7 @@
 #include "interop.h"
 #include "branches.h"
 #include "instructions.h"
+#include "timing.h"
 
 // helper for reading GB memory during compilation
 #define READ_BYTE(off) (ctx->read(ctx->dmg, src_address + (off)))
@@ -782,6 +783,12 @@ int compile_alu_op(
         return 1;
 
     case 0xbe: // cp a, (hl)
+        // cp [hl]; jr nz, -3 with HL = $ff44 waits for LY to reach A
+        if (READ_BYTE(*src_ptr) == 0x20
+                && (int8_t) READ_BYTE(*src_ptr + 1) == -3) {
+            compile_ly_wait_hl(block, src_address + *src_ptr + 2,
+                    src_address + *src_ptr - 1);
+        }
         compile_call_dmg_read_hl(block);
         emit_cmp_b_dn_dn(block, REG_68K_D_SCRATCH_0, REG_68K_D_A);
         compile_set_zc_flags(block);

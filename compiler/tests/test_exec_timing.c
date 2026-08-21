@@ -598,6 +598,81 @@ TEST(test_ly_wait_reg_clamped_by_wake_limit)
 }
 
 // ============================================================================
+// LY wait pattern tests through HL
+// Pattern: ld hl, $ff44; ld a, N; cp [hl]; jr nz, back to the cp
+// HL is only known at run time, so the wait is guarded by an HL == $ff44
+// check and falls through to the generic cp [hl] otherwise
+// ============================================================================
+
+TEST(test_ly_wait_hl_jr_nz)
+{
+    // wait for LY=90 from frame_cycles=0
+    uint8_t rom[] = {
+        0x21, 0x44, 0xff, // ld hl, $ff44
+        0x3e, 0x5a,       // ld a, 90
+        0xbe,             // cp [hl]
+        0x20, 0xfd,       // jr nz, -3 (back to cp)
+        0x10              // stop
+    };
+    run_block_with_frame_cycles(rom, 0);
+    ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 90);
+    ASSERT_EQ(get_cycle_count(), 90 * 456);
+    ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0x05, 0x04);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 8);
+}
+
+TEST(test_ly_wait_hl_on_target_line)
+{
+    // already on line 90: ld hl + ld a + cp + untaken jr = 36 cycles
+    uint8_t rom[] = {
+        0x21, 0x44, 0xff, // ld hl, $ff44
+        0x3e, 0x5a,       // ld a, 90
+        0xbe,             // cp [hl]
+        0x20, 0xfd,       // jr nz, -3
+        0x10              // stop
+    };
+    run_block_with_frame_cycles(rom, 90 * 456 + 60);
+    ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 90);
+    ASSERT_EQ(get_cycle_count(), 36);
+    ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0x05, 0x04);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 8);
+}
+
+TEST(test_ly_wait_hl_past_target)
+{
+    // past line 50: advance at deadline pace and exit at the cp
+    uint8_t rom[] = {
+        0x21, 0x44, 0xff, // ld hl, $ff44
+        0x3e, 0x32,       // ld a, 50
+        0xbe,             // cp [hl]
+        0x20, 0xfd,       // jr nz, -3
+        0x10              // stop
+    };
+    run_block_with_frame_cycles(rom, 30000);
+    ASSERT_EQ(get_cycle_count(), 65664 - 30000);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 5);
+}
+
+TEST(test_ly_wait_hl_other_address)
+{
+    // HL points at a byte equal to A: generic cp [hl] sets Z, the loop
+    // exits and the block continues to the stop
+    uint8_t rom[] = {
+        0x21, 0x10, 0x40, // ld hl, $4010
+        0x3e, 0x10,       // ld a, $10
+        0xbe,             // cp [hl]
+        0x20, 0xfd,       // jr nz, -3
+        0x10              // stop
+    };
+    run_block_with_frame_cycles_mem(rom, 0, 0x4010, 0x10);
+    ASSERT_EQ(get_dreg(REG_68K_D_A) & 0xff, 0x10);
+    ASSERT_EQ(get_dreg(REG_68K_D_FLAGS) & 0x05, 0x04);
+    // 36 for the loop plus the stop's 4
+    ASSERT_EQ(get_cycle_count(), 40);
+    ASSERT_EQ(get_dreg(REG_68K_D_NEXT_PC), 0xffffffff);
+}
+
+// ============================================================================
 // LY wait pattern tests with and a / or a
 // Pattern: ldh a, [$44]; and a / or a; jr nz/z, back
 // Equivalent to cp 0. Final Fantasy Legend waits for LY wrap this way.
@@ -991,6 +1066,12 @@ void register_timing_tests(void)
     RUN_TEST(test_ly_wait_reg_on_target_line);
     RUN_TEST(test_ly_wait_reg_unreachable_target);
     RUN_TEST(test_ly_wait_reg_clamped_by_wake_limit);
+
+    printf("\nLY wait through HL tests:\n");
+    RUN_TEST(test_ly_wait_hl_jr_nz);
+    RUN_TEST(test_ly_wait_hl_on_target_line);
+    RUN_TEST(test_ly_wait_hl_past_target);
+    RUN_TEST(test_ly_wait_hl_other_address);
 
     printf("\nLY wait and/or pattern tests:\n");
     RUN_TEST(test_ly_wait_and_a_jr_nz);

@@ -30,6 +30,7 @@ static int pc_history_idx = 0;
 
 static u32 call_count = 0;
 static u32 last_report_tick = 0;
+static u32 last_frames_rendered = 0;
 
 #ifdef GB6_PROFILING
 static u32 prof_interop;
@@ -208,6 +209,10 @@ void jit_init(struct dmg *dmg)
 
   memset(&jit_regs, 0, sizeof jit_regs);
 
+  call_count = 0;
+  last_report_tick = 0;
+  last_frames_rendered = 0;
+
   // Set initial A register for CGB mode ($11) vs DMG mode ($01)
   jit_regs.d4 = (dmg->cgb && dmg->cgb->mode) ? 0x11 : 0x01;
 
@@ -377,8 +382,6 @@ static void check_interrupts(struct dmg *dmg)
 static void update_profiling_status_bar(u32 frames_now)
 {
   char buf[64];
-  static u32 last_frames_rendered = 0;
-
   u32 now = TickCount();
   u32 elapsed = now - last_report_tick;
   u32 frames_delta;
@@ -446,7 +449,8 @@ static void update_profiling_status_bar(u32 frames_now)
   }
 #endif
 
-  sprintf(buf, "%lu FPS", fps);
+  sprintf(buf, "%lu FPS %luk/%luk", fps, arena_remaining() / 1024,
+      arena_size() / 1024);
   set_status_bar(buf);
 }
 

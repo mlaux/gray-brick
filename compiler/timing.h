@@ -9,6 +9,7 @@
 #define GB_REG_H    4
 #define GB_REG_L    5
 #define GB_REG_HL   6
+#define GB_REG_A    7
 
 // synthesize wait for LY to reach target value
 // detects ldh a, [$44]; cp N; jr cc, back to the ldh (loop_pc).
@@ -31,6 +32,13 @@ void compile_ly_wait_reg(
     uint16_t next_pc,
     uint16_t loop_pc,
     int tail_cycles
+);
+
+// detects `cp [hl]; jr nz, -3` if HL == $ff44 at runtime
+void compile_ly_wait_hl(
+    struct code_block *block,
+    uint16_t next_pc,
+    uint16_t loop_pc
 );
 
 void compile_halt(struct code_block *block, int next_pc);

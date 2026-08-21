@@ -233,6 +233,9 @@ void compile_get_gb_reg_d0(struct code_block *block, int gb_reg)
     case GB_REG_HL:
         compile_call_dmg_read_hl(block);
         break;
+    case GB_REG_A:
+        emit_move_l_dn_dn(block, REG_68K_D_A, REG_68K_D_SCRATCH_0);
+        break;
     default:
         printf("invalid register for compile_get_gb_reg_d0\n");
         exit(1);
@@ -374,6 +377,26 @@ void compile_ly_wait_reg(
         break;
     }
     }
+}
+
+void compile_ly_wait_hl(
+    struct code_block *block,
+    uint16_t next_pc,
+    uint16_t loop_pc
+) {
+    int saved_pending = pending_cycles;
+
+    emit_move_w_an_dn(block, REG_68K_A_HL, REG_68K_D_SCRATCH_0);
+    emit_cmpi_w_imm_dn(block, 0xff44, REG_68K_D_SCRATCH_0);
+    size_t not_ly = block->length;
+    emit_bne_w(block, 0);
+
+    // the cp is already counted, tail = untaken jr
+    compile_ly_wait_reg(block, GB_REG_A, 0x20, next_pc, loop_pc, 8);
+
+    patch_branch_w(block, not_ly);
+    // didn't exit
+    pending_cycles = saved_pending;
 }
 
 // dec a/b; jr nz, -3 with an empty body (the classic OAM DMA delay)
