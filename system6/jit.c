@@ -28,7 +28,7 @@ static u32 pc_history[PC_HISTORY_SIZE];
 static u8 op_history[PC_HISTORY_SIZE];  // first opcode of each block
 static int pc_history_idx = 0;
 
-static u32 call_count = 0;
+static u32 ret_to_c_count = 0;
 static u32 last_report_tick = 0;
 static u32 last_frames_rendered = 0;
 
@@ -209,7 +209,7 @@ void jit_init(struct dmg *dmg)
 
   memset(&jit_regs, 0, sizeof jit_regs);
 
-  call_count = 0;
+  ret_to_c_count = 0;
   last_report_tick = 0;
   last_frames_rendered = 0;
 
@@ -593,9 +593,9 @@ int jit_run(struct dmg *dmg)
   jit_ctx.read_cycles = 0;
   PROF_SET(PROF_OTHER);
 
-  call_count++;
-  if (call_count % 100 == 0) {
+  if (++ret_to_c_count == 100) {
     update_profiling_status_bar(dmg->frames_rendered);
+    ret_to_c_count = 0;
   }
 
   return 1;

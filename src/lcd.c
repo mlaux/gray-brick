@@ -142,11 +142,6 @@ void lcd_new(struct lcd *lcd)
     lcd->palette_banded_prev = 0;
 }
 
-u8 lcd_is_valid_addr(u16 addr)
-{
-    return (addr >= 0xfe00 && addr < 0xfea0) || (addr >= REG_LCD_BASE && addr <= REG_LCD_LAST);
-}
-
 // reject scrolling frames fast, static rows have to compare the whole
 // row but that's still faster than drawing
 void lcd_diff_rows(struct lcd *lcd, int cgb)

@@ -690,6 +690,144 @@ u8 dmg_read(void *_dmg, u16 address)
     return val;
 }
 
+// for THE LLMS !!! host/gb6run
+void dmg_raster_hook_call(struct dmg *dmg, u16 address, u8 old, u8 data)
+{
+    u32 pos;
+    u8 ly = dmg_current_ly(dmg, &pos);
+
+    dmg->raster_write_hook(address, old, data, ly, pos);
+}
+
+// write a LCD register where mid-frame changes are replayed
+static void dmg_write_raster(struct dmg *dmg, u16 address, u8 data)
+{
+    u8 old = lcd_read(dmg->lcd, address);
+
+    if (old != data) {
+        u32 pos;
+        u8 ly = dmg_current_ly(dmg, &pos);
+        raster_record(dmg, address, data, ly, pos);
+    }
+    dmg_raster_hook(dmg, address, old, data);
+    lcd_write(dmg->lcd, address, data);
+}
+
+static void dmg_write_io(struct dmg *dmg, u16 address, u8 data)
+{
+    u8 reg = address & 0xff;
+
+    if (reg >= 0x80) {
+        dmg->hram[reg - 0x80] = data;
+        // IE can enable/disable different deadlines
+        if (reg == 0xff) {
+            dmg_budget_update(dmg);
+        }
+        return;
+    }
+
+    if (reg >= 0x10 && reg <= 0x3f) {
+        audio_mac_write(dmg->audio, address, data);
+        return;
+    }
+
+    switch (reg) {
+        case 0x00:
+            dmg->dpad_selected = !(data & (1 << 4));
+            dmg->action_selected = !(data & (1 << 5));
+            update_joyp(dmg);
+            return;
+        case 0x01:
+            dmg->reg_sb = data;
+            return;
+        case 0x02: {
+            // internal-clock transfer completes 4096 CPU cycles out, external
+            // transfer never completes, clearing bit 7 aborts a transfer
+            u32 dist;
+            dmg->reg_sc = data & 0x81;
+            if ((data & 0x81) == 0x81) {
+                dist = 4096;
+                if (dmg_double_speed(dmg)) {
+                    dist >>= 1;
+                }
+                dmg->event_deadline[EV_SERIAL] = dmg_now_ppu(dmg) + dist;
+            } else {
+                dmg->event_deadline[EV_SERIAL] = EV_NONE;
+            }
+            dmg_budget_update(dmg);
+            return;
+        }
+        case 0x04:
+            // writing any value resets DIV to 0 at this cycle
+            dmg->div_reset_cycle = dmg_now_cpu(dmg);
+            dmg_tima_touch(dmg, 0);
+            dmg_tima_recompute(dmg);
+            return;
+        case 0x05:
+            // replaces the counter but not the prescaler phase
+            dmg_tima_touch(dmg, 1);
+            dmg->timer_count = data;
+            dmg_tima_recompute(dmg);
+            return;
+        case 0x06:
+            dmg->timer_mod = data;
+            return;
+        case 0x07:
+            dmg_tima_touch(dmg, 0);
+            dmg->timer_control = data;
+            dmg->tima_base_cycle = dmg_now_cpu(dmg);
+            dmg_tima_recompute(dmg);
+            return;
+        case 0x0f:
+            dmg->interrupt_request_mask = data;
+            dmg_budget_update(dmg);
+            return;
+        case 0x40: {
+            u8 was_on = lcd_read(dmg->lcd, REG_LCDC) & LCDC_ENABLE;
+
+            dmg_write_raster(dmg, address, data);
+            if (!was_on && (data & LCDC_ENABLE)) {
+                dmg_lcd_frame_restart(dmg);
+            }
+            dmg_stat_touch(dmg);
+            dmg_update_frame_events(dmg);
+            dmg_budget_update(dmg);
+            return;
+        }
+        case 0x41: case 0x45:
+            lcd_write(dmg->lcd, address, data);
+            dmg_stat_touch(dmg);
+            dmg_budget_update(dmg);
+            return;
+        case 0x42: case 0x43: case 0x47: case 0x48: case 0x49:
+        case 0x4a: case 0x4b:
+            dmg_write_raster(dmg, address, data);
+            return;
+        case 0x44:
+            lcd_write(dmg->lcd, address, data);
+            return;
+        case 0x46: {
+            u16 src = data << 8;
+            u8 *page = dmg->read_page[data >> 4];
+
+            dmg_raster_hook(dmg, address, lcd_read(dmg->lcd, address), data);
+            if (page) {
+                memcpy(dmg->lcd->oam, page + (s16) src, 0xa0);
+            } else {
+                int k = 0;
+                for (u16 addr = src; addr < src + 0xa0; addr++) {
+                    dmg->lcd->oam[k++] = dmg_read(dmg, addr);
+                }
+            }
+            return;
+        }
+    }
+
+    if (dmg->cgb && dmg->cgb->mode) {
+        cgb_write_reg(dmg->cgb, dmg, address, data);
+    }
+}
+
 void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
 {
     // ROM region writes go to MBC for bank switching
@@ -699,33 +837,37 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
     }
 
     // pages with compiled code have their fast write mapping removed
-    if (address >= 0x8000) {
-        u8 pidx = (u8) ((address >> 12) - 8);
-        u8 *saved = dmg->saved_write_page[pidx];
+    u8 pidx = (u8) ((address >> 12) - 8);
+    u8 *saved = dmg->saved_write_page[pidx];
 
-        if (cache_upper_range_hit(address)
-                && (!saved || saved[(s16) address] != data)) {
-            // self-modifying code - drop this 256B page's compiled blocks
-            cache_invalidate_upper_page((u8) (address >> 8));
-            if (saved) {
-                // fast writes come back only once the whole 4K page is
-                // free of compiled code
-                if (!cache_upper_4k_has_code(address)) {
-                    dmg->write_page[address >> 12] = saved;
-                    dmg->saved_write_page[pidx] = NULL;
-                }
-                saved[(s16) address] = data;
-                return;
+    if (!(address >= 0xff00 && address < 0xff80) // !I/O
+            && cache_upper_range_hit(address) // code present
+            && (!saved || saved[(s16) address] != data) // value changed
+    ) {
+        // self-modifying code - drop this 256B page's compiled blocks
+        cache_invalidate_upper_page((u8) (address >> 8));
+        if (saved) {
+            // fast writes come back only once the whole 4K page is
+            // free of compiled code
+            if (!cache_upper_4k_has_code(address)) {
+                dmg->write_page[address >> 12] = saved;
+                dmg->saved_write_page[pidx] = NULL;
             }
-            // no fast mapping to restore, handle the write normally below
-        } else if (saved) {
-            // slow only because compiled code lives elsewhere in the page
             saved[(s16) address] = data;
             return;
         }
+        // no fast mapping to restore, handle the write normally below
+    } else if (saved) {
+        // slow only because compiled code lives elsewhere in the page
+        saved[(s16) address] = data;
+        return;
     }
 
-    // f000-ffdf hit the slow path
+    if (address >= 0xff00) {
+        dmg_write_io(dmg, address, data);
+        return;
+    }
+
     if (address >= 0xe000 && address < 0xfe00) {
         dmg_write(dmg, address - 0x2000, data);
         return;
@@ -737,161 +879,8 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data)
         return;
     }
 
-    // log changes to replay on render
-    if (address >= REG_LCDC && address <= REG_WX
-            && ((0xfcd >> (address - REG_LCDC)) & 1)) {
-        u8 old = lcd_read(dmg->lcd, address);
-
-        if (old != data || address == REG_DMA || dmg->raster_write_hook) {
-            u32 pos;
-            u8 ly = dmg_current_ly(dmg, &pos);
-
-            if (address != REG_DMA && old != data) {
-                raster_record(dmg, address, data, ly, pos);
-            }
-            if (dmg->raster_write_hook) {
-                dmg->raster_write_hook(address, old, data, ly, pos);
-            }
-        }
-    } else if (dmg->raster_write_hook
-            && address >= 0xff68 && address <= 0xff6b) {
-        struct lcd *lcd = dmg->lcd;
-        u32 pos;
-        u8 ly = dmg_current_ly(dmg, &pos);
-        u8 old;
-
-        if (address == 0xff68) {
-            old = lcd->bcps;
-        } else if (address == 0xff69) {
-            old = lcd->bg_palette_ram[lcd->bcps & 0x3f];
-        } else if (address == 0xff6a) {
-            old = lcd->ocps;
-        } else {
-            old = lcd->obj_palette_ram[lcd->ocps & 0x3f];
-        }
-        dmg->raster_write_hook(address, old, data, ly, pos);
-    }
-
-    // OAM DMA
-    if (address == 0xff46) {
-        u16 src = data << 8;
-        u8 *page = dmg->read_page[data >> 4];
-        if (page) {
-            memcpy(dmg->lcd->oam, page + (s16) src, 0xa0);
-        } else {
-            int k = 0;
-            for (u16 addr = src; addr < src + 0xa0; addr++) {
-                dmg->lcd->oam[k++] = dmg_read(dmg, addr);
-            }
-        }
-
-        return;
-    }
-
-    if (address == REG_STAT || address == REG_LYC || address == REG_LCDC) {
-        u8 was_on = lcd_read(dmg->lcd, REG_LCDC) & LCDC_ENABLE;
-
+    if (address >= 0xfe00 && address < 0xfea0) {
         lcd_write(dmg->lcd, address, data);
-        if (address == REG_LCDC && !was_on && (data & LCDC_ENABLE)) {
-            dmg_lcd_frame_restart(dmg);
-        }
-        dmg_stat_touch(dmg);
-        if (address == REG_LCDC) {
-            dmg_update_frame_events(dmg);
-        }
-        dmg_budget_update(dmg);
-        return;
-    }
-
-    // OAM and LCD registers
-    if (lcd_is_valid_addr(address)) {
-        lcd_write(dmg->lcd, address, data);
-        return;
-    }
-
-    // high RAM
-    if (address >= 0xff80) {
-        dmg->hram[address - 0xff80] = data;
-        // IE gates which deadlines can exit/wake
-        if (address == 0xffff) {
-            dmg_budget_update(dmg);
-        }
-        return;
-    }
-
-    // I/O registers
-    if (address == 0xff00) {
-        dmg->dpad_selected = !(data & (1 << 4));
-        dmg->action_selected = !(data & (1 << 5));
-        update_joyp(dmg);
-        return;
-    }
-    if (address == REG_TIMER_DIV) {
-        // writing any value resets DIV to 0 at this cycle. the timer
-        // prescaler runs off the same counter on hardware, so its phase
-        // resets too
-        dmg->div_reset_cycle = dmg_now_cpu(dmg);
-        dmg_tima_touch(dmg, 0);
-        dmg_tima_recompute(dmg);
-        return;
-    }
-    if (address == REG_TIMER_COUNT) {
-        // the write replaces the counter but not the prescaler phase
-        dmg_tima_touch(dmg, 1);
-        dmg->timer_count = data;
-        dmg_tima_recompute(dmg);
-        return;
-    }
-    if (address == REG_TIMER_MOD) {
-        // only read back at the next reload; the armed deadline stands
-        dmg->timer_mod = data;
-        return;
-    }
-    if (address == REG_TIMER_CONTROL) {
-        dmg_tima_touch(dmg, 0);
-        dmg->timer_control = data;
-        dmg->tima_base_cycle = dmg_now_cpu(dmg);
-        dmg_tima_recompute(dmg);
-        return;
-    }
-    if (address >= 0xff10 && address <= 0xff3f) {
-        audio_mac_write(dmg->audio, address, data);
-        return;
-    }
-    if (address == 0xff0f) {
-        dmg->interrupt_request_mask = data;
-        dmg_budget_update(dmg);
-        return;
-    }
-    if (address == 0xff01) {
-        dmg->reg_sb = data;
-        return;
-    }
-    if (address == 0xff02) {
-        // there is never a link partner, so an internal-clock transfer
-        // completes 4096 CPU cycles out (8 bits at 8192 Hz) and an
-        // external-clock one never does, exactly like an unplugged cable.
-        // clearing bit 7 aborts a transfer
-        u32 dist;
-        dmg->reg_sc = data & 0x81;
-        if ((data & 0x81) == 0x81) {
-            dist = 4096;
-            if (dmg_double_speed(dmg)) {
-                dist >>= 1;
-            }
-            dmg->event_deadline[EV_SERIAL] = dmg_now_ppu(dmg) + dist;
-        } else {
-            dmg->event_deadline[EV_SERIAL] = EV_NONE;
-        }
-        dmg_budget_update(dmg);
-        return;
-    }
-
-    // CGB registers
-    if (dmg->cgb && dmg->cgb->mode) {
-        if (cgb_write_reg(dmg->cgb, dmg, address, data)) {
-            return;
-        }
     }
 }
 

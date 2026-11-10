@@ -143,6 +143,20 @@ void dmg_write_slow(struct dmg *dmg, u16 address, u8 data);
 // log a mid-frame cgb palette ram change (index bit 6 set = obj ram)
 void dmg_palette_record(struct dmg *dmg, u8 index, u8 value);
 
+// report a write to gb6run's raster_write_hook, if one is set
+void dmg_raster_hook_call(struct dmg *dmg, u16 address, u8 old, u8 data);
+
+static inline void dmg_raster_hook(
+    struct dmg *dmg,
+    u16 address,
+    u8 old,
+    u8 data
+) {
+    if (dmg->raster_write_hook) {
+        dmg_raster_hook_call(dmg, address, old, data);
+    }
+}
+
 void dmg_sync_hw(struct dmg *dmg, int cycles);
 
 u32 dmg_cycles_to_next_event(struct dmg *dmg);

@@ -119,11 +119,13 @@ int cgb_write_reg(struct cgb_state *cgb, struct dmg *dmg, u16 address, u8 data)
         return 1;
 
     case REG_BCPS:
+        dmg_raster_hook(dmg, address, dmg->lcd->bcps, data);
         dmg->lcd->bcps = data;
         return 1;
 
     case REG_BCPD: {
         u8 idx = dmg->lcd->bcps & 0x3f;
+        dmg_raster_hook(dmg, address, dmg->lcd->bg_palette_ram[idx], data);
         // dedup: most games rewrite identical palettes every vblank
         if (dmg->lcd->bg_palette_ram[idx] != data) {
             dmg->lcd->bg_palette_ram[idx] = data;
@@ -140,11 +142,13 @@ int cgb_write_reg(struct cgb_state *cgb, struct dmg *dmg, u16 address, u8 data)
     }
 
     case REG_OCPS:
+        dmg_raster_hook(dmg, address, dmg->lcd->ocps, data);
         dmg->lcd->ocps = data;
         return 1;
 
     case REG_OCPD: {
         u8 idx = dmg->lcd->ocps & 0x3f;
+        dmg_raster_hook(dmg, address, dmg->lcd->obj_palette_ram[idx], data);
         if (dmg->lcd->obj_palette_ram[idx] != data) {
             dmg->lcd->obj_palette_ram[idx] = data;
             // Mark color as dirty (2 bytes per color, so color = idx >> 1)
