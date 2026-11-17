@@ -53,6 +53,27 @@ static u8 lfsr7_bytes[128]; // 7-bit mode, period 127
 #define BL_TABLE_SHIFT 16
 #include "bl_tables.h"
 
+static s8 bl_square_vol[16][4][BL_NUM_BANDS][BL_TABLE_SIZE];
+
+static void build_bl_tables(void)
+{
+    const s8 *src = &bl_square_max[0][0][0];
+    int vol, k;
+
+    for (vol = 0; vol < 16; vol++) {
+        s8 *dst = &bl_square_vol[vol][0][0][0];
+
+        for (k = 0; k < 4 * BL_NUM_BANDS * BL_TABLE_SIZE; k++) {
+            s8 s = src[k];
+            u16 mag = (u16) (s < 0 ? -s : s) * (u16) vol;
+            // round(mag / 15) without dividing, exact for mag < 2048
+            s8 q = ((u32) mag * 4369 + 32768) >> 16;
+
+            dst[k] = s < 0 ? -q : q;
+        }
+    }
+}
+
 static void update_bl_table(struct audio_channel *ch)
 {
     ch->bl_table = bl_square_vol[ch->volume][ch->duty][ch->band];
@@ -223,6 +244,7 @@ void audio_init(struct audio *audio)
 
     memset(audio, 0, sizeof(*audio));
 
+    build_bl_tables();
     update_bl_table(&audio->ch1);
     update_bl_table(&audio->ch2);
     update_bl_table(&audio->ch3);

@@ -1,13 +1,8 @@
 #ifndef _INSTRUCTIONS_H
 #define _INSTRUCTIONS_H
 
-struct instruction {
-    int opcode;
-    const char *format;
-    int cycles;
-    int cycles_branch;
-};
+#include <stdint.h>
 
-extern const struct instruction instructions[];
+extern const uint8_t insn_cycles[512];
 
 #endif

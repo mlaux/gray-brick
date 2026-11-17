@@ -7,6 +7,7 @@
 #include "mbc.h"
 #include "cgb.h"
 #include "types.h"
+#include "diag.h"
 #include "audio.h"
 #include "prof.h"
 #include "../system6/jit.h"
@@ -321,7 +322,7 @@ void dmg_set_button(struct dmg *dmg, int field, int button, int pressed)
         mod = &dmg->action_buttons;
         selected = dmg->action_selected;
     } else {
-        printf("setting invalid button state\n");
+        DIAG("setting invalid button state\n");
         return;
     }
 

@@ -3,6 +3,7 @@
 #include <stdlib.h>
 
 #include "compiler.h"
+#include "diag.h"
 #include "emitters.h"
 #include "interop.h"
 #include "flags.h"
@@ -237,7 +238,7 @@ void compile_get_gb_reg_d0(struct code_block *block, int gb_reg)
         emit_move_l_dn_dn(block, REG_68K_D_A, REG_68K_D_SCRATCH_0);
         break;
     default:
-        printf("invalid register for compile_get_gb_reg_d0\n");
+        DIAG("invalid register for compile_get_gb_reg_d0\n");
         exit(1);
     }
 

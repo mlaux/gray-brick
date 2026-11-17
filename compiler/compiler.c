@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "compiler.h"
+#include "diag.h"
 #include "emitters.h"
 #include "branches.h"
 #include "flags.h"
@@ -189,7 +190,7 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
         src_ptr++;
 
         if (op != 0xcb) {
-            defer_cycles(instructions[op].cycles);
+            defer_cycles(insn_cycles[op]);
         }
 
         switch (op) {
@@ -403,7 +404,7 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
         case 0xcb: // CB prefix
             {
                 uint8_t cb_op = READ_BYTE(src_ptr++);
-                defer_cycles(instructions[0x100 + cb_op].cycles);
+                defer_cycles(insn_cycles[0x100 + cb_op]);
                 if (!compile_cb_insn(block, cb_op)) {
                     block->error = 1;
                     block->failed_opcode = 0xcb00 | cb_op;
@@ -662,7 +663,7 @@ struct code_block *compile_block(uint16_t src_address, struct compile_ctx *ctx)
         size_t emitted = block->length - before;
         // the fused register LY wait is the biggest expected sequence
         if (emitted > 176) {
-            fprintf(stderr, "warning: instruction %02x emitted %zu bytes\n", op, emitted);
+            DIAG("warning: instruction %02x emitted %zu bytes\n", op, emitted);
         }
     }
 

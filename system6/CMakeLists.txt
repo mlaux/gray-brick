@@ -6,17 +6,7 @@ include(add_application.cmake)
 
 include_directories(../src ../compiler)
 
-add_application("Gray Brick"
-    TYPE APPL
-    CREATOR MGBE
-    ../src/dmg.c
-    ../src/lcd.c
-    ../src/lcd_cgb.c
-    ../src/cgb.c
-    ../src/audio.c
-    ../src/rom.c
-    ../src/rom_patches.c
-    ../src/mbc.c
+set(COMPILER_SOURCES
     ../compiler/compiler.c
     ../compiler/emitters.c
     ../compiler/branches.c
@@ -29,6 +19,20 @@ add_application("Gray Brick"
     ../compiler/instructions.c
     ../compiler/stack.c
     ../compiler/timing.c
+)
+
+add_application("Gray Brick"
+    TYPE APPL
+    CREATOR MGBE
+    ../src/dmg.c
+    ../src/lcd.c
+    ../src/lcd_cgb.c
+    ../src/cgb.c
+    ../src/audio.c
+    ../src/rom.c
+    ../src/rom_patches.c
+    ../src/mbc.c
+    ${COMPILER_SOURCES}
     arena.c
     cpu_cache.c
     dialogs.c
@@ -46,6 +50,7 @@ add_application("Gray Brick"
     palette_menu.c
     gb_palettes.c
     prof.c
+    sprintf.c
     resources.r
     #help.r
 )
@@ -56,7 +61,7 @@ target_compile_options(Gray_Brick PRIVATE
     -fdata-sections
 )
 
-target_compile_definitions(Gray_Brick PRIVATE BG_TILES_IN_ASM)
+target_compile_definitions(Gray_Brick PRIVATE BG_TILES_IN_ASM GB6_NO_PRINTF)
 
 # remove for release builds
 #target_compile_definitions(Gray_Brick PRIVATE GB6_PROFILING)
@@ -64,4 +69,11 @@ target_compile_definitions(Gray_Brick PRIVATE BG_TILES_IN_ASM)
 target_link_options(Gray_Brick PRIVATE
     "-Wl,--gc-sections"
     #"-Wl,--print-gc-sections"
+)
+
+# not hot enough to need -O3
+set_source_files_properties(
+    ${COMPILER_SOURCES}
+    sprintf.c
+    PROPERTIES COMPILE_OPTIONS -Os
 )

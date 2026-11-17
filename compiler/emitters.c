@@ -3,6 +3,7 @@
 #include <stdlib.h>
 
 #include "compiler.h"
+#include "diag.h"
 
 void emit_byte(struct code_block *block, uint8_t byte)
 {
@@ -121,7 +122,7 @@ void emit_subq_b_dn(struct code_block *block, uint8_t dreg, uint8_t val)
 
     // 0101 ddd 1 00 000 rrr
     if (val == 0 || val > 8) {
-        printf("can only subq values between 1 and 8\n");
+        DIAG("can only subq values between 1 and 8\n");
         exit(1);
     }
     ddd = val == 8 ? 0 : val;
@@ -135,7 +136,7 @@ void emit_subq_l_dn(struct code_block *block, uint8_t dreg, uint8_t val)
 
     // 0101 ddd 1 10 000 rrr
     if (val == 0 || val > 8) {
-        printf("can only subq values between 1 and 8\n");
+        DIAG("can only subq values between 1 and 8\n");
         exit(1);
     }
     ddd = val == 8 ? 0 : val;
@@ -149,7 +150,7 @@ void emit_subq_w_an(struct code_block *block, uint8_t areg, uint8_t val)
 
     // 0101 ddd 1 01 001 aaa
     if (val == 0 || val > 8) {
-        printf("can only subq values between 1 and 8\n");
+        DIAG("can only subq values between 1 and 8\n");
         exit(1);
     }
     ddd = val == 8 ? 0 : val;
@@ -163,7 +164,7 @@ void emit_subq_l_an(struct code_block *block, uint8_t areg, uint8_t val)
 
     // 0101 ddd 1 10 001 rrr
     if (val == 0 || val > 8) {
-        printf("can only subq values between 1 and 8\n");
+        DIAG("can only subq values between 1 and 8\n");
         exit(1);
     }
     ddd = val == 8 ? 0 : val;
@@ -177,7 +178,7 @@ void emit_subq_w_dn(struct code_block *block, uint8_t dreg, uint8_t val)
 
     // 0101 ddd 1 01 000 rrr
     if (val == 0 || val > 8) {
-        printf("can only subq values between 1 and 8\n");
+        DIAG("can only subq values between 1 and 8\n");
         exit(1);
     }
     ddd = val == 8 ? 0 : val;
@@ -190,7 +191,7 @@ void emit_addq_b_dn(struct code_block *block, uint8_t dreg, uint8_t val)
 
     // 0101 ddd 0 00 000 rrr
     if (val == 0 || val > 8) {
-        printf("can only addq values between 1 and 8\n");
+        DIAG("can only addq values between 1 and 8\n");
         exit(1);
     }
     ddd = val == 8 ? 0 : val;
@@ -203,7 +204,7 @@ void emit_addq_w_dn(struct code_block *block, uint8_t dreg, uint8_t val)
 
     // 0101 ddd 0 01 000 rrr
     if (val == 0 || val > 8) {
-        printf("can only addq values between 1 and 8\n");
+        DIAG("can only addq values between 1 and 8\n");
         exit(1);
     }
     ddd = val == 8 ? 0 : val;
@@ -216,7 +217,7 @@ void emit_addq_l_dn(struct code_block *block, uint8_t dreg, uint8_t val)
 
     // 0101 ddd 0 10 000 rrr
     if (val == 0 || val > 8) {
-        printf("can only addq values between 1 and 8\n");
+        DIAG("can only addq values between 1 and 8\n");
         exit(1);
     }
     ddd = val == 8 ? 0 : val;
@@ -230,7 +231,7 @@ void emit_addq_w_an(struct code_block *block, uint8_t areg, uint8_t val)
 
     // 0101 ddd 0 01 001 aaa
     if (val == 0 || val > 8) {
-        printf("can only addq values between 1 and 8\n");
+        DIAG("can only addq values between 1 and 8\n");
         exit(1);
     }
     ddd = val == 8 ? 0 : val;
@@ -533,7 +534,7 @@ void emit_lsl_w_imm_dn(struct code_block *block, uint8_t count, uint8_t dreg)
 
     // 1110 ccc 1 01 i 01 rrr  (i=0 for immediate, size=01 for word)
     if (count == 0 || count > 8) {
-        printf("can only lsl by 1-8\n");
+        DIAG("can only lsl by 1-8\n");
         exit(1);
     }
     ccc = count == 8 ? 0 : count;
@@ -547,7 +548,7 @@ void emit_lsl_l_imm_dn(struct code_block *block, uint8_t count, uint8_t dreg)
 
     // 1110 ccc 1 10 i 01 rrr  (i=0 for immediate, size=10 for long)
     if (count == 0 || count > 8) {
-        printf("can only lsl by 1-8\n");
+        DIAG("can only lsl by 1-8\n");
         exit(1);
     }
     ccc = count == 8 ? 0 : count;
@@ -651,7 +652,7 @@ void emit_addq_l_an(struct code_block *block, uint8_t areg, uint8_t val)
 
     // 0101 ddd 0 10 001 aaa
     if (val == 0 || val > 8) {
-        printf("can only addq values between 1 and 8\n");
+        DIAG("can only addq values between 1 and 8\n");
         exit(1);
     }
     ddd = val == 8 ? 0 : val;
@@ -749,7 +750,7 @@ void emit_ror_b_imm(struct code_block *block, uint8_t count, uint8_t dreg)
 
     // 1110 ccc 0 00 0 11 rrr (d=0 for right, size=00 for byte, i=0 for imm)
     if (count == 0 || count > 8) {
-        printf("can only ror by 1-8\n");
+        DIAG("can only ror by 1-8\n");
         exit(1);
     }
     ccc = count == 8 ? 0 : count;
@@ -763,7 +764,7 @@ void emit_rol_b_imm(struct code_block *block, uint8_t count, uint8_t dreg)
 
     // 1110 ccc 1 00 0 11 rrr (d=1 for left, size=00 for byte, i=0 for imm)
     if (count == 0 || count > 8) {
-        printf("can only rol by 1-8\n");
+        DIAG("can only rol by 1-8\n");
         exit(1);
     }
     ccc = count == 8 ? 0 : count;
@@ -834,7 +835,7 @@ void emit_lsl_b_imm_dn(struct code_block *block, uint8_t count, uint8_t dreg)
 
     // 1110 ccc 1 00 i 01 rrr (d=1 for left, size=00 for byte, i=0 for imm, type=01 for lsl)
     if (count == 0 || count > 8) {
-        printf("can only lsl by 1-8\n");
+        DIAG("can only lsl by 1-8\n");
         exit(1);
     }
     ccc = count == 8 ? 0 : count;
@@ -848,7 +849,7 @@ void emit_lsr_b_imm_dn(struct code_block *block, uint8_t count, uint8_t dreg)
 
     // 1110 ccc 0 00 i 01 rrr (d=0 for right, size=00 for byte, i=0 for imm, type=01 for lsr)
     if (count == 0 || count > 8) {
-        printf("can only lsr by 1-8\n");
+        DIAG("can only lsr by 1-8\n");
         exit(1);
     }
     ccc = count == 8 ? 0 : count;
@@ -862,7 +863,7 @@ void emit_asr_b_imm_dn(struct code_block *block, uint8_t count, uint8_t dreg)
 
     // 1110 ccc 0 00 i 00 rrr (d=0 for right, size=00 for byte, i=0 for imm, type=00 for asr)
     if (count == 0 || count > 8) {
-        printf("can only asr by 1-8\n");
+        DIAG("can only asr by 1-8\n");
         exit(1);
     }
     ccc = count == 8 ? 0 : count;
@@ -883,7 +884,7 @@ void emit_lsr_w_imm_dn(struct code_block *block, uint8_t count, uint8_t dreg)
 
     // 1110 ccc 0 01 i 01 rrr (d=0 for right, size=01 for word, i=0 for imm, type=01 for lsr)
     if (count == 0 || count > 8) {
-        printf("can only lsr by 1-8\n");
+        DIAG("can only lsr by 1-8\n");
         exit(1);
     }
     ccc = count == 8 ? 0 : count;
@@ -897,7 +898,7 @@ void emit_lsr_l_imm_dn(struct code_block *block, uint8_t count, uint8_t dreg)
 
     // 1110 ccc 0 10 i 01 rrr (d=0 for right, size=10 for long, i=0 for imm, type=01 for lsr)
     if (count == 0 || count > 8) {
-        printf("can only lsr by 1-8\n");
+        DIAG("can only lsr by 1-8\n");
         exit(1);
     }
     ccc = count == 8 ? 0 : count;
