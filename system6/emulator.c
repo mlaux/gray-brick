@@ -142,6 +142,28 @@ static Boolean vm_is_on(void)
     return (response & (1L << gestaltVMPresent)) != 0;
 }
 
+static void Offer256Colors(void)
+{
+  SysEnvRec env;
+  GDHandle mainDev;
+
+  if (SysEnvirons(1, &env) != noErr || !env.hasColorQD) {
+    return;
+  }
+
+  mainDev = GetMainDevice();
+  if (!mainDev || (*(*mainDev)->gdPMap)->pixelSize <= 8) {
+    return;
+  }
+  if (!HasDepth(mainDev, 8, 0, 0)) {
+    return;
+  }
+
+  if (ShowCenteredAlert(ALRT_256_COLORS, "\p", "\p", "\p", "\p", ALERT_NORMAL) == 1) {
+    SetDepth(mainDev, 8, 0, 0);
+  }
+}
+
 static pascal void VBLHandler(void)
 {
   VBLTaskPtr task;
@@ -1027,13 +1049,15 @@ int main(int argc, char *argv[])
     ShowCenteredAlert(
       ALRT_4_LINE,
       "\pVirtual memory is turned on.",
-      "\pDisable virtual memory in the",
-      "\pMemory control panel for better",
-      "\pperformance.",
-      ALERT_CAUTION
+      "\pPlease disable it in the Memory",
+      "\pcontrol panel, restart, and then",
+      "\popen Gray Brick again.",
+      ALERT_STOP
     );
+    return 0;
   }
 
+  Offer256Colors();
   DetectScreenDepth();
   if (screen_depth > 1) {
     InstallPalettesMenu();

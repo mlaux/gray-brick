@@ -265,7 +265,7 @@ resource 'DITL' (133) {
 		},
 		{10, 20, 42, 52}, Icon {
 			enabled,
-			1
+			2
 		},
 		{10, 70, 25, 320}, StaticText {
 			disabled,
@@ -1272,20 +1272,20 @@ resource 'mstr' (103) { "Open ROM\0xC9" };
 
 resource 'vers' (1) {
 	0x02,
-	0x31,
+	0x32,
 	release,
 	0,
 	0,
-	"2.3.1",
-	"2.3.1, \0xa9 Matthew Laux 2013-2026"
+	"2.3.2",
+	"2.3.2, \0xa9 Matthew Laux 2013-2026"
 };
 
 resource 'vers' (2) {
 	0x02,
-	0x31,
+	0x32,
 	release,
 	0,
 	0,
-	"2.3.1",
+	"2.3.2",
 	"constcast.org"
 };

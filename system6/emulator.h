@@ -33,7 +33,7 @@ extern PixMap offscreen_pixmap;
 
 extern PixMap lowdepth_pixmap;
 
-#define APP_VERSION "2.3.1 ${GIT_SHA}"
+#define APP_VERSION "2.3.2 ${GIT_SHA}"
 
 #define WINDOW_X 8
 #define WINDOW_Y 40
@@ -42,6 +42,7 @@ extern PixMap lowdepth_pixmap;
 
 #define ALRT_NOT_ENOUGH_RAM 128
 #define ALRT_4_LINE 129
+#define ALRT_256_COLORS 130
 
 #define MISSING_APP_NAME_ID (-16396)
 
