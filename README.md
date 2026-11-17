@@ -227,17 +227,25 @@ interpreter version of the emulator.
 
 ## LLM statement
 
-I used Claude Code to generate compiler tests, quickly generate 68k instruction
-emitter functions, and heavily comment my emitted instruction sequences with
-the corresponding assembly syntax and offsets, because they're confusing.
+This project is important to me and has been in development off and on since 2013.
+I wrote this myself. I used LLM help to generate compiler tests, generate 68k
+instruction emitter functions, and originally asked for comments on my emitted
+instruction sequences with the corresponding assembly syntax and offsets, because
+they were confusing. Since then, I've gotten more and more critical of LLM writing,
+so I'm gradually removing or rewriting any remaining LLM comments.
 
-All LLM usage was done by individually reviewing every edit before accepting,
+* `src/`, `system6/`, and `compiler/` (the main app) are ~0% generated
+* `compiler/tests/` is ~80% generated
+* `host/` (test runner for execution on modern machines) is ~100% generated
+
+Any LLM usage was done by individually reviewing every edit before accepting,
 there was no use of autonomous agents or vibe coding.
 
-* `src/`, `system6/`, and `compiler/` (main app) are ~0% generated
-* `compiler/tests/` is ~80% generated
-* `host/` (test harness for running on modern machines) is ~100% generated
+I will accept PRs written using LLMs as long as they work, both me and the
+contributor understand what they're doing, and any comments/docs are
+human-written. See my ["How I feel about LLMs"](http://constcast.org/llms.html)
+for more.
 
 ## License
 
-GNU GPL version 3.
+GNU GPL version 3
