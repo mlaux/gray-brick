@@ -22,8 +22,7 @@ uint16_t m68k_offsets[256];
 
 int pending_cycles;
 
-// GB offsets that are targets of backward jumps within the block; pending
-// cycles need to be flushed before these so loop heads sit at pending == 0
+// GB offsets that are targets of backward jumps within the block
 uint8_t flush_at[256];
 
 // SM83 instruction lengths for the branch-target pre-scan (CB handled as 2)

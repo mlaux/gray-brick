@@ -243,8 +243,6 @@ void compile_call_dmg_write_hl_imm(struct code_block *block, uint8_t val)
 // Emit slow path call to dmg_read - expects address in D1, returns in D0
 void compile_slow_dmg_read(struct code_block *block)
 {
-    // D2 has to be exact for lazy DIV/LY evaluation; the helper stashes
-    // it around the C call
     flush_cycles(block);
     emit_jsr_abs_l(block, jit_helpers.read8_slow);
 }

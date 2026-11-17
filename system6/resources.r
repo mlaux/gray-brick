@@ -1,163 +1,335 @@
+#define ALRT_RezTemplateVersion 0
+#define DLOG_RezTemplateVersion 0
+
 #include "Finder.r"
 #include "Processes.r"
 #include "Types.r"
 
 type 'mstr' as 'STR ';
+type 'MGBE' as 'STR ';
 
-data 'ALRT' (128) {
-	$"004E 0048 008A 016A 0081 4444"                      /* .N.H.ä.j.ÅDD */
+resource 'ALRT' (128) {
+	{78, 72, 138, 362},
+	129,
+	{
+		OK, visible, silent,
+		OK, visible, silent,
+		OK, visible, silent,
+		OK, visible, silent
+	}
 };
 
-data 'ALRT' (129) {
-	$"0028 0028 0096 0172 0082 5555"                      /* .(.(.ñ.r.ÇUU */
+resource 'ALRT' (129) {
+	{40, 40, 150, 370},
+	130,
+	{
+		OK, visible, sound1,
+		OK, visible, sound1,
+		OK, visible, sound1,
+		OK, visible, sound1
+	}
 };
 
-data 'ALRT' (130) {
-	$"0028 0028 0096 0172 0085 5555"                      /* .(.(.ñ.r.ÖUU */
+resource 'ALRT' (130) {
+	{40, 40, 150, 370},
+	133,
+	{
+		OK, visible, sound1,
+		OK, visible, sound1,
+		OK, visible, sound1,
+		OK, visible, sound1
+	}
 };
 
-data 'BNDL' (128) {
-	$"4D47 4245 0000 0001 4652 4546 0003 0000"            /* MGBE....FREF.... */
-	$"0080 0001 0081 0002 0082 0003 0083 4943"            /* ..............IC */
-	$"4E23 0003 0000 0080 0001 0081 0002 0082"            /* N#.............. */
-	$"0003 0083"                                          /* .... */
+resource 'BNDL' (128) {
+	'MGBE',
+	0,
+	{
+		'FREF',
+		{
+			0, 128,
+			1, 129,
+			2, 130,
+			3, 131
+		};
+		'ICN#',
+		{
+			0, 128,
+			1, 129,
+			2, 130,
+			3, 131
+		}
+	}
 };
 
-data 'DITL' (128) {
-	$"0002 0000 0000 006E 00F0 0082 012C 0405"            /* .......n...Ç.,.. */
-	$"436C 6F73 6558 0000 0000 0013 000A 0033"            /* CloseX.........3 */
-	$"002A 2002 0080 0000 0000 000A 0032 006E"            /* .* ..Ä.......2.n */
-	$"012C 8882 4772 6179 2042 7269 636B 3A20"            /* .,àÇGray Brick:  */
-	$"4742 2065 6D75 6C61 746F 7220 666F 7220"            /* GB emulator for  */
-	$"3638 6B20 4D61 630D 6279 204D 6174 7468"            /* 68k Mac¬by Matth */
-	$"6577 204C 6175 7820 6874 7470 3A2F 2F63"            /* ew Laux http://c */
-	$"6F6E 7374 6361 7374 2E6F 7267 2F0D 0D47"            /* onstcast.org/¬¬G */
-	$"4243 2073 7570 706F 7274 2062 7920 5461"            /* BC support by Ta */
-	$"6E6E 6572 2046 6F6B 6B65 6E73 0D50 616C"            /* nner Fokkens¬Pal */
-	$"6574 7465 7320 6672 6F6D 206C 6F73 7065"            /* ettes from lospe */
-	$"632E 636F 6D0D"                                     /* c.com¬ */
+resource 'DITL' (128) {
+	{
+		{110, 240, 130, 300}, Button {
+			enabled,
+			"Close"
+		},
+		{19, 10, 51, 42}, Icon {
+			enabled,
+			128
+		},
+		{10, 50, 110, 300}, StaticText {
+			disabled,
+			"Gray Brick: GB emulator for 68k Mac\rby Matthew Laux http://constcast.org/\r\rGBC support by Tanner Fokkens\rPalettes from lospec.com\r"
+		}
+	}
 };
 
-data 'DITL' (129) {
-	$"0002 0000 0000 001E 00DC 0032 0116 0403"            /* ...........2.... */
-	$"4372 79BD 0000 0000 000A 000A 002A 002A"            /* CryΩ.........*.* */
-	$"A002 0000 0000 0000 000A 0032 001B 0117"            /* †..........2.... */
-	$"881E 4E6F 7420 656E 6F75 6768 206D 656D"            /* à.Not enough mem */
-	$"6F72 7920 746F 206F 7065 6E20 524F 4D2E"            /* ory to open ROM. */
+resource 'DITL' (129) {
+	{
+		{30, 220, 50, 278}, Button {
+			enabled,
+			"Cry"
+		},
+		{10, 10, 42, 42}, Icon {
+			disabled,
+			0
+		},
+		{10, 50, 27, 279}, StaticText {
+			disabled,
+			"Not enough memory to open ROM."
+		}
+	}
 };
 
-data 'DITL' (130) {
-	$"0005 0000 0000 0050 0104 0064 013E 0402"            /* .......P...d.>.. */
-	$"4F4B 0000 0000 000A 0014 002A 0034 2002"            /* OK.........*.4 . */
-	$"0001 0000 0000 000A 0046 0019 0140 8802"            /* .........F...@à. */
-	$"5E30 0000 0000 0019 0046 0028 0140 8802"            /* ^0.......F.(.@à. */
-	$"5E31 0000 0000 0028 0046 0037 0140 8802"            /* ^1.....(.F.7.@à. */
-	$"5E32 0000 0000 0037 0046 0046 0140 8802"            /* ^2.....7.F.F.@à. */
-	$"5E33"                                               /* ^3 */
+resource 'DITL' (130) {
+	{
+		{80, 260, 100, 318}, Button {
+			enabled,
+			"OK"
+		},
+		{10, 20, 42, 52}, Icon {
+			enabled,
+			1
+		},
+		{10, 70, 25, 320}, StaticText {
+			disabled,
+			"^0"
+		},
+		{25, 70, 40, 320}, StaticText {
+			disabled,
+			"^1"
+		},
+		{40, 70, 55, 320}, StaticText {
+			disabled,
+			"^2"
+		},
+		{55, 70, 70, 320}, StaticText {
+			disabled,
+			"^3"
+		}
+	}
 };
 
-data 'DITL' (131) {
-	$"0012 0000 0000 008C 00B9 00A0 00F3 0404"            /* .......å.π.†.... */
-	$"5361 7665 0000 0000 008C 0073 00A0 00AD"            /* Save.....å.s.†.≠ */
-	$"0406 4361 6E63 656C 0000 0000 000F 003C"            /* ..Cancel.......< */
-	$"001F 0069 0000 0000 0000 002D 003C 003D"            /* ...i.......-.<.= */
-	$"0069 0000 0000 0000 004B 003C 005B 0069"            /* .i.......K.<.[.i */
-	$"0000 0000 0000 0069 003C 0079 0069 0000"            /* .......i.<.y.i.. */
-	$"0000 0000 000F 00C3 001F 00F0 0000 0000"            /* .......√........ */
-	$"0000 002D 00C3 003D 00F0 0000 0000 0000"            /* ...-.√.=........ */
-	$"004B 00C3 005B 00F0 0000 0000 0000 0069"            /* .K.√.[.........i */
-	$"00C3 0079 00F0 0000 0000 0000 000F 000A"            /* .√.y............ */
-	$"001F 0037 8802 5570 0000 0000 002D 000A"            /* ...7à.Up.....-.. */
-	$"003D 0037 8804 446F 776E 0000 0000 004B"            /* .=.7à.Down.....K */
-	$"000A 005B 0037 8804 4C65 6674 0000 0000"            /* ...[.7à.Left.... */
-	$"0069 000A 0079 0037 8805 5269 6768 7401"            /* .i...y.7à.Right. */
-	$"0000 0000 000F 008C 001F 00BE 8801 4101"            /* .......å...æà.A. */
-	$"0000 0000 002D 008C 003D 00BE 8801 4206"            /* .....-.å.=.æà.B. */
-	$"0000 0000 004B 008C 005B 00BE 8806 5365"            /* .....K.å.[.æà.Se */
-	$"6C65 6374 0000 0000 0069 008C 0079 00BE"            /* lect.....i.å.y.æ */
-	$"8805 5374 6172 7400 0000 0000 0082 000A"            /* à.Start......Ç.. */
-	$"00A2 002A 8000"                                     /* .¢.*Ä. */
+resource 'DITL' (131) {
+	{
+		{140, 185, 160, 243}, Button {
+			enabled,
+			"Save"
+		},
+		{140, 115, 160, 173}, Button {
+			enabled,
+			"Cancel"
+		},
+		{15, 60, 31, 105}, UserItem { enabled },
+		{45, 60, 61, 105}, UserItem { enabled },
+		{75, 60, 91, 105}, UserItem { enabled },
+		{105, 60, 121, 105}, UserItem { enabled },
+		{15, 195, 31, 240}, UserItem { enabled },
+		{45, 195, 61, 240}, UserItem { enabled },
+		{75, 195, 91, 240}, UserItem { enabled },
+		{105, 195, 121, 240}, UserItem { enabled },
+		{15, 10, 31, 55}, StaticText {
+			disabled,
+			"Up"
+		},
+		{45, 10, 61, 55}, StaticText {
+			disabled,
+			"Down"
+		},
+		{75, 10, 91, 55}, StaticText {
+			disabled,
+			"Left"
+		},
+		{105, 10, 121, 55}, StaticText {
+			disabled,
+			"Right"
+		},
+		{15, 140, 31, 190}, StaticText {
+			disabled,
+			"A"
+		},
+		{45, 140, 61, 190}, StaticText {
+			disabled,
+			"B"
+		},
+		{75, 140, 91, 190}, StaticText {
+			disabled,
+			"Select"
+		},
+		{105, 140, 121, 190}, StaticText {
+			disabled,
+			"Start"
+		},
+		{130, 10, 162, 42}, UserItem { disabled }
+	}
 };
 
-data 'DITL' (132) {
-	$"0011 0000 0000 00E6 00C3 00FA 00FD 0404"            /* .........√...... */
-	$"5361 7665 0000 0000 00E6 007D 00FA 00B7"            /* Save.......}...∑ */
-	$"0406 4361 6E63 656C 0000 0000 001E 0014"            /* ..Cancel........ */
-	$"0030 0082 060B 6576 6572 7920 6672 616D"            /* .0.Ç..every fram */
-	$"656E 0000 0000 0032 0014 0044 0082 060E"            /* en.....2...D.Ç.. */
-	$"6576 6572 7920 3136 206C 696E 6573 0000"            /* every 16 lines.. */
-	$"0000 0064 0014 0076 00C8 0614 4D6F 6E6F"            /* ...d...v.»..Mono */
-	$"6368 726F 6D65 2C20 436F 7079 4269 7473"            /* chrome, CopyBits */
-	$"0000 0000 0078 0014 008A 00C8 0612 4D6F"            /* .....x...ä.»..Mo */
-	$"6E6F 6368 726F 6D65 2C20 6469 7265 6374"            /* nochrome, direct */
-	$"0000 0000 008C 0014 009E 00C8 0605 436F"            /* .....å...û.»..Co */
-	$"6C6F 7200 0000 0000 00BE 0014 00D0 0032"            /* lor......æ...–.2 */
-	$"0601 308C 0000 0000 00BE 0046 00D0 0064"            /* ..0å.....æ.F.–.d */
-	$"0601 3175 0000 0000 00BE 0078 00D0 0096"            /* ..1u.....æ.x.–.ñ */
-	$"0601 3257 0000 0000 00BE 00AA 00D0 00C8"            /* ..2W.....æ.™.–.» */
-	$"0601 33B4 0000 0000 00BE 00DC 00D0 00FA"            /* ..3¥.....æ...–.. */
-	$"0601 3420 0000 0000 000A 000A 001A 00C8"            /* ..4 ...........» */
-	$"8815 4368 6563 6B20 666F 7220 696E 7465"            /* à.Check for inte */
-	$"7272 7570 7473 3A00 0000 0000 001F 008C"            /* rrupts:........å */
-	$"002F 00FF 8808 2866 6173 7465 7229 0000"            /* ./..à.(faster).. */
-	$"0000 0033 008C 0043 00FF 880F 286D 6F72"            /* ...2.å.B..à.(mor */
-	$"6520 6163 6375 7261 7465 2929 0000 0000"            /* e accurate)).... */
-	$"0050 000A 0060 00C8 880D 4469 7370 6C61"            /* .P...`.»à¬Displa */
-	$"7920 6D6F 6465 3A72 0000 0000 00AA 000A"            /* y mode:r.....™.. */
-	$"00BA 00C8 880B 4672 616D 6520 736B 6970"            /* .∫.»à.Frame skip */
-	$"3A0D 0000 0000 00DC 000A 00FC 002A 8000"            /* :¬...........*Ä. */
+resource 'DITL' (132) {
+	{
+		{230, 195, 250, 253}, Button {
+			enabled,
+			"Save"
+		},
+		{230, 125, 250, 183}, Button {
+			enabled,
+			"Cancel"
+		},
+		{30, 20, 48, 130}, RadioButton {
+			enabled,
+			"every frame"
+		},
+		{50, 20, 68, 130}, RadioButton {
+			enabled,
+			"every 16 lines"
+		},
+		{100, 20, 118, 200}, RadioButton {
+			enabled,
+			"Monochrome, CopyBits"
+		},
+		{120, 20, 138, 200}, RadioButton {
+			enabled,
+			"Monochrome, direct"
+		},
+		{140, 20, 158, 200}, RadioButton {
+			enabled,
+			"Color"
+		},
+		{190, 20, 208, 50}, RadioButton {
+			enabled,
+			"0"
+		},
+		{190, 70, 208, 100}, RadioButton {
+			enabled,
+			"1"
+		},
+		{190, 120, 208, 150}, RadioButton {
+			enabled,
+			"2"
+		},
+		{190, 170, 208, 200}, RadioButton {
+			enabled,
+			"3"
+		},
+		{190, 220, 208, 250}, RadioButton {
+			enabled,
+			"4"
+		},
+		{10, 10, 26, 200}, StaticText {
+			disabled,
+			"Check for interrupts:"
+		},
+		{31, 140, 47, 255}, StaticText {
+			disabled,
+			"(faster)"
+		},
+		{51, 140, 67, 255}, StaticText {
+			disabled,
+			"(more accurate)"
+		},
+		{80, 10, 96, 200}, StaticText {
+			disabled,
+			"Display mode:"
+		},
+		{170, 10, 186, 200}, StaticText {
+			disabled,
+			"Frame skip:"
+		},
+		{220, 10, 252, 42}, UserItem { disabled }
+	}
 };
 
-data 'DITL' (133) {
-	$"0006 0000 0000 0050 00D2 0064 013E 040D"            /* .......P.“.d.>.¬ */
-	$"5377 6974 6368 2074 6F20 3235 3600 0000"            /* Switch to 256... */
-	$"0000 0050 005A 0064 00C6 040C 4B65 6570"            /* ...P.Z.d.∆..Keep */
-	$"2063 7572 7265 6E74 0000 0000 000A 0014"            /*  current........ */
-	$"002A 0034 2002 0001 0000 0000 000A 0046"            /* .*.4 ..........F */
-	$"0019 0140 8823 596F 7572 206D 6F6E 6974"            /* ...@à#Your monit */
-	$"6F72 2069 7320 7365 7420 746F 2074 686F"            /* or is set to tho */
-	$"7573 616E 6473 206F 7220 0000 0000 0019"            /* usands or ...... */
-	$"0046 0028 0145 8826 6D69 6C6C 696F 6E73"            /* .F.(.Eà&millions */
-	$"206F 6620 636F 6C6F 7273 2E20 4920 6869"            /*  of colors. I hi */
-	$"6768 6C79 2072 6563 6F6D 6D65 6E64 0000"            /* ghly recommend.. */
-	$"0000 0028 0046 0037 0140 8822 7377 6974"            /* ...(.F.7.@à"swit */
-	$"6368 696E 6720 746F 2032 3536 2063 6F6C"            /* ching to 256 col */
-	$"6F72 7320 666F 7220 6265 7474 6572 0000"            /* ors for better.. */
-	$"0000 0037 0046 0046 0140 881D 7065 7266"            /* ...7.F.F.@à.perf */
-	$"6F72 6D61 6E63 652E 2053 686F 756C 6420"            /* ormance. Should  */
-	$"4920 7377 6974 6368 3F74"                           /* I switch?t */
+resource 'DITL' (133) {
+	{
+		{80, 210, 100, 318}, Button {
+			enabled,
+			"Switch to 256"
+		},
+		{80, 90, 100, 198}, Button {
+			enabled,
+			"Keep current"
+		},
+		{10, 20, 42, 52}, Icon {
+			enabled,
+			1
+		},
+		{10, 70, 25, 320}, StaticText {
+			disabled,
+			"Your monitor is set to thousands or"
+		},
+		{25, 70, 40, 325}, StaticText {
+			disabled,
+			"millions of colors. I highly recommend"
+		},
+		{40, 70, 55, 320}, StaticText {
+			disabled,
+			"switching to 256 colors for better"
+		},
+		{55, 70, 70, 320}, StaticText {
+			disabled,
+			"performance. Should I switch?"
+		}
+	}
 };
 
-data 'DLOG' (128) {
-	$"0034 007E 00C0 01B4 0003 0100 0100 0000"            /* .4.~.¿.¥........ */
-	$"0000 0080 00"                                       /* ...Ä. */
+resource 'DLOG' (128) {
+	{52, 126, 192, 436},
+	altDBoxProc,
+	visible,
+	goAway,
+	0x0,
+	128,
+	""
 };
 
-data 'DLOG' (129) {
-	$"0028 0028 00D2 0127 0001 0100 0100 0000"            /* .(.(.“."........ */
-	$"0000 0083 0C4B 6579 204D 6170 7069 6E67"            /* ... .Key Mapping */
-	$"73"                                                 /* s */
+resource 'DLOG' (129) {
+	{40, 40, 210, 295},
+	dBoxProc,
+	visible,
+	goAway,
+	0x0,
+	131,
+	"Key Mappings"
 };
 
-data 'DLOG' (130) {
-	$"0028 0028 012c 0131 0001 0100 0100 0000"            /* .(.(.,.1........ */
-	$"0000 0084 00"                                       /* ...Ñ. */
+resource 'DLOG' (130) {
+	{40, 40, 300, 305},
+	dBoxProc,
+	visible,
+	goAway,
+	0x0,
+	132,
+	""
 };
 
-data 'FREF' (128) {
-	$"4150 504C 0000 00"                                  /* APPL... */
+resource 'FREF' (128) {
+	'APPL', 0, ""
 };
 
-data 'FREF' (129) {
-	$"4742 524D 0001 00"                                  /* GBRM... */
+resource 'FREF' (129) {
+	'GBRM', 1, ""
 };
 
-data 'FREF' (130) {
-	$"5352 414D 0002 00"                                  /* SRAM... */
+resource 'FREF' (130) {
+	'SRAM', 2, ""
 };
 
-data 'FREF' (131) {
-	$"424C 5354 0003 00"                                  /* BLST... */
+resource 'FREF' (131) {
+	'BLST', 3, ""
 };
 
 data 'ICN#' (128) {
@@ -412,59 +584,86 @@ data 'cicn' (132) {
 	$"F000"                                               /* .. */
 };
 
-data 'MBAR' (128) {
-	$"0004 0080 0081 0082 0084"
+resource 'MBAR' (128) {
+	{ 128, 129, 130, 132 }
 };
 
-data 'MENU' (128) {
-	$"0080 0000 0000 0000 0000 FFFF FFFF 0114"            /* .Ä.............. */
-	$"1141 626F 7574 2047 7261 7920 4272 6963"            /* .About Gray Bric */
-	$"6BC9 0000 0000 012D 0000 0000 00"                   /* k….....-..... */
+resource 'MENU' (128) {
+	128,
+	textMenuProc,
+	0x7fffffff,
+	enabled,
+	apple,
+	{
+		"About Gray Brick\0xc9", noIcon, noKey, noMark, plain;
+		"-", noIcon, noKey, noMark, plain
+	}
 };
 
-data 'MENU' (129) {
-	$"0081 0000 0000 0000 0000 FFFF FFBB 0446"            /* .Å...........ª.F */
-	$"696C 6509 4F70 656E 2052 4F4D C900 4F00"            /* ile∆Open ROM….O. */
-	$"0001 2D00 0000 0009 5361 7665 2047 616D"            /* ..-....∆Save Gam */
-	$"6500 5300 0010 5361 7665 2053 6372 6565"            /* e.S...Save Scree */
-	$"6E73 686F 74C9 0044 0000 0A53 6F66 7420"            /* nshot….D...Soft  */
-	$"5265 7365 7400 5200 0001 2D00 0000 0005"            /* Reset.R...-..... */
-	$"436C 6F73 6500 5700 0004 5175 6974 0051"            /* Close.W...Quit.Q */
-	$"0000 00"                                            /* ... */
+resource 'MENU' (129) {
+	129,
+	textMenuProc,
+	0x7fffffdd,
+	enabled,
+	"File",
+	{
+		"Open ROM\0xc9", noIcon, "O", noMark, plain;
+		"-", noIcon, noKey, noMark, plain;
+		"Save Game", noIcon, "S", noMark, plain;
+		"Save Screenshot\0xc9", noIcon, "D", noMark, plain;
+		"Soft Reset", noIcon, "R", noMark, plain;
+		"-", noIcon, noKey, noMark, plain;
+		"Close", noIcon, "W", noMark, plain;
+		"Quit", noIcon, "Q", noMark, plain
+	}
 };
 
-data 'MENU' (130) {
-	$"0082 0000 0000 0000 0000 FFFB 67CF 074F"            /* .Ç..........gœ.O */
-	$"7074 696F 6E73 0C45 6E61 626C 6520 4175"            /* ptions.Enable Au */
-	$"6469 6F00 4100 0016 456E 6162 6C65 2053"            /* dio.A...Enable S */
-	$"5441 5420 496E 7465 7272 7570 7473 0049"            /* TAT Interrupts.I */
-	$"0000 0F4C 696D 6974 2074 6F20 3630 2046"            /* ...Limit to 60 F */
-	$"5053 004C 0000 012D 0000 0000 0A46 7261"            /* PS.L...-.....Fra */
-	$"6D65 2053 6B69 7000 0000 0003 4F66 6600"            /* me Skip.....Off. */
-	$"3100 0003 312F 3200 3200 0003 312F 3300"            /* 1...1/2.2...1/3. */
-	$"3300 0003 312F 3400 3400 0003 312F 3500"            /* 3...1/4.4...1/5. */
-	$"3500 0001 2D00 0000 0005 5363 616C 6500"            /* 5...-.....Scale. */
-	$"0000 0002 3178 0000 0000 0232 7800 0000"            /* ....1x.....2x... */
-	$"0001 2D00 0000 000A 5275 6E20 6173 2047"            /* ..-.....Run as G */
-	$"4243 0000 0000 1349 676E 6F72 6520 446F"            /* BC.....Ignore Do */
-	$"7562 6C65 2053 7065 6564 0000 0000 012D"            /* uble Speed.....- */
-	$"0000 0000 0D4B 6579 204D 6170 7069 6E67"            /* ....¬Key Mapping */
-	$"73C9 004B 0000 00"                                  /* s….K... */
+resource 'MENU' (130) {
+	130,
+	textMenuProc,
+	0x7ffdb3e7,
+	enabled,
+	"Options",
+	{
+		"Enable Audio", noIcon, "A", noMark, plain;
+		"Enable STAT Interrupts", noIcon, "I", noMark, plain;
+		"Limit to 60 FPS", noIcon, "L", noMark, plain;
+		"-", noIcon, noKey, noMark, plain;
+		"Frame Skip", noIcon, noKey, noMark, plain;
+		"Off", noIcon, "1", noMark, plain;
+		"1/2", noIcon, "2", noMark, plain;
+		"1/3", noIcon, "3", noMark, plain;
+		"1/4", noIcon, "4", noMark, plain;
+		"1/5", noIcon, "5", noMark, plain;
+		"-", noIcon, noKey, noMark, plain;
+		"Scale", noIcon, noKey, noMark, plain;
+		"1x", noIcon, noKey, noMark, plain;
+		"2x", noIcon, noKey, noMark, plain;
+		"-", noIcon, noKey, noMark, plain;
+		"Run as GBC", noIcon, noKey, noMark, plain;
+		"Ignore Double Speed", noIcon, noKey, noMark, plain;
+		"-", noIcon, noKey, noMark, plain;
+		"Key Mappings\0xc9", noIcon, "K", noMark, plain
+	}
 };
 
-data 'MENU' (132) {
-	$"0084 0000 0000 0000 0000 FFFF FFFF 0544"            /* .Ñ.............D */
-	$"6562 7567 0944 756D 7020 5652 414D 0000"            /* ebug∆Dump VRAM.. */
-	$"0000 00"                                            /* ... */
+resource 'MENU' (132) {
+	132,
+	textMenuProc,
+	0x7fffffff,
+	enabled,
+	"Debug",
+	{
+		"Dump VRAM", noIcon, noKey, noMark, plain
+	}
 };
 
 data 'MDEF' (128) {
 	$"2F3A 0004 4E75 0000 0000"
 };
 
-data 'MGBE' (0, "Owner resource") {
-	$"1732 3031 332D 3230 3236 2063 6F6E 7374"            /* .2013-2026 const */
-	$"6361 7374 2E6F 7267"                                /* cast.org */
+resource 'MGBE' (0, "Owner resource") {
+	"2013-2026 constcast.org"
 };
 
 data 'SICN' (128) {
@@ -496,8 +695,8 @@ resource 'SIZE' (-1) {
 };
 
 // missing-application name string copied into save and cache files
-data 'STR ' (-16396, purgeable) {
-	$"0A47 7261 7920 4272 6963 6B"                        /* .Gray Brick */
+resource 'STR ' (-16396, purgeable) {
+	"Gray Brick"
 };
 
 data 'icl4' (128) {
@@ -1071,13 +1270,22 @@ resource 'mstr' (101) { "Quit" };
 resource 'mstr' (102) { "File" };
 resource 'mstr' (103) { "Open ROM\0xC9" };
 
-data 'vers' (1) {
-	$"0200 8000 0000 0532 2E33 2E31 1F32 2E33"            /* ..Ä....2.3.1.2.3 */
-	$"2E31 2C20 A920 4D61 7474 6865 7720 4C61"            /* .1, © Matthew La */
-	$"7578 2032 3031 332D 3230 3236"                      /* ux 2013-2026 */
+resource 'vers' (1) {
+	0x02,
+	0x31,
+	release,
+	0,
+	0,
+	"2.3.1",
+	"2.3.1, \0xa9 Matthew Laux 2013-2026"
 };
 
-data 'vers' (2) {
-	$"0200 2000 0000 0532 2E33 2E31 0D63 6F6E"            /* .. ....2.3.1¬con */
-	$"7374 6361 7374 2E6F 7267"                           /* stcast.org */
+resource 'vers' (2) {
+	0x02,
+	0x31,
+	release,
+	0,
+	0,
+	"2.3.1",
+	"constcast.org"
 };
