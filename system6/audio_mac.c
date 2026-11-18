@@ -17,9 +17,6 @@
 #include "../src/audio.h"
 #include "../src/prof.h"
 
-// do everything but start the sound manager
-#define AUDIO_BENCH_MUTE 0
-
 // 4194304 / 11127 = about 377
 #define CYCLES_PER_SAMPLE 377
 
@@ -74,13 +71,6 @@ static SndDoubleBufferHeader dbl_header;
 static MyDoubleBuffer dbl_buffers[2];
 
 #define LM_TICKS (*(volatile u32 *) 0x16a)
-
-#if AUDIO_BENCH_MUTE
-static unsigned char bench_buf[BUFFER_SAMPLES];
-static u32 bench_t0;
-static void gen_samples(unsigned char *p, int samples);
-static void bench_drain(void);
-#endif
 
 #define LM_SDVOLUME (*(volatile u8 *) 0x260)
 
@@ -227,10 +217,6 @@ void audio_mac_sync(int cycles)
         asc_watchdog();
     }
 
-#if AUDIO_BENCH_MUTE
-    if (snd_running)
-        bench_drain();
-#endif
 }
 
 void audio_mac_write(struct audio *audio, u16 addr, u8 value)
@@ -288,19 +274,6 @@ static void gen_samples(unsigned char *p, int samples)
         done += n;
     }
 }
-
-#if AUDIO_BENCH_MUTE
-// stand in for DoubleBackProc
-static void bench_drain(void)
-{
-    u32 real = ((LM_TICKS - bench_t0) * 11127) / 60;
-
-    while ((s32) (real - samples_out) >= BUFFER_SAMPLES) {
-        gen_samples(bench_buf, BUFFER_SAMPLES);
-        samples_out += BUFFER_SAMPLES;
-    }
-}
-#endif
 
 static int asc_hw_present(void)
 {
@@ -643,13 +616,8 @@ void audio_mac_start(void)
         return;
     }
 
-#if AUDIO_BENCH_MUTE
-    snd_running = 1;
-    bench_t0 = LM_TICKS;
-#else
     snd_running = 1;
     SndPlayDoubleBuffer(snd_channel, &dbl_header);
-#endif
 }
 
 void audio_mac_stop(void)
@@ -684,11 +652,8 @@ void audio_mac_wait_if_ahead(void)
     if (!snd_running)
         return;
 
-    while ((s32) (emu_samples - samples_out) > MAX_LEAD_SAMPLES) {
-#if AUDIO_BENCH_MUTE
-        bench_drain();
-#endif
-    }
+    while ((s32) (emu_samples - samples_out) > MAX_LEAD_SAMPLES)
+        ;
 }
 
 void audio_mac_shutdown(void)
