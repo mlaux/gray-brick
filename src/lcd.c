@@ -15,15 +15,15 @@ static u8 tile_decode_packed[256];
 static u8 tile_decode_base[256][4];
 
 // Packed pixel buffer: 4 pixels per byte, 42 bytes per row (168 pixels)
-// Renders 21 tiles starting at tile-aligned position for fast path always
-static u8 pixels[42 * LCD_BUF_ROWS];
+// Renders 21 tiles starting at tile-aligned position
+static u8 pixels[42 * LCD_BUF_ROWS] __attribute__((aligned(4)));
 
 // CGB attribute buffer: 1 byte per pixel, stores palette/priority
 static u8 attr_buffer[168 * LCD_BUF_ROWS];
 
 // previous rendered frame for lcd_diff_rows
-static u8 prev_pixels[42 * LCD_BUF_ROWS];
-static u8 prev_attrs[168 * LCD_BUF_ROWS];
+static u8 prev_pixels[42 * LCD_BUF_ROWS] __attribute__((aligned(4)));
+static u8 prev_attrs[168 * LCD_BUF_ROWS] __attribute__((aligned(4)));
 static u8 prev_row_scx[LCD_BUF_ROWS];
 static u8 prev_voff;
 static int diff_valid;
