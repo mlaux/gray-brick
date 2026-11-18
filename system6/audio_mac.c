@@ -129,17 +129,7 @@ static u32 asc_last_push_tick;
 extern void asc_thunk_entry(void);
 static void asc_watchdog(void);
 
-// this is always 0.....
-static u32 read_vbr(void)
-{
-    register u32 v asm("d0");
-    // compiled for 68000 so needs to be .shorts, but this is only called on
-    // 020 and up
-    asm volatile(".short 0x4e7a, 0x0801" : "=r"(v));
-    return v;
-}
-
-#define LEVEL2_VECTOR (*(volatile u32 *) (read_vbr() + VEC_LEVEL2))
+#define LEVEL2_VECTOR (*(volatile u32 *) (VEC_LEVEL2))
 
 static u16 ints_off(void)
 {
@@ -283,10 +273,8 @@ static int asc_hw_present(void)
            (response & (1L << gestaltHasASC));
 }
 
-// this driver assumes a plain ASC at 0x50f14000 paced off FIFO A's half-empty
-// bit, with a discrete VIA2 at 0x50f02000. later machines all differ somehow:
-// IIci/IIsi replace VIA2 with the RBV, the IIfx uses the OSS and moves the
-// ASC, Quadras have an EASC or IOSB. those fall back to the Sound Manager
+// only OG Mac II series uses direct mode, later models are fast enough that
+// it wasn't worth supporting the audio hardware directly
 static int asc_direct_supported(void)
 {
     long machine;
